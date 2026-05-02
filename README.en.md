@@ -6,15 +6,15 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 Bilin is a local-first web application for reading, translating, questioning, annotating, and exporting academic papers. The primary path is arXiv TeX source, because TeX preserves the structure that a serious paper reader needs: sections, paragraphs, equations, figures, tables, captions, labels, citations, and source assets. Bilin runs on your own machine with a React and TypeScript frontend, a FastAPI backend, a SQLite job queue, and a Python worker. It does not require Docker, Redis, Celery, accounts, a hosted backend, or built-in cloud sync.
 
-This repository is currently an MVP release. It can create local libraries, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX through LaTeXML when the toolchain is installed, preserve document blocks and assets in SQLite, build deterministic local block embeddings, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, keep translation variants, manage reviewed local translation memory, maintain article terminology, store provider keys in macOS Keychain when available, stream article-grounded answers with cited evidence, create editable lecture-note patches, edit custom note templates, and export source, translated, bilingual, lecture-note, or bundle artifacts.
+The current version is the v0.1.0 MVP. It can create local libraries, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX through LaTeXML when the toolchain is installed, preserve document blocks and assets in SQLite, build deterministic local block embeddings, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, keep translation variants, manage reviewed local translation memory, maintain article terminology, store provider keys in macOS Keychain when available, stream article-grounded answers with cited evidence, create editable lecture-note patches, edit custom note templates, and export source, translated, bilingual, lecture-note, or bundle artifacts.
 
 ## Future Plans
 
-Future versions will extend Bilin with PDF LLM fallback parsing, optional neural embedding providers, Word/EPUB/polished PDF export, a desktop shell, and a more complete release shape. PDFs can already be stored as source artifacts in article bundles; future PDF support will be added as an optional parsing path without changing the TeX-first workflow or introducing default OCR or heavy service dependencies. Accounts and built-in sync are not part of the default product direction. Bilin will remain local-first and keep library folders easy to sync through external tools such as iCloud, OneDrive, and Syncthing.
+Future versions will extend Bilin with PDF LLM fallback parsing, optional neural embedding providers, Word/EPUB/polished PDF export, a desktop shell, and a more complete installation shape. PDFs can already be stored as source artifacts in article bundles; future PDF support will be added as an optional parsing path without changing the TeX-first workflow or introducing default OCR or heavy service dependencies. Accounts and built-in sync are not part of the default product direction. Bilin will remain local-first and keep library folders easy to sync through external tools such as iCloud, OneDrive, and Syncthing.
 
 ## Repository Layout
 
-The repository is a lightweight monorepo. `apps/api` contains the FastAPI backend, CLI, SQLite migrations, arXiv and upload import services, LaTeXML parser path, provider profiles, translation jobs, deterministic local embeddings, glossary services, question answering, lecture-note services, export services, worker, and doctor command. `apps/web` contains the Vite React TypeScript frontend. `docs` contains design, MVP, and local-safety notes. `fixtures/golden` contains deterministic parser regression fixtures used by tests and acceptance checks.
+The repository is a lightweight monorepo. `apps/api` contains the FastAPI backend, CLI, SQLite migrations, arXiv and upload import services, LaTeXML parser path, provider profiles, translation jobs, deterministic local embeddings, glossary services, question answering, lecture-note services, export services, worker, and doctor command. `apps/web` contains the Vite React TypeScript frontend. `docs` contains design, MVP, local-safety notes, and developer documentation. `fixtures/golden` contains deterministic parser regression fixtures used by tests and acceptance checks.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ On Linux, install equivalent packages through your distribution package manager.
 
 ## Installation
 
-Start from a fresh checkout or release archive. Install frontend dependencies from the repository root, then initialize the backend environment.
+Start from the source directory or downloaded project directory. Install frontend dependencies from the repository root, then initialize the backend environment.
 
 ```sh
 pnpm install
@@ -139,7 +139,7 @@ uv run bilin dev-info
 
 Library directories are user-chosen and self-contained. This makes them suitable for external folder sync tools such as iCloud, OneDrive, or Syncthing. Bilin itself does not resolve sync conflicts. Close Bilin before moving or merging synced libraries, and recover conflicts through the external sync tool's version history.
 
-## Quality Gate
+## Developer Checks
 
 Backend checks run from `apps/api`.
 
@@ -162,18 +162,6 @@ pnpm --filter @bilin/web test:e2e
 ```
 
 Default tests use fixtures and mocks. They do not require live arXiv access or a full TeX toolchain. Optional live arXiv and live LaTeXML integration tests are deliberately opt-in.
-
-## GitHub Release Packaging
-
-This repository includes a release packaging script. It builds a clean source archive from the current working tree while excluding local data, virtual environments, node modules, caches, test output, SQLite databases, and generated build directories.
-
-```sh
-./scripts/package-release.sh
-```
-
-The script writes release artifacts under `release/`, including `bilin-v0.1.0-source.tar.gz`, `bilin-v0.1.0-source.zip`, and matching SHA-256 checksum files. Upload those archives to a GitHub release if you want release assets in addition to GitHub's automatic source archives.
-
-Before publishing, run the quality gate above and check the release archive on a fresh machine or temporary directory. A release candidate should be able to install dependencies, run `make doctor`, run the golden acceptance command, start `make dev`, and open the generated reader route without requiring any local files that were excluded from the archive. The detailed publishing checklist is in `docs/github-release.md`, and `RELEASE_NOTES.md` can be used as the GitHub release body.
 
 ## License
 
