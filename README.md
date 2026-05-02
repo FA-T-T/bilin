@@ -4,6 +4,16 @@
 
 AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM consumption, not human browsing.
 
+## 为什么需要 Bilin？📚✨
+
+Bilin 的目的很明确：让科研论文从“硬啃英文 PDF”变成“结构化地阅读、翻译、提问、记录和复盘”。它不是要替代英文原文，也不是把论文变成泛泛的 AI 摘要，而是把论文拆成章节、段落、公式、图表、caption、术语、问答和讲义笔记，让读者能沿着原文结构一步步理解。
+
+对科研工作者来说，Bilin 的便利在于把许多分散动作放到同一个本地工作流里。你可以导入 arXiv 或本地 TeX 包，解析出段落级 Markdown，按块翻译和缓存，保留不同翻译版本，管理专业术语，针对当前段落或整篇文章提问，把回答沉淀成讲义笔记，再导出 Markdown 或 bundle。论文、PDF、TeX 源码、解析结果、翻译缓存、问答记录和笔记都留在你选择的 library 文件夹中，方便长期整理和外部同步。
+
+对母语不是英语的科研入门者，Bilin 的价值更直接。大学生、研究生和刚进入新领域的研究者，经常不是不够聪明，而是被英语长句、领域术语、公式上下文和写作习惯同时卡住。先用母语理解问题背景、方法动机、关键公式、实验逻辑和局限，再回到英文原文校准术语与表达，通常比一开始就逐句硬读英文更高效。这条路径同时训练研究理解和学术英语：先把研究本身读懂，再学习英文如何表达这个研究。
+
+Bilin 因此适合作为科研入门的第一阅读层。它帮助读者把“我看不下去这篇论文”变成“我知道它在解决什么问题、为什么重要、用了什么方法、哪些段落还需要回看原文”。真正严肃的阅读仍然要回到英文原文、公式、图表和引用链；Bilin 做的是把这条路铺平一点，让入门者更快进入研究本身。🌱
+
 Bilin 是一个本地优先的论文阅读、翻译、问答、笔记和导出工具。它优先面向 arXiv TeX 源码包，而不是 PDF，因为 TeX 能保留严肃论文阅读真正需要的结构信息，包括章节、段落、公式、图、表、caption、label、引用和源文件资产。Bilin 运行在你自己的机器上，由 React + TypeScript 前端、FastAPI 后端、SQLite 后台任务队列和 Python worker 组成。它不需要 Docker、Redis、Celery、账号系统、托管后端或内置云同步。
 
 当前版本是 v0.1.0 MVP。它已经可以创建本地 library，导入 arXiv source package，导入本地 TeX archive，把 Markdown 导入为弱结构文档，把 PDF 作为源文件保存进 bundle，在本机安装 LaTeXML 时解析 TeX，保存结构化 document blocks 和 assets，构建确定性的本地 block embeddings，通过 OpenAI-compatible 或 Anthropic-compatible provider 翻译段落和 caption，保存多个 translation variants，审核并复用 translation memory，管理文章术语，使用 macOS Keychain 保存 provider key，在文章证据范围内流式问答，生成可编辑的讲义笔记 patch，编辑自定义笔记模板，并导出 source、translated、bilingual、lecture-note 或完整 bundle artifact。
