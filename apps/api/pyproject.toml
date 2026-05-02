@@ -1,0 +1,63 @@
+[project]
+name = "bilin-api"
+version = "0.1.0"
+description = "Local-first backend skeleton for Bilin."
+readme = "../../README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "aiosqlite>=0.20.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "platformdirs>=4.3.0",
+  "pydantic>=2.10.0",
+  "rich>=13.9.0",
+  "typer>=0.15.0",
+  "uvicorn[standard]>=0.32.0"
+]
+
+[project.scripts]
+bilin = "bilin_api.cli:app"
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.27.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.8.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bilin_api"]
+
+[tool.hatch.build]
+include = [
+  "src/bilin_api/**/*.py",
+  "src/bilin_api/**/*.sql"
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "integration_live_arxiv: requires BILIN_RUN_LIVE_ARXIV=1 and public arXiv network access",
+  "integration_latexml: requires BILIN_RUN_LATEXML_INTEGRATION=1 plus latexml and latexmlpost on PATH"
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"

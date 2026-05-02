@@ -1,0 +1,24 @@
+{
+  "revision_id": "public-arxiv-2408.13687",
+  "source_root": "source",
+  "latexml_html": "latexml.html",
+  "expected_source_markdown": "expected-source.md",
+  "arxiv_id": "2408.13687",
+  "source_url": "https://arxiv.org/abs/2408.13687",
+  "license": "CC BY 4.0",
+  "block_count": 7,
+  "asset_count": 2,
+  "block_types": ["section", "paragraph", "equation", "section", "paragraph", "figure", "table"],
+  "block_uids": ["sec-001", "p-0001", "eq-0001", "sec-002", "p-0002", "fig-0001", "tbl-0001"],
+  "labels_by_block_uid": {
+    "sec-001": "sec:memory",
+    "eq-0001": "eq:suppression",
+    "sec-002": "sec:decoder",
+    "fig-0001": "fig:memory",
+    "tbl-0001": "tab:values"
+  },
+  "asset_captions_by_asset_id": {
+    "fig-0001": "A reduced surface-code memory schematic for parser regression.",
+    "tbl-0001": "Representative structured values retained by the fixture."
+  }
+}

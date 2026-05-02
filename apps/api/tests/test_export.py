@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from bilin_api.article_store import (
+    bundle_path_for_arxiv,
+    create_note_patch,
+    create_translation_variant,
+    make_block,
+    read_manifest,
+    replace_document,
+    upsert_arxiv_revision,
+)
+from bilin_api.export_service import export_article, queue_article_export
+from bilin_api.note_service import accept_article_note_patch
+from bilin_api.repositories import create_library, get_job
+from bilin_api.schemas import (
+    ArticleExportKind,
+    ArticleExportRequest,
+    ArticleManifest,
+    DocumentBlock,
+    JobStatus,
+    JobType,
+    Library,
+    LibraryCreate,
+)
+from bilin_api.worker import run_worker
+
+
+@pytest.mark.asyncio
+async def test_export_source_translation_bilingual_and_notes(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, revision_id, blocks = await prepare_export_fixture(tmp_path)
+    await create_translation_variant(
+        library=library,
+        block=blocks[1],
+        target_language="zh-CN",
+        raw_markdown="已翻译段落。",
+        provider_profile_id="provider",
+        model="model",
+        glossary_version="glossary:none",
+    )
+    patch = await create_note_patch(
+        library,
+        revision_id,
+        title="精读模板",
+        patch_markdown="## Background\n\nAccepted note [p-0001].",
+        source_refs=["p-0001"],
+    )
+    await accept_article_note_patch(library, patch.id)
+
+    source = await export_article(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.source_markdown),
+    )
+    source_markdown = Path(source.path).read_text(encoding="utf-8")
+    assert source.file_name == "source.md"
+    assert source.metadata["relative_path"] == "export/source.md"
+    assert '<a id="p-0001"></a>' in source_markdown
+    assert "A paragraph to translate." in source_markdown
+
+    translated = await export_article(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.translated_markdown, target_language="zh-CN"),
+    )
+    translated_markdown = Path(translated.path).read_text(encoding="utf-8")
+    assert translated.file_name == "translation.zh-CN.md"
+    assert "已翻译段落。" in translated_markdown
+    assert "E=mc^2" in translated_markdown
+    assert translated.missing_translation_block_uids == ["fig-0001"]
+
+    bilingual = await export_article(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.bilingual_markdown, target_language="zh-CN"),
+    )
+    bilingual_markdown = Path(bilingual.path).read_text(encoding="utf-8")
+    assert "**Source**" in bilingual_markdown
+    assert "**Translation (zh-CN)**" in bilingual_markdown
+    assert "<!-- untranslated:fig-0001 -->" in bilingual_markdown
+
+    notes = await export_article(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.lecture_notes),
+    )
+    notes_markdown = Path(notes.path).read_text(encoding="utf-8")
+    assert notes.file_name == "lecture-notes.md"
+    assert "Accepted note" in notes_markdown
+    manifest = read_manifest(Path(notes.metadata["bundle_path"]))
+    assert manifest is not None
+    assert (
+        manifest.generated_artifacts["exports"]["lecture_notes"]["metadata"]["relative_path"]
+        == "export/lecture-notes.md"
+    )
+
+
+@pytest.mark.asyncio
+async def test_export_bundle_zip_contains_bundle_artifacts(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, revision_id, _ = await prepare_export_fixture(tmp_path)
+    result = await export_article(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.bundle_zip),
+    )
+    assert result.file_name == "article-bundle.zip"
+    with zipfile.ZipFile(result.path) as archive:
+        names = set(archive.namelist())
+    assert "manifest.json" in names
+    assert "document/source.md" in names
+    assert "export/article-bundle.zip" not in names
+
+
+@pytest.mark.asyncio
+async def test_export_job_runs_through_worker(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, revision_id, _ = await prepare_export_fixture(tmp_path)
+    job = await queue_article_export(
+        library,
+        revision_id,
+        ArticleExportRequest(kind=ArticleExportKind.source_markdown),
+    )
+
+    assert job.type == JobType.export_article
+    await run_worker(once=True)
+    completed = await get_job(job.id)
+
+    assert completed is not None
+    assert completed.status == JobStatus.succeeded
+    assert completed.result is not None
+    assert completed.result["file_name"] == "source.md"
+    assert completed.result["metadata"]["relative_path"] == "export/source.md"
+
+
+async def prepare_export_fixture(tmp_path: Path) -> tuple[Library, str, list[DocumentBlock]]:
+    library = await create_library(
+        LibraryCreate(name="Export", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00005", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00005",
+        version="v1",
+        title="Export fixture",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    blocks = [
+        make_block(
+            revision.id,
+            block_uid="sec-0001",
+            structural_path="00001",
+            block_type="section",
+            source_markdown="Introduction",
+            metadata={"level": 1},
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0001",
+            structural_path="00002",
+            block_type="paragraph",
+            source_markdown="A paragraph to translate.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="eq-0001",
+            structural_path="00003",
+            block_type="equation",
+            source_markdown="E=mc^2",
+        ),
+        make_block(
+            revision.id,
+            block_uid="fig-0001",
+            structural_path="00004",
+            block_type="figure",
+            source_markdown="**Figure 1.** A missing translated caption.",
+        ),
+    ]
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        blocks,
+        [],
+        "\n\n".join(block.source_markdown for block in blocks),
+    )
+    return library, revision.id, blocks

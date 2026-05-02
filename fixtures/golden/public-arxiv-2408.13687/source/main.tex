@@ -1,0 +1,69 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Quantum error correction below the surface code threshold}
+\author{Google Quantum AI and Collaborators}
+\date{arXiv:2408.13687 reduced Bilin parser fixture}
+
+\newcommand{\logical}{p_{\mathrm{L}}}
+\newcommand{\physical}{p_{\mathrm{phys}}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This reduced fixture is based on the public arXiv record for
+arXiv:2408.13687 and is used only to exercise Bilin parser structure.
+\end{abstract}
+
+\section{Below-threshold memory}
+\label{sec:memory}
+
+Quantum error correction combines physical qubits into a logical memory. The
+fixture keeps the structure of a real arXiv physics paper while using compact
+text suitable for deterministic regression tests.
+
+\begin{equation}
+\label{eq:suppression}
+\logical(d+2) \approx \frac{\logical(d)}{\Lambda}
+\end{equation}
+
+\section{Real-time decoding}
+\label{sec:decoder}
+
+The paper reports real-time decoding alongside distance scaling. Bilin should
+preserve this paragraph as source Markdown and keep citation placeholders such
+as Ref.~\cite{acharya2024threshold}.
+
+\begin{figure}
+\centering
+\includegraphics[width=.72\linewidth]{assets/surface-code-memory.svg}
+\caption{A reduced surface-code memory schematic for parser regression.}
+\label{fig:memory}
+\end{figure}
+
+\begin{table}
+\centering
+\caption{Representative structured values retained by the fixture.}
+\label{tab:values}
+\begin{tabular}{lll}
+\toprule
+Quantity & Value & Role \\
+\midrule
+Distance & 7 & logical memory \\
+Cycles & $10^6$ & real-time decoder run \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{thebibliography}{1}
+\bibitem{acharya2024threshold}
+Google Quantum AI and Collaborators.
+Quantum error correction below the surface code threshold.
+arXiv:2408.13687, 2024.
+\end{thebibliography}
+
+\end{document}

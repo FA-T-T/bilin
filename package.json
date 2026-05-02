@@ -1,0 +1,15 @@
+{
+  "name": "bilin",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "pnpm --filter @bilin/web dev",
+    "test": "pnpm --filter @bilin/web test:run",
+    "lint": "pnpm --filter @bilin/web lint",
+    "typecheck": "pnpm --filter @bilin/web typecheck",
+    "format:check": "pnpm --filter @bilin/web format:check",
+    "generate-api-client": "pnpm --filter @bilin/web generate-api-client",
+    "release:package": "./scripts/package-release.sh"
+  }
+}

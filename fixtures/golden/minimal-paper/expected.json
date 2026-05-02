@@ -1,0 +1,19 @@
+{
+  "revision_id": "golden-revision",
+  "source_root": "source",
+  "latexml_html": "latexml.html",
+  "expected_source_markdown": "expected-source.md",
+  "block_count": 5,
+  "asset_count": 2,
+  "block_types": ["section", "paragraph", "equation", "figure", "table"],
+  "block_uids": ["sec-001", "p-0001", "eq-0001", "fig-0001", "tbl-0001"],
+  "labels_by_block_uid": {
+    "eq-0001": "eq:energy",
+    "fig-0001": "fig:pipeline",
+    "tbl-0001": "tab:results"
+  },
+  "asset_captions_by_asset_id": {
+    "fig-0001": "A structured pipeline from source TeX to reading blocks.",
+    "tbl-0001": "Regression expectations for parser outputs."
+  }
+}
