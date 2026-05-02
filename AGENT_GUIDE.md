@@ -43,6 +43,8 @@ Keep runtime data out of the repository. Do not commit or package `.venv/`, `nod
 
 Do not store provider API keys in source files, README examples with real values, fixtures, or generated artifacts. On macOS the application should prefer Keychain. For CI or local fallback, use the documented credential-store environment variable instead of hardcoding secrets.
 
+Generated Markdown exports and lecture notes must keep the invisible Bilin content notice watermark. It is an HTML comment, so it should not affect normal rendered reading layout. Do not remove it when changing export code.
+
 Do not edit generated frontend API types by hand. When backend schemas or routes change, run `make generate-api-client`, then edit hooks and UI code outside `apps/web/src/api/generated`.
 
 Use `rg` for code search. Use `apply_patch` for manual edits. Do not revert unrelated user changes.
@@ -221,7 +223,7 @@ shasum -a 256 -c release/bilin-v0.1.0-source.zip.sha256
 tar -tzf release/bilin-v0.1.0-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
 ```
 
-The final archive should include `README.md`, `README.en.md`, `AGENT_GUIDE.md`, `RELEASE_NOTES.md`, `docs/`, `fixtures/`, `apps/`, root package files, and release scripts.
+The final archive should include `README.md`, `README.en.md`, `AGENT_GUIDE.md`, `LICENSE`, `NOTICE`, `RELEASE_NOTES.md`, `docs/`, `fixtures/`, `apps/`, root package files, and release scripts.
 
 ## Common Failures
 

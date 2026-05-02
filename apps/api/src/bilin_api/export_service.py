@@ -13,6 +13,7 @@ from bilin_api.article_store import (
     write_lecture_notes,
     write_manifest,
 )
+from bilin_api.content_notice import CONTENT_NOTICE_TEXT, with_markdown_content_watermark
 from bilin_api.glossary_service import active_article_glossary_terms, apply_glossary_to_markdown
 from bilin_api.repositories import create_job
 from bilin_api.schemas import (
@@ -76,7 +77,10 @@ async def export_article(
     elif request.kind == ArticleExportKind.lecture_notes:
         notes_path = await write_lecture_notes(library, revision_id)
         output_path = export_dir / "lecture-notes.md"
-        output_path.write_text(notes_path.read_text(encoding="utf-8"), encoding="utf-8")
+        output_path.write_text(
+            with_markdown_content_watermark(notes_path.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
     elif request.kind == ArticleExportKind.bundle_zip:
         output_path = export_dir / "article-bundle.zip"
         write_bundle_zip(bundle_path, output_path)
@@ -182,7 +186,8 @@ async def render_bilingual_markdown(
 
 def render_markdown_document(title: str, revision_id: str, body_parts: list[str]) -> str:
     body = "\n\n".join(part.strip() for part in body_parts if part.strip())
-    return f"# {title}\n\nArticle revision: `{revision_id}`\n\n{body}".strip() + "\n"
+    markdown = f"# {title}\n\nArticle revision: `{revision_id}`\n\n{body}".strip() + "\n"
+    return with_markdown_content_watermark(markdown)
 
 
 def render_source_block(block: DocumentBlock) -> str:
@@ -263,6 +268,7 @@ def write_bundle_zip(bundle_path: Path, output_path: Path) -> None:
     if output_path.exists():
         output_path.unlink()
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("BILIN_CONTENT_NOTICE.txt", CONTENT_NOTICE_TEXT + "\n")
         for path in sorted(bundle_path.rglob("*")):
             if not path.is_file() or path == output_path:
                 continue
@@ -295,6 +301,7 @@ def export_metadata(bundle_path: Path, export_dir: Path, output_path: Path) -> d
         "export_dir": str(export_dir),
         "manifest_path": str(bundle_path / "manifest.json"),
         "relative_path": output_path.relative_to(bundle_path).as_posix(),
+        "content_notice": "bilin-content-notice:v1",
     }
 
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import aiosqlite
 
+from bilin_api.content_notice import with_markdown_content_watermark
 from bilin_api.database import init_library_db, open_db, utc_now
 from bilin_api.repositories import get_library, list_libraries
 from bilin_api.schemas import (
@@ -908,7 +909,10 @@ async def write_lecture_notes(library: Library, revision_id: str) -> Path:
                 ]
             )
         )
-    notes_path.write_text("\n\n".join(content_parts).strip() + "\n", encoding="utf-8")
+    notes_path.write_text(
+        with_markdown_content_watermark("\n\n".join(content_parts).strip() + "\n"),
+        encoding="utf-8",
+    )
     return notes_path
 
 

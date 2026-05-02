@@ -72,6 +72,7 @@ async def test_generate_accept_and_write_lecture_note_patch(
     notes_path = Path(str(accepted.metadata["notes_path"]))
     assert notes_path.exists()
     notes_markdown = notes_path.read_text(encoding="utf-8")
+    assert "bilin-content-notice:v1" in notes_markdown
     assert "# Lecture Notes" in notes_markdown
     assert f"<!-- bilin-note-patch:{accepted.id} -->" in notes_markdown
     assert "This paper studies gradient estimation" in notes_markdown
@@ -129,6 +130,7 @@ async def test_edit_before_accept_rewrites_lecture_note_section(
     assert edited.status == "accepted"
     notes_path = Path(str(edited.metadata["notes_path"]))
     notes_markdown = notes_path.read_text(encoding="utf-8")
+    assert "bilin-content-notice:v1" in notes_markdown
     assert "## Edited reading note" in notes_markdown
     assert "Edited note body [p-0001]." in notes_markdown
     assert f"<!-- bilin-note-patch:{edited.id} -->" in notes_markdown

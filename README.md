@@ -106,7 +106,7 @@ uv run bilin import arxiv /tmp/bilin-library 1706.03762 --pdf --parse
 uv run bilin jobs run-worker
 ```
 
-如果已经知道 article revision id，可以直接 parse、构建本地 embedding 或导出。
+如果已经知道 article revision id，可以直接 parse、构建本地 embedding 或导出。导出的 Markdown 和生成的讲义会自动包含不可见的 HTML 注释水印，说明该文件由 Bilin 生成、可能包含第三方论文内容或派生内容，并提醒只在原始许可或权利人允许时再分发。这个水印不会改变正常阅读排版。
 
 ```sh
 uv run bilin parse article /tmp/bilin-library <article_revision_id>
@@ -181,7 +181,7 @@ pnpm --filter @bilin/web test:e2e
 
 ## 许可证
 
-当前 release package 还没有包含开源许可证文件。如果这个仓库要公开发布并允许他人复用，请在创建 GitHub Release 前选择并添加 `LICENSE`。没有 license 时，GitHub 用户可以查看代码，但不会自动获得开源复用权利。
+Bilin 源代码、项目自有文档、测试和项目自有 fixtures 使用 Apache-2.0 许可证，见 `LICENSE` 和 `NOTICE`。这个许可证只覆盖 Bilin 项目本身，不覆盖用户导入的论文、PDF、TeX 源码包、图表、caption、数据集、机器翻译稿或讲义中包含的第三方内容。导出物是否可以再分发，取决于原论文或素材的许可证、权利人授权或适用的法律例外。
 
 ## 常见问题
 

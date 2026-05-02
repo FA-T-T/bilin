@@ -4,7 +4,7 @@ This guide describes how to turn the current Bilin checkout into a GitHub releas
 
 ## Release Scope
 
-The v0.1.0 package is an MVP source release. It contains the React web app, FastAPI backend, CLI, worker, SQLite migrations, generated OpenAPI TypeScript schema, golden fixtures, documentation, and release packaging script. It does not contain local application data, user libraries, API keys, SQLite databases, virtual environments, node modules, build output, Playwright test output, or machine caches.
+The v0.1.0 package is an MVP source release. It contains the React web app, FastAPI backend, CLI, worker, SQLite migrations, generated OpenAPI TypeScript schema, golden fixtures, documentation, Apache-2.0 `LICENSE` and `NOTICE` files, and release packaging script. It does not contain local application data, user libraries, API keys, SQLite databases, virtual environments, node modules, build output, Playwright test output, or machine caches.
 
 ## Preflight
 

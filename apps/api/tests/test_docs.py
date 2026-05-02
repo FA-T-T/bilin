@@ -7,6 +7,7 @@ def test_clean_machine_docs_cover_local_safety_contract() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
     local_safety = (repo_root / "docs" / "local-safety.md").read_text(encoding="utf-8")
+    license_text = (repo_root / "LICENSE").read_text(encoding="utf-8")
 
     assert "make doctor" in readme
     assert "make dev" in readme
@@ -17,6 +18,8 @@ def test_clean_machine_docs_cover_local_safety_contract() -> None:
     assert "logs/parse-error.json" in local_safety
     assert "Job Control Semantics" in local_safety
     assert "iCloud, OneDrive, or Syncthing" in local_safety
+    assert "Apache License" in license_text
+    assert "Apache-2.0" in readme
 
 
 def test_gitignore_excludes_local_runtime_artifacts() -> None:
