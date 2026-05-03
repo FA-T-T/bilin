@@ -1,6 +1,6 @@
 # Bilin
 
-语言：简体中文 | [English](README.en.md)
+语言：简体中文 | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
 
 AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM consumption, not human browsing.
 

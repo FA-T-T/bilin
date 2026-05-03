@@ -22,6 +22,27 @@ def test_clean_machine_docs_cover_local_safety_contract() -> None:
     assert "Apache-2.0" in readme
 
 
+def test_readme_language_switch_covers_localized_readmes() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    readmes = {
+        "README.md": "简体中文",
+        "README.en.md": "English",
+        "README.ja.md": "日本語",
+        "README.ko.md": "한국어",
+        "README.es.md": "Español",
+        "README.fr.md": "Français",
+        "README.de.md": "Deutsch",
+    }
+
+    for filename, language_label in readmes.items():
+        content = (repo_root / filename).read_text(encoding="utf-8")
+        assert language_label in content
+        assert "AGENT_GUIDE.md" in content
+        for linked_file in readmes:
+            if linked_file != filename:
+                assert linked_file in content
+
+
 def test_gitignore_excludes_local_runtime_artifacts() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
