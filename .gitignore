@@ -25,6 +25,7 @@ libraries/
 papers/
 local-data/
 tmp/
+marketing/
 .bilin/
 .bilin-test/
 release/

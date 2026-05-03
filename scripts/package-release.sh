@@ -40,6 +40,7 @@ rsync -a "${ROOT_DIR}/" "${STAGING_DIR}/" \
   --exclude "papers/" \
   --exclude "local-data/" \
   --exclude "tmp/" \
+  --exclude "marketing/" \
   --exclude ".bilin/" \
   --exclude ".bilin-test/" \
   --exclude "release/"

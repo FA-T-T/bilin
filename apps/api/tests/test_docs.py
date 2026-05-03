@@ -57,6 +57,7 @@ def test_gitignore_excludes_local_runtime_artifacts() -> None:
         "libraries/",
         "papers/",
         "local-data/",
+        "marketing/",
         ".bilin/",
     ):
         assert pattern in gitignore
