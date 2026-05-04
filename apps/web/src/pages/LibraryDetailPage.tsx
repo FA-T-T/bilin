@@ -20,8 +20,10 @@ import { Link, useParams } from "react-router-dom";
 
 import { useArticles, useImportArxiv, useImportLocalFile, useLibrary } from "../api/hooks";
 import type { ImportLocalKind } from "../api/types";
+import { useT } from "../i18n";
 
 export function LibraryDetailPage() {
+  const t = useT();
   const { libraryId } = useParams();
   const library = useLibrary(libraryId);
   const articles = useArticles(libraryId);
@@ -60,25 +62,23 @@ export function LibraryDetailPage() {
     <Stack gap="lg">
       <Group justify="space-between">
         <div>
-          <Title order={1}>{library.data?.name ?? "Library detail"}</Title>
-          <Text c="dimmed">
-            {library.data?.path ?? "Registered library metadata and article bundles."}
-          </Text>
+          <Title order={1}>{library.data?.name ?? t("library.detailFallback")}</Title>
+          <Text c="dimmed">{library.data?.path ?? t("library.detailSubtitle")}</Text>
         </div>
       </Group>
 
       {library.isError ? (
         <Alert color="red" icon={<Info size={18} />}>
-          Library metadata could not be loaded from the API.
+          {t("library.metadataError")}
         </Alert>
       ) : null}
 
       <div className="panel add-article-panel">
         <Group justify="space-between" align="flex-start">
           <div>
-            <Title order={3}>Add article</Title>
+            <Title order={3}>{t("library.addArticle")}</Title>
             <Text c="dimmed" size="sm">
-              Use an arXiv ID for the normal path, or keep a local file inside this library.
+              {t("library.addArticleHelp")}
             </Text>
           </div>
           <SegmentedControl
@@ -86,7 +86,7 @@ export function LibraryDetailPage() {
             onChange={(value) => setImportSource(value as "arxiv" | "file")}
             data={[
               { label: "arXiv", value: "arxiv" },
-              { label: "Local file", value: "file" }
+              { label: t("library.localFile"), value: "file" }
             ]}
           />
         </Group>
@@ -96,7 +96,7 @@ export function LibraryDetailPage() {
             <Group mt="md" align="end" className="add-article-form">
               <TextInput
                 className="grow-input"
-                label="arXiv ID"
+                label={t("library.arxivId")}
                 placeholder="1706.03762 or 1706.03762v7"
                 value={arxivId}
                 onChange={(event) => setArxivId(event.target.value)}
@@ -106,27 +106,27 @@ export function LibraryDetailPage() {
                 loading={importArxiv.isPending}
                 disabled={!libraryId || !arxivId.trim()}
               >
-                Add article
+                {t("library.addArticle")}
               </Button>
               <Button variant="subtle" onClick={() => setShowImportOptions((open) => !open)}>
-                Options
+                {t("library.options")}
               </Button>
             </Group>
             <Collapse in={showImportOptions}>
               <Group mt="md" className="advanced-options">
                 <TextInput
-                  label="Version"
-                  placeholder="optional, e.g. v2"
+                  label={t("library.version")}
+                  placeholder={t("library.versionPlaceholder")}
                   value={version}
                   onChange={(event) => setVersion(event.target.value)}
                 />
                 <Switch
-                  label="Download PDF"
+                  label={t("library.downloadPdf")}
                   checked={downloadPdf}
                   onChange={(event) => setDownloadPdf(event.currentTarget.checked)}
                 />
                 <Switch
-                  label="Parse after import"
+                  label={t("library.parseAfterImport")}
                   checked={parseAfterImport}
                   onChange={(event) => setParseAfterImport(event.currentTarget.checked)}
                 />
@@ -138,13 +138,13 @@ export function LibraryDetailPage() {
             <Group mt="md" align="end" className="add-article-form">
               <FileInput
                 className="grow-input"
-                label="File"
-                placeholder="TeX archive, Markdown, or PDF"
+                label={t("library.file")}
+                placeholder={t("library.filePlaceholder")}
                 value={localFile}
                 onChange={setLocalFile}
               />
               <Select
-                label="Type"
+                label={t("library.type")}
                 value={localKind}
                 onChange={(value) => {
                   if (value === "tex_archive" || value === "markdown" || value === "pdf") {
@@ -152,9 +152,9 @@ export function LibraryDetailPage() {
                   }
                 }}
                 data={[
-                  { value: "tex_archive", label: "TeX archive" },
-                  { value: "markdown", label: "Markdown" },
-                  { value: "pdf", label: "PDF save-only" }
+                  { value: "tex_archive", label: t("library.texArchive") },
+                  { value: "markdown", label: t("library.markdown") },
+                  { value: "pdf", label: t("library.pdfSaveOnly") }
                 ]}
               />
               <Button
@@ -162,12 +162,12 @@ export function LibraryDetailPage() {
                 loading={importLocalFile.isPending}
                 disabled={!libraryId || !localFile}
               >
-                Import file
+                {t("library.importFile")}
               </Button>
             </Group>
             <Group mt="md" className="advanced-options">
               <Switch
-                label="Parse TeX archive after import"
+                label={t("library.parseTexArchive")}
                 checked={localParseAfterImport}
                 disabled={localKind !== "tex_archive"}
                 onChange={(event) => setLocalParseAfterImport(event.currentTarget.checked)}
@@ -178,47 +178,46 @@ export function LibraryDetailPage() {
 
         {importArxiv.isSuccess ? (
           <Text c="dimmed" size="sm" mt="sm">
-            Import job queued. The task drawer will show download and parse progress.
+            {t("library.importQueued")}
           </Text>
         ) : null}
         {importArxiv.isError ? (
           <Text c="red" size="sm" mt="sm">
-            Import job could not be queued. Check that the API is running.
+            {t("library.importQueueError")}
           </Text>
         ) : null}
         {importLocalFile.isSuccess ? (
           <Text c="dimmed" size="sm" mt="sm">
-            Local file imported. TeX archives can be parsed by the worker; Markdown creates weak
-            structured blocks immediately, and PDF is saved only.
+            {t("library.localImported")}
           </Text>
         ) : null}
         {importLocalFile.isError ? (
           <Text c="red" size="sm" mt="sm">
-            Local file could not be imported. Check file type and API availability.
+            {t("library.localImportError")}
           </Text>
         ) : null}
       </div>
 
       <div className="panel">
-        <Title order={3}>Articles</Title>
+        <Title order={3}>{t("library.articles")}</Title>
         {articles.isError ? (
           <Alert color="yellow" icon={<Info size={18} />} mt="md">
-            Article records could not be loaded.
+            {t("library.articleLoadError")}
           </Alert>
         ) : null}
         {(articles.data ?? []).length === 0 ? (
           <Text c="dimmed" mt="md">
-            No imported articles yet.
+            {t("library.noArticles")}
           </Text>
         ) : (
           <Table mt="md" verticalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Paper</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Blocks</Table.Th>
-                <Table.Th>Assets</Table.Th>
-                <Table.Th>Updated</Table.Th>
+                <Table.Th>{t("library.paper")}</Table.Th>
+                <Table.Th>{t("library.status")}</Table.Th>
+                <Table.Th>{t("library.blocks")}</Table.Th>
+                <Table.Th>{t("library.assets")}</Table.Th>
+                <Table.Th>{t("library.updated")}</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -245,7 +244,7 @@ export function LibraryDetailPage() {
                       variant="light"
                       to={`/articles/${item.article_revision.id}?libraryId=${libraryId}`}
                     >
-                      Open
+                      {t("library.open")}
                     </Button>
                   </Table.Td>
                 </Table.Tr>

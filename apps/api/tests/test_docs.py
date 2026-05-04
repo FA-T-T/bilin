@@ -25,18 +25,20 @@ def test_clean_machine_docs_cover_local_safety_contract() -> None:
 def test_readme_language_switch_covers_localized_readmes() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     readmes = {
-        "README.md": "简体中文",
-        "README.en.md": "English",
-        "README.ja.md": "日本語",
-        "README.ko.md": "한국어",
-        "README.es.md": "Español",
-        "README.fr.md": "Français",
-        "README.de.md": "Deutsch",
+        "README.md": ("简体中文", "衔牍", "核心"),
+        "README.en.md": ("English", "Ilios", "Core"),
+        "README.ja.md": ("日本語", "理紐", "Experimental"),
+        "README.ko.md": ("한국어", "Ilios", "Community"),
+        "README.es.md": ("Español", "Ilios", "Community"),
+        "README.fr.md": ("Français", "Ilios", "Community"),
+        "README.de.md": ("Deutsch", "Ilios", "Community"),
     }
 
-    for filename, language_label in readmes.items():
+    for filename, (language_label, product_name, maintenance_label) in readmes.items():
         content = (repo_root / filename).read_text(encoding="utf-8")
         assert language_label in content
+        assert product_name in content
+        assert maintenance_label in content
         assert "AGENT_GUIDE.md" in content
         for linked_file in readmes:
             if linked_file != filename:

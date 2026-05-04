@@ -2,7 +2,7 @@
 
 This fixture is a deterministic parser regression case. It is intentionally
 small enough to run in ordinary tests without LaTeXML while still exercising the
-document shapes Bilin must preserve: section headings, paragraphs, display
+document shapes Ilios must preserve: section headings, paragraphs, display
 equations, figure captions, table captions, labels, assets, and source Markdown.
 
 `latexml.html` is the converter output consumed by the default regression test.

@@ -155,6 +155,55 @@ def test_normalize_latexml_html_copies_assets_and_preserves_metadata(tmp_path: P
     assert (bundle_path / "assets" / "fig-0001.png").read_bytes() == b"fake image bytes"
 
 
+def test_normalize_latexml_html_treats_equation_tables_as_equations(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <table class="ltx_equation ltx_eqn_table" id="S3.E1">
+              <tbody>
+                <tr class="ltx_equation ltx_eqn_row">
+                  <td class="ltx_eqn_cell">
+                    <math display="block" alttext="\mathrm{Attention}(Q,K,V)=V"></math>
+                  </td>
+                  <td class="ltx_eqn_cell ltx_eqn_eqno">(1)</td>
+                </tr>
+              </tbody>
+            </table>
+            <table class="ltx_equationgroup ltx_eqn_align ltx_eqn_table" id="S3.EG1">
+              <tbody>
+                <tr class="ltx_equation ltx_eqn_row">
+                  <td><math display="inline" alttext="\displaystyle a"></math></td>
+                  <td><math display="inline" alttext="\displaystyle=b"></math></td>
+                </tr>
+                <tr class="ltx_equation ltx_eqn_row">
+                  <td><math display="inline" alttext="\displaystyle c"></math></td>
+                  <td><math display="inline" alttext="\displaystyle=d"></math></td>
+                </tr>
+              </tbody>
+            </table>
+            <figure class="ltx_table" id="S4.T1">
+              <figcaption>A real table with math.</figcaption>
+              <table><tr><td><math display="inline" alttext="O(n^2)"></math></td></tr></table>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["equation", "equation", "table"]
+    assert blocks[0].block_uid == "eq-0001"
+    assert blocks[0].metadata["label"] == "S3.E1"
+    assert blocks[0].source_markdown == r"\mathrm{Attention}(Q,K,V)=V"
+    assert blocks[1].source_markdown == "\\begin{aligned}\na =b \\\\\nc =d\n\\end{aligned}"
+    assert len(assets) == 1
+    assert assets[0].kind == "table"
+
+
 def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images(
     tmp_path: Path,
 ) -> None:
@@ -174,7 +223,10 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
               <figcaption>A paired image figure.</figcaption>
             </figure>
             <figure class="ltx_table" id="tab:results">
-              <figcaption>A LaTeXML table wrapped in a figure.</figcaption>
+              <figcaption>
+                <span class="ltx_tag ltx_tag_table">Table 1: </span>
+                A LaTeXML table wrapped in a figure.
+              </figcaption>
               <table><tr><td>Model</td><td>Score</td></tr></table>
             </figure>
           </body>
@@ -192,6 +244,7 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
     assert [block.block_type for block in blocks] == ["paragraph", "figure", "table"]
     assert blocks[0].source_markdown == ("See Figure [1](#fig:pair) and Table [1](#tab:results).")
     assert blocks[2].block_uid == "tbl-0001"
+    assert blocks[2].source_markdown == "**Table 1.** A LaTeXML table wrapped in a figure."
     assert blocks[2].metadata["label"] == "tab:results"
     figure_asset = next(asset for asset in assets if asset.kind == "figure")
     assert figure_asset.web_path == str(tmp_path / "bundle" / "assets" / "fig-0001.png")
@@ -201,6 +254,36 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
     table_asset = next(asset for asset in assets if asset.kind == "table")
     assert table_asset.web_path is None
     assert "<table>" in table_asset.metadata["html_fragment"]
+
+
+def test_normalize_latexml_html_keeps_layout_tables_inside_figures_as_figures(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure class="ltx_figure" id="fig:layout">
+              <table class="layout-grid"><tr><td>left panel</td><td>right panel</td></tr></table>
+              <figcaption>
+                <span class="ltx_tag ltx_tag_figure">Figure 1: </span>
+                A figure whose internal layout happens to use a table.
+              </figcaption>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["figure"]
+    assert blocks[0].source_markdown == (
+        "**Figure 1.** A figure whose internal layout happens to use a table."
+    )
+    assert assets[0].kind == "figure"
 
 
 def test_normalize_latexml_html_degrades_pdf_asset_when_converter_missing(

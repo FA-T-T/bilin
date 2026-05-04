@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -457,8 +458,14 @@ class _DocumentBuilder:
         if tag == "math" and element.attrib.get("display") == "block":
             self.add_equation(element)
             return
+        if tag == "figure" and _is_equation_container(element):
+            self.add_equation(element)
+            return
         if tag == "figure":
-            self.add_environment(element, "table" if _is_table_figure(element) else "figure")
+            self.add_environment(element, _latexml_environment_kind(element))
+            return
+        if tag == "table" and _is_equation_container(element):
+            self.add_equation(element)
             return
         if tag == "table":
             self.add_environment(element, "table")
@@ -716,30 +723,121 @@ def _caption_text(element: Any) -> str | None:
         if tag in {"figcaption", "caption"} or "caption" in class_name.lower():
             text = _markdown_text(candidate)
             if text:
+                return _strip_latexml_caption_tag(text)
+    return None
+
+
+def _latexml_environment_kind(element: Any) -> str:
+    caption_kind = _caption_tag_kind(element)
+    if caption_kind in {"figure", "table"}:
+        return caption_kind
+    return "table" if _is_table_figure(element) else "figure"
+
+
+def _caption_tag_kind(element: Any) -> str | None:
+    for candidate in element.iter():
+        class_name = candidate.attrib.get("class", "").lower()
+        if "ltx_tag_table" in class_name:
+            return "table"
+        if "ltx_tag_figure" in class_name:
+            return "figure"
+    text = _caption_text_without_tag_stripping(element)
+    if text and re.match(r"^\s*table\s+\d+", text, flags=re.IGNORECASE):
+        return "table"
+    if text and re.match(r"^\s*figure\s+\d+", text, flags=re.IGNORECASE):
+        return "figure"
+    return None
+
+
+def _caption_text_without_tag_stripping(element: Any) -> str | None:
+    for candidate in element.iter():
+        tag = _local_name(candidate.tag)
+        class_name = candidate.attrib.get("class", "")
+        if tag in {"figcaption", "caption"} or "caption" in class_name.lower():
+            text = _markdown_text(candidate)
+            if text:
                 return text
     return None
 
 
+def _strip_latexml_caption_tag(text: str) -> str:
+    return re.sub(r"^\s*(?:figure|fig\.|table)\s+\d+[.:]\s*", "", text, flags=re.IGNORECASE)
+
+
 def _is_table_figure(element: Any) -> bool:
     class_name = element.attrib.get("class", "").lower()
-    if "ltx_table" in class_name:
+    return "ltx_table" in class_name
+
+
+def _is_equation_container(element: Any) -> bool:
+    class_name = element.attrib.get("class", "").lower()
+    equation_classes = (
+        "ltx_equation",
+        "ltx_equationgroup",
+        "ltx_eqn_table",
+        "ltx_eqn_align",
+    )
+    if any(token in class_name for token in equation_classes):
         return True
     for child in element.iter():
-        if child is not element and _local_name(child.tag) == "table":
+        if child is element:
+            continue
+        child_class = child.attrib.get("class", "").lower()
+        if any(token in child_class for token in equation_classes):
             return True
     return False
 
 
 def _extract_math_tex(element: Any) -> str | None:
+    if _local_name(element.tag) == "math":
+        return _extract_single_math_tex(element)
+    rows = _extract_math_rows(element)
+    if rows:
+        if len(rows) == 1 and len(rows[0]) == 1:
+            return rows[0][0]
+        formatted_rows = [" ".join(row) for row in rows]
+        return "\\begin{aligned}\n" + " \\\\\n".join(formatted_rows) + "\n\\end{aligned}"
+    values = [_extract_single_math_tex(candidate) for candidate in element.iter()]
+    values = [value for value in values if value]
+    if values:
+        return " ".join(values)
+    return None
+
+
+def _extract_math_rows(element: Any) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for row in element.iter():
+        if _local_name(row.tag) != "tr":
+            continue
+        row_values = [
+            value
+            for value in (_extract_single_math_tex(candidate) for candidate in row.iter())
+            if value
+        ]
+        if row_values:
+            rows.append(row_values)
+    if rows:
+        return rows
+    value = _extract_single_math_tex(element)
+    return [[value]] if value else []
+
+
+def _extract_single_math_tex(element: Any) -> str | None:
+    if _local_name(element.tag) != "math":
+        return None
     for candidate in element.iter():
         if _local_name(candidate.tag) == "annotation":
             encoding = candidate.attrib.get("encoding", "")
             if "tex" in encoding.lower():
-                text = _clean_text(candidate)
+                text = _normalize_math_tex(_clean_text(candidate))
                 if text:
                     return text
     alttext = element.attrib.get("alttext") or element.attrib.get("tex")
-    return alttext.strip() if alttext else None
+    return _normalize_math_tex(alttext) if alttext else None
+
+
+def _normalize_math_tex(value: str) -> str:
+    return value.replace("%\r\n", "").replace("%\n", "").replace("\\displaystyle", "").strip()
 
 
 def _asset_references(element: Any) -> list[str]:

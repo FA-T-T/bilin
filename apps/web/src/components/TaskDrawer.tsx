@@ -3,31 +3,33 @@ import { Pause, Play, Square } from "lucide-react";
 
 import { useJobAction, useJobEvents, useJobs } from "../api/hooks";
 import type { Job } from "../api/types";
+import { useT } from "../i18n";
 import { useUiStore } from "../state/ui";
 
 export function TaskDrawer() {
+  const t = useT();
   useJobEvents();
   const opened = useUiStore((state) => state.taskDrawerOpen);
   const close = useUiStore((state) => state.closeTaskDrawer);
   const jobs = useJobs();
 
   return (
-    <Drawer opened={opened} onClose={close} position="right" title="Background tasks" size="lg">
+    <Drawer opened={opened} onClose={close} position="right" title={t("task.title")} size="lg">
       <Stack gap="md">
         <Group justify="space-between">
           <Text size="sm" c="dimmed">
-            Imports, parsing, translation, note generation, embedding, and exports run here.
+            {t("task.description")}
           </Text>
         </Group>
         {jobs.isError ? (
           <Text c="red" size="sm">
-            API is unavailable. Start the FastAPI service on port 8000.
+            {t("task.apiUnavailable")}
           </Text>
         ) : null}
         <Stack gap="sm">
           {(jobs.data ?? []).length === 0 ? (
             <Text c="dimmed" size="sm">
-              No queued work yet.
+              {t("task.empty")}
             </Text>
           ) : (
             (jobs.data ?? []).map((job) => <TaskRow key={job.id} job={job} />)
@@ -39,6 +41,7 @@ export function TaskDrawer() {
 }
 
 function TaskRow({ job }: { job: Job }) {
+  const t = useT();
   const pause = useJobAction("pause");
   const resume = useJobAction("resume");
   const cancel = useJobAction("cancel");
@@ -59,36 +62,36 @@ function TaskRow({ job }: { job: Job }) {
           </Text>
         </div>
         <Group gap={4}>
-          <Tooltip label="Pause">
+          <Tooltip label={t("task.pause")}>
             <ActionIcon
               size="sm"
               variant="subtle"
               onClick={() => pause.mutate(job.id)}
               disabled={job.status !== "running" && job.status !== "queued"}
-              aria-label="Pause job"
+              aria-label={t("task.pauseJob")}
             >
               <Pause size={14} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Resume">
+          <Tooltip label={t("task.resume")}>
             <ActionIcon
               size="sm"
               variant="subtle"
               onClick={() => resume.mutate(job.id)}
               disabled={job.status !== "paused"}
-              aria-label="Resume job"
+              aria-label={t("task.resumeJob")}
             >
               <Play size={14} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Cancel">
+          <Tooltip label={t("task.cancel")}>
             <ActionIcon
               size="sm"
               variant="subtle"
               color="red"
               onClick={() => cancel.mutate(job.id)}
               disabled={["succeeded", "failed", "cancelled"].includes(job.status)}
-              aria-label="Cancel job"
+              aria-label={t("task.cancelJob")}
             >
               <Square size={14} />
             </ActionIcon>

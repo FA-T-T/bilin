@@ -1,6 +1,6 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LibraryHomePage } from "../src/pages/LibraryHomePage";
 import { ReaderBlock } from "../src/components/ReaderBlock";
+import { ReaderBlockList } from "../src/components/ReaderBlockList";
 import { TaskDrawer } from "../src/components/TaskDrawer";
 import { LibraryDetailPage } from "../src/pages/LibraryDetailPage";
 import { ReaderPage } from "../src/pages/ReaderPage";
@@ -16,6 +17,7 @@ import type { DocumentBlock } from "../src/api/types";
 import { useUiStore } from "../src/state/ui";
 
 beforeEach(() => {
+  useUiStore.getState().setLocale("en");
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     value: vi.fn(),
     configurable: true
@@ -26,6 +28,7 @@ afterEach(() => {
   cleanup();
   useUiStore.getState().closeTaskDrawer();
   useUiStore.getState().setReaderViewMode("study");
+  useUiStore.getState().setLocale("en");
   vi.unstubAllGlobals();
 });
 
@@ -80,13 +83,36 @@ function sseEvent(event: string, data: unknown) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function readerTestBlock(
+  blockUid: string,
+  blockType: DocumentBlock["block_type"],
+  sourceMarkdown: string,
+  metadata: DocumentBlock["metadata"] = {}
+): DocumentBlock {
+  return {
+    id: `block-${blockUid}`,
+    article_revision_id: "revision-1",
+    block_uid: blockUid,
+    structural_path: blockUid,
+    block_type: blockType,
+    parent_uid: null,
+    content_hash: `hash-${blockUid}`,
+    context_hash: null,
+    source_markdown: sourceMarkdown,
+    source_latex: null,
+    metadata,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+}
+
 async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
   await userEvent.click(await screen.findByRole("tab", { name }));
 }
 
 async function expandFirstTranslation() {
   const buttons = await screen.findAllByRole("button", { name: "Show translation" });
-  await userEvent.click(buttons[0]);
+  fireEvent.pointerDown(buttons[0]);
 }
 
 const library = {
@@ -130,7 +156,7 @@ const article = {
     errors: [],
     metadata: {}
   },
-  block_count: 5,
+  block_count: 6,
   asset_count: 2
 };
 
@@ -206,8 +232,23 @@ const documentPayload = {
     {
       id: "block-5",
       article_revision_id: "revision-1",
-      block_uid: "tbl-0001",
+      block_uid: "p-0003",
       structural_path: "00005",
+      block_type: "paragraph",
+      parent_uid: null,
+      content_hash: "hash-flow-paragraph",
+      context_hash: null,
+      source_markdown: "The same figure should let later prose continue beside it.",
+      source_latex: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    },
+    {
+      id: "block-6",
+      article_revision_id: "revision-1",
+      block_uid: "tbl-0001",
+      structural_path: "00006",
       block_type: "table",
       parent_uid: null,
       content_hash: "hash-table",
@@ -234,7 +275,7 @@ const documentPayload = {
       web_path: "/tmp/web/fig-0001.png",
       caption: "An overview pipeline.",
       label: "fig:overview",
-      metadata: { original_reference: "figures/pipeline.png" },
+      metadata: { original_reference: "figures/pipeline.png", width: 420, height: 720 },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     },
@@ -448,7 +489,7 @@ describe("Bilin web shell", () => {
   });
 
   it("renders real asset images when an asset URL is available", () => {
-    renderWithProviders(
+    const { container } = renderWithProviders(
       <ReaderBlock
         block={{
           id: "block-asset",
@@ -459,9 +500,13 @@ describe("Bilin web shell", () => {
           parent_uid: null,
           content_hash: "hash-figure",
           context_hash: null,
-          source_markdown: "**Figure 1.** Asset caption.",
+          source_markdown: "**Figure 1.** Figure 1: Asset caption.",
           source_latex: null,
-          metadata: { asset_id: "fig-0001" },
+          metadata: {
+            asset_id: "fig-0001",
+            html_fragment:
+              '<figure class="ltx_figure"><figcaption><span class="ltx_tag ltx_tag_figure">Figure 1: </span>Asset caption.</figcaption></figure>'
+          },
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }}
@@ -474,11 +519,12 @@ describe("Bilin web shell", () => {
           web_path: "/tmp/web.png",
           caption: "Asset caption",
           label: "fig:asset",
-          metadata: {},
+          metadata: { width: 360, height: 720 },
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }}
         assetUrl="http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-0001"
+        translation="**图1.** 图1：资产说明。"
         viewMode="bilingual"
       />
     );
@@ -487,7 +533,117 @@ describe("Bilin web shell", () => {
       "src",
       "http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-0001"
     );
+    expect(container.querySelector(".asset-image-narrow")).not.toBeNull();
+    expect(container).toHaveTextContent("Figure 1. Asset caption.");
+    expect(container).not.toHaveTextContent("Figure 1. Figure 1");
+    expect(container).toHaveTextContent("图1：资产说明。");
+    expect(container).not.toHaveTextContent("图1. 图1");
     expect(screen.queryByText("Structured asset placeholder")).not.toBeInTheDocument();
+  });
+
+  it("sizes LaTeXML multi-panel figures from article layout metadata", () => {
+    const htmlFragment =
+      '<figure class="ltx_figure"><div class="ltx_flex_figure"><div class="ltx_flex_cell"><div style="width:216.8pt;"><img src="left.png" width="267" height="531"></div></div><div class="ltx_flex_cell"><div style="width:216.8pt;"><img src="right.png" width="501" height="770"></div></div></div><figcaption><span class="ltx_tag ltx_tag_figure">Figure 2: </span>Two-panel attention diagram.</figcaption></figure>';
+    renderWithProviders(
+      <ReaderBlock
+        block={{
+          id: "block-multipanel",
+          article_revision_id: "revision-1",
+          block_uid: "fig-multipanel",
+          structural_path: "00007",
+          block_type: "figure",
+          parent_uid: null,
+          content_hash: "hash-multipanel",
+          context_hash: null,
+          source_markdown: "**Figure 2.** Two-panel attention diagram.",
+          source_latex: null,
+          metadata: { asset_id: "fig-multipanel", html_fragment: htmlFragment },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        asset={{
+          id: "asset-multipanel",
+          article_revision_id: "revision-1",
+          asset_id: "fig-multipanel",
+          kind: "figure",
+          source_path: "/tmp/left.png",
+          web_path: "/tmp/left.png",
+          caption: "Two-panel attention diagram.",
+          label: "S3.F2",
+          metadata: {
+            original_reference: "left.png",
+            html_fragment: htmlFragment
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        assetUrl="http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-multipanel"
+        viewMode="study"
+      />
+    );
+
+    const image = screen.getByRole("img", { name: "Two-panel attention diagram." });
+    expect(image).toHaveAttribute("data-article-layout", "multi-panel");
+    expect(image).toHaveAttribute("data-asset-layout", "narrow");
+    expect(image).toHaveClass("asset-image-article-multi-panel");
+    expect((image as HTMLElement).style.getPropertyValue("--asset-max-inline-size")).toBe("217px");
+    expect((image as HTMLElement).style.getPropertyValue("--asset-max-block-size")).toBe("336px");
+  });
+
+  it("keeps display equations inside the media flow when they continue figure prose", () => {
+    const blocks = [
+      readerTestBlock("fig-flow", "figure", "**Figure 2.** Flow figure."),
+      readerTestBlock("p-flow", "paragraph", "A paragraph should run beside the figure."),
+      readerTestBlock("eq-flow", "equation", "E = mc^2"),
+      readerTestBlock("p-after", "paragraph", "The next paragraph can continue the same flow.")
+    ];
+
+    renderWithProviders(
+      <ReaderBlockList
+        blocks={blocks}
+        activeBlockUid={null}
+        enableMediaFlow
+        onActiveBlockChange={() => undefined}
+        renderBlock={(block) => <div>{block.source_markdown}</div>}
+      />
+    );
+
+    const flowRegion = screen.getByTestId("reader-flow-region-fig-flow");
+    expect(flowRegion).toHaveAttribute("data-pretext-flow-engine", "fixed-width");
+    expect(flowRegion.style.getPropertyValue("--flow-media-rail-width")).not.toBe("");
+    expect(within(flowRegion).getByTestId("reader-block-shell-p-flow")).toBeInTheDocument();
+    expect(within(flowRegion).getByTestId("reader-block-shell-eq-flow")).toBeInTheDocument();
+  });
+
+  it("keeps legacy LaTeXML equation tables inside the media flow", () => {
+    const equationHtml =
+      '<table class="ltx_equationgroup ltx_eqn_align ltx_eqn_table"><tr><td><math alttext="\\mathrm{MultiHead}(Q,K,V)"></math></td><td><math alttext="=\\mathrm{Concat}(head_1,head_h)W^O"></math></td></tr></table>';
+    const blocks = [
+      readerTestBlock("fig-flow", "figure", "**Figure 2.** Flow figure."),
+      readerTestBlock(
+        "p-flow",
+        "paragraph",
+        "The paragraph beside the figure introduces the formula."
+      ),
+      readerTestBlock("tbl-equation", "table", "**Table 2.** MultiHead(Q,K,V)", {
+        html_fragment: equationHtml
+      }),
+      readerTestBlock("p-after", "paragraph", "The next paragraph can continue after the formula.")
+    ];
+
+    renderWithProviders(
+      <ReaderBlockList
+        blocks={blocks}
+        activeBlockUid={null}
+        enableMediaFlow
+        onActiveBlockChange={() => undefined}
+        renderBlock={(block) => <div>{block.source_markdown}</div>}
+      />
+    );
+
+    const flowRegion = screen.getByTestId("reader-flow-region-fig-flow");
+    expect(within(flowRegion).getByTestId("reader-block-shell-p-flow")).toBeInTheDocument();
+    expect(within(flowRegion).getByTestId("reader-block-shell-tbl-equation")).toBeInTheDocument();
   });
 
   it("submits an arXiv import job and renders article rows", async () => {
@@ -652,6 +808,9 @@ describe("Bilin web shell", () => {
       "src",
       "http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-0001"
     );
+    const flowRegion = await screen.findByTestId("reader-flow-region-fig-0001");
+    expect(within(flowRegion).getByTestId("reader-block-shell-p-0002")).toBeInTheDocument();
+    expect(within(flowRegion).getByTestId("reader-block-shell-p-0003")).toBeInTheDocument();
     expect(screen.queryByText(/Structured asset placeholder/)).not.toBeInTheDocument();
     expect(await screen.findByText("Model")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Figure 1" })).toHaveAttribute("href", "#fig-0001");
@@ -857,12 +1016,16 @@ describe("Bilin web shell", () => {
       expect(paragraphShell.querySelector(".reader-block-active")).not.toBeNull()
     );
     await userEvent.click(within(screen.getByTestId("reader-view-mode")).getByText("Focus"));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Focus mode keeps the current paragraph expanded and dims the rest."
+    );
     expect(await screen.findByText("第一段 技术内容 的译文。")).toBeInTheDocument();
     expect(paragraphShell.querySelector(".reader-block-focus-current")).not.toBeNull();
     expect(
       screen.getByTestId("reader-block-shell-sec-001").querySelector(".reader-block-dimmed")
     ).not.toBeNull();
     expect(screen.getByRole("button", { name: "Translation open" })).toBeDisabled();
+    expect(screen.queryByText("Focus auto-expanded")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Chapters" }));
     expect(screen.getByRole("link", { name: "1 Introduction" })).toHaveAttribute(
       "aria-current",
@@ -917,8 +1080,10 @@ describe("Bilin web shell", () => {
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
     const paragraph = await screen.findByText("First paragraph with inline technical content.");
     const sourcePane = paragraph.closest(".source-pane");
+    const textBlock = sourcePane?.closest(".text-block");
     expect(sourcePane).not.toBeNull();
-    await userEvent.click(
+    expect(textBlock).not.toBeNull();
+    fireEvent.pointerDown(
       within(sourcePane as HTMLElement).getByRole("button", { name: "Show translation" })
     );
     const translation = await screen.findByText("第一段 技术内容 的译文。");
@@ -928,9 +1093,18 @@ describe("Bilin web shell", () => {
     await userEvent.hover(sourcePane as HTMLElement);
     expect(sourcePane?.closest(".text-block")).toHaveClass("reader-block-active");
 
+    await userEvent.click(within(textBlock as HTMLElement).getByLabelText("Key idea"));
+    expect(textBlock).toHaveClass("reader-block-color-yellow");
+
     await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Copy source"));
     expect(writeText).toHaveBeenCalledWith("First paragraph with inline technical content.");
     expect(await screen.findByRole("status")).toHaveTextContent("Source block copied.");
+
+    await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Copy for Obsidian"));
+    expect(writeText).toHaveBeenLastCalledWith(
+      expect.stringContaining("> [!important] Key idea · p-0001")
+    );
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("#ilios/key-idea"));
 
     await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Show LaTeX"));
     expect(await screen.findByText("Source inspector")).toBeInTheDocument();
@@ -1067,6 +1241,191 @@ describe("Bilin web shell", () => {
     expect(screen.getByText("Abstract").closest(".paired-block")).toBeNull();
   });
 
+  it("renders formulas inside LaTeXML table fragments", () => {
+    const tableBlock = documentPayload.blocks.find((block) => block.block_type === "table")!;
+    const tableAsset = {
+      id: "asset-table-math",
+      article_revision_id: "revision-1",
+      asset_id: "asset-table-math",
+      kind: "table",
+      source_path: null,
+      web_path: null,
+      caption: "Regression table.",
+      label: "tab:math",
+      metadata: {
+        html_fragment:
+          '<figure class="ltx_table" id="tab:math"><table><tr><th>Loss</th><td><math alttext="L = x_i^2"></math></td></tr><tr><th>Complexity</th><td><math alttext="O(k\\cdot n\\cdot d^{2})"></math></td></tr></table></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={tableBlock} asset={tableAsset} viewMode="bilingual" />
+    );
+    expect(container.querySelector(".environment-block-table")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview table")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview .katex")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview")).toHaveTextContent(
+      "O(k\\cdot n\\cdot d^{2})"
+    );
+    expect(container.querySelector(".latexml-fragment-preview")).not.toHaveTextContent(/ddd\d/);
+  });
+
+  it("renders LaTeXML equation tables as equations for existing parsed articles", () => {
+    const equationTableBlock: DocumentBlock = {
+      id: "block-equation-table",
+      article_revision_id: "revision-1",
+      block_uid: "tbl-equation",
+      structural_path: "00006",
+      block_type: "table",
+      parent_uid: null,
+      content_hash: "hash-equation-table",
+      context_hash: null,
+      source_markdown: "**Table 1.** Attention(Q,K,V)=V (1)",
+      source_latex: null,
+      metadata: {
+        asset_id: "tbl-equation",
+        label: "S3.E1",
+        html_fragment:
+          '<table class="ltx_equation ltx_eqn_table" id="S3.E1"><tr><td><math display="block" alttext="\\mathrm{Attention}(Q,K,V)=V"></math></td><td>(1)</td></tr></table>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const equationTableAsset = {
+      id: "asset-equation-table",
+      article_revision_id: "revision-1",
+      asset_id: "tbl-equation",
+      kind: "table",
+      source_path: null,
+      web_path: null,
+      caption: "Attention equation.",
+      label: "S3.E1",
+      metadata: equationTableBlock.metadata,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={equationTableBlock}
+        asset={equationTableAsset}
+        viewMode="bilingual"
+        translation="表1. Attention 方程的旧翻译。"
+      />
+    );
+
+    expect(container.querySelector(".math-block .katex")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview table")).toBeNull();
+    expect(screen.queryByText(/Table 1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/表1/)).not.toBeInTheDocument();
+  });
+
+  it("renders legacy LaTeXML table figures with table captions", () => {
+    const legacyTableFigureBlock: DocumentBlock = {
+      id: "block-legacy-table",
+      article_revision_id: "revision-1",
+      block_uid: "fig-legacy-table",
+      structural_path: "00007",
+      block_type: "figure",
+      parent_uid: null,
+      content_hash: "hash-legacy-table",
+      context_hash: null,
+      source_markdown:
+        "**Figure 3.** Table 1: Maximum path lengths, per-layer complexity and minimum number of sequential operations.",
+      source_latex: null,
+      metadata: {
+        asset_id: "fig-legacy-table",
+        label: "S4.T1",
+        html_fragment:
+          '<figure class="ltx_table" id="S4.T1"><figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_table">Table 1: </span>Maximum path lengths, per-layer complexity and minimum number of sequential operations.</figcaption><table class="ltx_tabular"><tr><th>Layer Type</th><th>Complexity</th></tr><tr><td>Self-Attention</td><td><math alttext="O(n^2 d)"></math></td></tr></table></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const legacyTableAsset = {
+      id: "asset-legacy-table",
+      article_revision_id: "revision-1",
+      asset_id: "fig-legacy-table",
+      kind: "figure",
+      source_path: null,
+      web_path: null,
+      caption:
+        "Table 1: Maximum path lengths, per-layer complexity and minimum number of sequential operations.",
+      label: "S4.T1",
+      metadata: legacyTableFigureBlock.metadata,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={legacyTableFigureBlock}
+        asset={legacyTableAsset}
+        viewMode="bilingual"
+        translation="**图3.** 表1：不同层类型的最大路径长度、每层复杂度和最少顺序操作数。"
+      />
+    );
+
+    const caption = screen.getByText("Table 1.").closest("p");
+    expect(caption).toHaveTextContent(
+      "Table 1. Maximum path lengths, per-layer complexity and minimum number of sequential operations."
+    );
+    expect(screen.queryByText(/Figure 3/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/图3/)).not.toBeInTheDocument();
+    expect(screen.getByText(/表1：不同层类型/)).toBeInTheDocument();
+    expect(container.querySelector(".latexml-fragment-preview table")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview .katex")).not.toBeNull();
+  });
+
+  it("falls back to DOM copy when the async clipboard API is unavailable", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true
+    });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      value: execCommand,
+      configurable: true
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(chatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    const paragraph = await screen.findByText("First paragraph with inline technical content.");
+    const sourcePane = paragraph.closest(".source-pane");
+    expect(sourcePane).not.toBeNull();
+    await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Copy source"));
+
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(await screen.findByRole("status")).toHaveTextContent("Source block copied.");
+  });
+
   it("saves provider profiles from settings", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1189,6 +1548,29 @@ describe("Bilin web shell", () => {
       review_status: "approved",
       reuse_enabled: true
     });
+  });
+
+  it("switches interface language from settings without product design copy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/providers")) return jsonResponse([]);
+        if (url.endsWith("/doctor")) return jsonResponse({ bilin_home: "/tmp", capabilities: [] });
+        if (url.includes("/translation-memory")) return jsonResponse({ entries: [] });
+        return jsonResponse([]);
+      })
+    );
+
+    renderWithProviders(<SettingsPage />);
+    await userEvent.click(screen.getByRole("tab", { name: "Interface" }));
+    expect(screen.queryByText("Product names")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ilios")).not.toBeInTheDocument();
+    expect(screen.queryByText("Core")).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByLabelText("Language")[0]);
+    await userEvent.click(await screen.findByRole("option", { name: "简体中文" }));
+    expect(await screen.findByText("界面语言")).toBeInTheDocument();
+    expect(screen.queryByText("产品名称")).not.toBeInTheDocument();
   });
 
   it("queues article translation from the reader", async () => {
@@ -1517,6 +1899,9 @@ describe("Bilin web shell", () => {
   });
 
   it("exports article artifacts from the reader", async () => {
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
@@ -1557,10 +1942,16 @@ describe("Bilin web shell", () => {
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
     await openReaderTool("Export");
-    await userEvent.click(await screen.findByRole("button", { name: "Export artifact" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Export and download" }));
 
-    expect(await screen.findByText(/Wrote bilingual.zh-CN.md/)).toBeInTheDocument();
+    expect(await screen.findByText(/Ready: bilingual.zh-CN.md/)).toBeInTheDocument();
     expect(await screen.findByText("Missing translations: fig-0001")).toBeInTheDocument();
+    const downloadLink = await screen.findByRole("link", { name: "Download file" });
+    expect(downloadLink).toHaveAttribute("download", "bilingual.zh-CN.md");
+    expect(downloadLink).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:8000/libraries/library-1/articles/revision-1/exports/bilingual.zh-CN.md"
+    );
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
@@ -1569,6 +1960,8 @@ describe("Bilin web shell", () => {
             init?.method === "POST"
         )
       ).toBe(true);
+      expect(anchorClick).toHaveBeenCalledTimes(1);
     });
+    anchorClick.mockRestore();
   });
 });

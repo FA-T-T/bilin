@@ -32,7 +32,7 @@ import {
   Send,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { API_BASE_URL } from "../api/client";
@@ -75,15 +75,18 @@ import type {
 } from "../api/types";
 import {
   ReaderBlock,
+  type ReaderBlockColor,
   type ReaderAssetFile,
   type ReferenceTargets
 } from "../components/ReaderBlock";
 import { ReaderBlockList } from "../components/ReaderBlockList";
 import type { ReaderToolbarActionId } from "../components/readerToolbarActions";
 import { activeGlossaryTerms, applyGlossaryToMarkdown } from "../glossary";
+import { useT } from "../i18n";
 import { type ReaderViewMode, useUiStore } from "../state/ui";
 
 export function ReaderPage() {
+  const t = useT();
   const { articleId } = useParams();
   const [searchParams] = useSearchParams();
   const libraryId = searchParams.get("libraryId") ?? undefined;
@@ -106,9 +109,13 @@ export function ReaderPage() {
   const [streamingCitedBlocks, setStreamingCitedBlocks] = useState<RetrievedBlock[]>([]);
   const [readerActionMessage, setReaderActionMessage] = useState<string | null>(null);
   const [activeBlockUid, setActiveBlockUid] = useState<string | null>(null);
+  const [blockColors, setBlockColors] = useState<Record<string, ReaderBlockColor>>({});
   const [chaptersOpen, setChaptersOpen] = useState(false);
+  const lastExportDownloadKey = useRef<string | null>(null);
   const document = useArticleDocument(libraryId, articleId);
   const exportArticle = useExportArticle(libraryId, articleId);
+  const exportResult = exportArticle.data;
+  const currentExportDownloadUrl = exportDownloadUrl(libraryId, articleId, exportResult);
   const translations = useArticleTranslations(libraryId, articleId, targetLanguage);
   const glossary = useArticleGlossary(libraryId, articleId, targetLanguage);
   const chat = useArticleChat(libraryId, articleId);
@@ -128,8 +135,8 @@ export function ReaderPage() {
   const selectTranslationVariant = useSelectTranslationVariant(libraryId, articleId);
   const blocks = useMemo(() => document.data?.blocks ?? [], [document.data?.blocks]);
   const assets = useMemo(() => document.data?.assets ?? [], [document.data?.assets]);
-  const title = articleTitle(document.data);
-  const subtitle = documentSubtitle(document.data, libraryId, articleId);
+  const title = articleTitle(document.data, t);
+  const subtitle = documentSubtitle(document.data, libraryId, articleId, t);
   const navBlocks = blocks.filter((block) => block.block_type === "section");
   const activeNavBlockUid = useMemo(
     () => navBlockUidForActiveBlock(blocks, navBlocks, activeBlockUid),
@@ -174,6 +181,13 @@ export function ReaderPage() {
     }
     return map;
   }, [glossary.data?.terms, selectedVariantByBlockUid]);
+  const flowTextForBlock = useCallback(
+    (block: DocumentBlock) =>
+      viewMode === "translation"
+        ? (translationByBlockUid.get(block.block_uid) ?? block.source_markdown)
+        : block.source_markdown,
+    [translationByBlockUid, viewMode]
+  );
   const affectedBlockUids = useMemo(
     () => new Set(glossary.data?.affected_block_uids ?? []),
     [glossary.data?.affected_block_uids]
@@ -198,6 +212,27 @@ export function ReaderPage() {
   useEffect(() => {
     setVariantOverrides({});
   }, [articleId, targetLanguage]);
+
+  useEffect(() => {
+    if (!exportResult || !currentExportDownloadUrl) return;
+    const downloadKey = `${exportResult.file_name}:${exportResult.created_at}:${exportResult.bytes_written}`;
+    if (lastExportDownloadKey.current === downloadKey) return;
+    lastExportDownloadKey.current = downloadKey;
+    triggerBrowserDownload(currentExportDownloadUrl, exportResult.file_name);
+  }, [currentExportDownloadUrl, exportResult]);
+
+  useEffect(() => {
+    if (!libraryId || !articleId) {
+      setBlockColors({});
+      return;
+    }
+    try {
+      const raw = globalThis.localStorage?.getItem(blockColorStorageKey(libraryId, articleId));
+      setBlockColors(raw ? parseStoredBlockColors(raw) : {});
+    } catch {
+      setBlockColors({});
+    }
+  }, [articleId, libraryId]);
 
   useEffect(() => {
     if (blocks.length === 0) {
@@ -249,6 +284,27 @@ export function ReaderPage() {
     setVariantOverrides((current) => ({ ...current, [blockUid]: variantId }));
     selectTranslationVariant.mutate({ variantId, targetLanguage });
     setReaderActionMessage(`Selected translation variant for ${blockUid}.`);
+  };
+
+  const handleBlockColorChange = (blockUid: string, color: ReaderBlockColor) => {
+    if (!libraryId || !articleId) return;
+    setBlockColors((current) => {
+      const next = { ...current };
+      if (color === "none") {
+        delete next[blockUid];
+      } else {
+        next[blockUid] = color;
+      }
+      try {
+        globalThis.localStorage?.setItem(
+          blockColorStorageKey(libraryId, articleId),
+          JSON.stringify(next)
+        );
+      } catch {
+        // Color marks remain usable in memory if localStorage is unavailable.
+      }
+      return next;
+    });
   };
 
   const queueAffectedRetranslation = () => {
@@ -324,10 +380,7 @@ export function ReaderPage() {
       return;
     }
     try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("Clipboard API unavailable");
-      }
-      await navigator.clipboard.writeText(text);
+      await writeClipboardText(text);
       setReaderActionMessage(`${label} copied.`);
     } catch {
       setReaderActionMessage("Clipboard is unavailable. Select the text and copy it manually.");
@@ -341,6 +394,17 @@ export function ReaderPage() {
   ) => {
     if (actionId === "copy-source" || actionId === "copy-block") {
       void copyText(block.source_markdown, "Source block");
+      return;
+    }
+    if (actionId === "copy-obsidian") {
+      void copyText(
+        obsidianCalloutForBlock(
+          block,
+          translationByBlockUid.get(block.block_uid),
+          blockColors[block.block_uid] ?? "none"
+        ),
+        "Obsidian callout"
+      );
       return;
     }
     if (actionId === "copy-translation") {
@@ -376,9 +440,9 @@ export function ReaderPage() {
       <Modal
         opened={Boolean(inspectedBlock)}
         onClose={() => setInspectedBlock(null)}
-        title="Source inspector"
+        title={t("reader.sourceInspector")}
         size="lg"
-        closeButtonProps={{ "aria-label": "Close source inspector" }}
+        closeButtonProps={{ "aria-label": t("reader.closeSourceInspector") }}
       >
         {inspectedBlock ? (
           <pre className="source-inspector">
@@ -394,15 +458,15 @@ export function ReaderPage() {
         }}
         title={
           retranslationBlock
-            ? `Retranslate block ${retranslationBlock.block_uid}`
-            : "Retranslate block"
+            ? `${t("reader.retranslateBlock")} ${retranslationBlock.block_uid}`
+            : t("reader.retranslateBlock")
         }
         size="lg"
-        closeButtonProps={{ "aria-label": "Close retranslation dialog" }}
+        closeButtonProps={{ "aria-label": t("reader.closeRetranslation") }}
       >
         <Textarea
-          label="Custom prompt"
-          placeholder="Optional instruction for this block, for example preserve a term or use a shorter academic style"
+          label={t("reader.customPrompt")}
+          placeholder={t("reader.customPromptPlaceholder")}
           autosize
           minRows={4}
           value={customRetranslationPrompt}
@@ -415,7 +479,7 @@ export function ReaderPage() {
             loading={translateBlock.isPending}
             disabled={!selectedProviderId || !retranslationBlock}
           >
-            Queue retranslation
+            {t("reader.queueRetranslation")}
           </Button>
         </Group>
       </Modal>
@@ -428,28 +492,32 @@ export function ReaderPage() {
           <SegmentedControl
             data-testid="reader-view-mode"
             value={viewMode}
-            onChange={(value) => setReaderViewMode(value as ReaderViewMode)}
+            onChange={(value) => {
+              const nextMode = value as ReaderViewMode;
+              setReaderViewMode(nextMode);
+              setReaderActionMessage(nextMode === "focus" ? t("reader.focusModeHint") : null);
+            }}
             data={[
-              { label: "Study", value: "study" },
-              { label: "Focus", value: "focus" },
-              { label: "Bilingual", value: "bilingual" },
-              { label: "Translation", value: "translation" },
-              { label: "Source", value: "source" }
+              { label: t("reader.study"), value: "study" },
+              { label: t("reader.focus"), value: "focus" },
+              { label: t("reader.bilingual"), value: "bilingual" },
+              { label: t("reader.translationView"), value: "translation" },
+              { label: t("reader.sourceView"), value: "source" }
             ]}
           />
         </Group>
         {navBlocks.length > 0 ? (
-          <section className="reader-chapters" aria-label="Parsed chapters">
+          <section className="reader-chapters" aria-label={t("reader.chapters")}>
             <Button
               variant="subtle"
               leftSection={<ListTree size={16} />}
               rightSection={chaptersOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               onClick={() => setChaptersOpen((open) => !open)}
             >
-              Chapters
+              {t("reader.chapters")}
             </Button>
             <Collapse in={chaptersOpen}>
-              <nav className="reader-chapter-list" aria-label="Parsed chapters">
+              <nav className="reader-chapter-list" aria-label={t("reader.chapters")}>
                 {navBlocks.map((block, index) => (
                   <a
                     key={block.block_uid}
@@ -480,19 +548,19 @@ export function ReaderPage() {
           <Tabs defaultValue="translate" className="reader-workbench" keepMounted={false}>
             <Tabs.List>
               <Tabs.Tab value="translate" leftSection={<Languages size={15} />}>
-                Translate
+                {t("reader.translate")}
               </Tabs.Tab>
               <Tabs.Tab value="glossary" leftSection={<BookMarked size={15} />}>
-                Terms
+                {t("reader.terms")}
               </Tabs.Tab>
               <Tabs.Tab value="chat" leftSection={<MessageSquare size={15} />}>
-                Ask
+                {t("reader.ask")}
               </Tabs.Tab>
               <Tabs.Tab value="notes" leftSection={<FileText size={15} />}>
-                Notes
+                {t("reader.notes")}
               </Tabs.Tab>
               <Tabs.Tab value="export" leftSection={<Download size={15} />}>
-                Export
+                {t("reader.export")}
               </Tabs.Tab>
             </Tabs.List>
 
@@ -500,17 +568,17 @@ export function ReaderPage() {
               <div className="panel reader-translation-panel">
                 <Group align="end">
                   <Select
-                    label="Provider"
-                    placeholder="Configure a provider in Settings"
+                    label={t("reader.provider")}
+                    placeholder={t("reader.configureProvider")}
                     value={selectedProviderId}
                     onChange={setSelectedProviderId}
                     data={(providers.data ?? []).map((provider) => ({
-                      label: `${provider.name} · ${provider.default_model ?? "no model"}`,
+                      label: `${provider.name} · ${provider.default_model ?? t("reader.noModel")}`,
                       value: provider.id
                     }))}
                   />
                   <TextInput
-                    label="Target language"
+                    label={t("reader.targetLanguage")}
                     value={targetLanguage}
                     onChange={(event) => setTargetLanguage(event.target.value)}
                   />
@@ -520,22 +588,23 @@ export function ReaderPage() {
                     loading={translateArticle.isPending}
                     disabled={!selectedProviderId || !targetLanguage.trim() || blocks.length === 0}
                   >
-                    Translate paper
+                    {t("reader.translatePaper")}
                   </Button>
                 </Group>
                 <Text c="dimmed" size="sm" mt="sm">
-                  Translation jobs target paragraphs and captions. Quality depends on the selected
-                  model, language, and domain terminology.
+                  {t("reader.translationHelp")}
                 </Text>
                 {translateArticle.data ? (
                   <Text c="dimmed" size="sm" mt="xs">
-                    Queued {translateArticle.data.jobs_created} blocks, reused{" "}
-                    {translateArticle.data.cached_blocks} cached blocks.
+                    {t("reader.translationQueued", {
+                      jobs: translateArticle.data.jobs_created,
+                      cached: translateArticle.data.cached_blocks
+                    })}
                   </Text>
                 ) : null}
                 {translateArticle.isError || translateBlock.isError ? (
                   <Text c="red" size="sm" mt="xs">
-                    Translation could not be queued. Check provider settings and API availability.
+                    {t("reader.translationQueueError")}
                   </Text>
                 ) : null}
               </div>
@@ -649,10 +718,10 @@ export function ReaderPage() {
               <ExportPanel
                 exportKind={exportKind}
                 targetLanguage={targetLanguage}
-                result={exportArticle.data}
+                result={exportResult}
                 isExporting={exportArticle.isPending}
                 error={exportArticle.isError}
-                downloadUrl={exportDownloadUrl(libraryId, articleId, exportArticle.data)}
+                downloadUrl={currentExportDownloadUrl}
                 onExportKindChange={setExportKind}
                 onExport={queueExport}
               />
@@ -661,24 +730,25 @@ export function ReaderPage() {
         ) : null}
         {!hasArticleContext ? (
           <Alert color="yellow" mb="md">
-            Open an article from a library so the reader can load its parsed document.
+            {t("reader.noArticleContext")}
           </Alert>
         ) : null}
         {hasArticleContext && document.isLoading ? (
           <Group>
             <Loader size="sm" />
-            <Text c="dimmed">Loading article document...</Text>
+            <Text c="dimmed">{t("reader.loadingDocument")}</Text>
           </Group>
         ) : null}
         {hasArticleContext && document.isError ? (
           <Alert color="red" mb="md">
-            Article document could not be loaded. The import may still be queued, or parsing may
-            have failed.
+            {t("reader.documentLoadError")}
           </Alert>
         ) : null}
         <ReaderBlockList
           blocks={blocks}
           activeBlockUid={activeBlockUid}
+          enableMediaFlow={viewMode !== "bilingual"}
+          getFlowText={flowTextForBlock}
           onActiveBlockChange={setActiveBlockUid}
           renderBlock={(block) => {
             const asset = assetForBlock(block, assetById);
@@ -698,7 +768,9 @@ export function ReaderPage() {
                 glossaryAffected={affectedBlockUids.has(block.block_uid)}
                 viewMode={viewMode}
                 active={activeBlockUid === block.block_uid}
+                blockColor={blockColors[block.block_uid] ?? "none"}
                 onActivate={setActiveBlockUid}
+                onBlockColorChange={handleBlockColorChange}
                 onTranslationVariantChange={handleTranslationVariantChange}
                 onToolbarAction={handleToolbarAction}
               />
@@ -708,6 +780,94 @@ export function ReaderPage() {
       </main>
     </div>
   );
+}
+
+function blockColorStorageKey(libraryId: string, articleId: string) {
+  return `ilios-block-colors:${libraryId}:${articleId}`;
+}
+
+async function writeClipboardText(text: string) {
+  if (writeClipboardTextWithDomFallback(text)) {
+    return;
+  }
+  if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+  await navigator.clipboard.writeText(text);
+}
+
+function writeClipboardTextWithDomFallback(text: string) {
+  if (typeof document.execCommand !== "function") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function parseStoredBlockColors(raw: string): Record<string, ReaderBlockColor> {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object") return {};
+  const colors = new Set<ReaderBlockColor>(["yellow", "blue", "green", "pink", "purple"]);
+  const result: Record<string, ReaderBlockColor> = {};
+  for (const [blockUid, color] of Object.entries(parsed)) {
+    if (typeof blockUid === "string" && colors.has(color as ReaderBlockColor)) {
+      result[blockUid] = color as ReaderBlockColor;
+    }
+  }
+  return result;
+}
+
+const obsidianColorMeta: Record<ReaderBlockColor, { callout: string; title: string; tag: string }> =
+  {
+    none: { callout: "note", title: "Paper note", tag: "#ilios/note" },
+    yellow: { callout: "important", title: "Key idea", tag: "#ilios/key-idea" },
+    blue: { callout: "info", title: "Method", tag: "#ilios/method" },
+    green: { callout: "success", title: "Evidence", tag: "#ilios/evidence" },
+    pink: { callout: "question", title: "Question", tag: "#ilios/question" },
+    purple: { callout: "abstract", title: "Review later", tag: "#ilios/review" }
+  };
+
+function obsidianCalloutForBlock(
+  block: DocumentBlock,
+  translation: string | undefined,
+  color: ReaderBlockColor
+) {
+  const meta = obsidianColorMeta[color];
+  const source = quoteForObsidian(block.source_markdown);
+  const translated = translation?.trim()
+    ? `>\n> **Translation**\n${quoteForObsidian(translation)}`
+    : "";
+  return [
+    `> [!${meta.callout}] ${meta.title} · ${block.block_uid}`,
+    source,
+    translated,
+    `>\n> ${meta.tag}`,
+    `^${obsidianBlockId(block.block_uid)}`
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function quoteForObsidian(markdown: string) {
+  return markdown
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
+function obsidianBlockId(blockUid: string) {
+  return `ilios-${blockUid.replace(/[^A-Za-z0-9-]/g, "-")}`;
 }
 
 interface GlossaryPanelProps {
@@ -950,6 +1110,7 @@ function ExportPanel({
   onExportKindChange,
   onExport
 }: ExportPanelProps) {
+  const t = useT();
   const missingTranslationBlockUids = result?.missing_translation_block_uids ?? [];
   return (
     <div className="panel reader-export-panel">
@@ -960,7 +1121,7 @@ function ExportPanel({
             <Title order={3}>Export</Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Write readable Markdown artifacts or a portable bundle zip into the article bundle.
+            Create a complete Markdown file or portable bundle and download it through the browser.
           </Text>
         </div>
         <Group align="end">
@@ -979,14 +1140,18 @@ function ExportPanel({
             }}
           />
           <Button leftSection={<Download size={16} />} onClick={onExport} loading={isExporting}>
-            Export artifact
+            Export and download
           </Button>
         </Group>
       </Group>
+      <Text className="obsidian-export-help" c="dimmed" size="sm" mt="sm">
+        {t("reader.obsidianHelp")}
+      </Text>
       {result ? (
         <div className="export-result">
           <Text size="sm">
-            Wrote {result.file_name} ({result.bytes_written} bytes).
+            Ready: {result.file_name} ({result.bytes_written} bytes). The browser download should
+            start automatically.
           </Text>
           {missingTranslationBlockUids.length > 0 ? (
             <Text c="yellow" size="sm">
@@ -997,13 +1162,13 @@ function ExportPanel({
             <Button
               component="a"
               href={downloadUrl}
-              target="_blank"
+              download={result.file_name}
               rel="noreferrer"
               variant="light"
               size="xs"
               leftSection={<Download size={14} />}
             >
-              Open export
+              Download file
             </Button>
           ) : null}
         </div>
@@ -1468,19 +1633,28 @@ function isDeltaStreamData(data: unknown): data is { text: string } {
   );
 }
 
-function articleTitle(document?: ArticleDocument): string {
+function articleTitle(document: ArticleDocument | undefined, t: ReturnType<typeof useT>): string {
   const title = document?.manifest.arxiv_metadata?.title;
-  return typeof title === "string" && title.trim() ? title : "Article reader";
+  return typeof title === "string" && title.trim() ? title : t("reader.emptyTitle");
 }
 
 function documentSubtitle(
   document: ArticleDocument | undefined,
   libraryId: string | undefined,
-  articleId: string | undefined
+  articleId: string | undefined,
+  t: ReturnType<typeof useT>
 ): string {
-  if (!document) return libraryId ? `Article revision ${articleId}` : "Missing library context.";
-  const arxivId = document.manifest.arxiv_id ?? "local article";
-  return `${arxivId} · ${document.article_revision.status} · ${document.blocks.length} blocks`;
+  if (!document) {
+    return libraryId
+      ? t("reader.revision", { articleId: articleId ?? "" })
+      : t("reader.missingContext");
+  }
+  const arxivId = document.manifest.arxiv_id ?? t("reader.localArticle");
+  return t("reader.documentSummary", {
+    arxivId,
+    status: document.article_revision.status,
+    count: document.blocks.length
+  });
 }
 
 function chapterNumber(index: number, block: DocumentBlock): string {
@@ -1506,6 +1680,11 @@ function assetForBlock(
   return typeof assetId === "string" ? assets.get(assetId) : undefined;
 }
 
+function stringMetadata(metadata: DocumentBlock["metadata"] | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 function referenceTargetsForBlocks(blocks: DocumentBlock[]): ReferenceTargets {
   const targets: ReferenceTargets = {};
   for (const block of blocks) {
@@ -1521,6 +1700,14 @@ function referenceTargetsForBlocks(blocks: DocumentBlock[]): ReferenceTargets {
 
 function referenceTargetBlockType(block: DocumentBlock): string {
   const label = block.metadata?.label;
+  if (
+    block.block_type === "table" &&
+    /ltx_(?:equation|equationgroup|eqn_)/i.test(
+      stringMetadata(block.metadata, "html_fragment") ?? ""
+    )
+  ) {
+    return "equation";
+  }
   if (
     block.block_type === "figure" &&
     ((typeof label === "string" && /(^tab:|\.T\d+$)/i.test(label)) ||
@@ -1606,4 +1793,15 @@ function exportDownloadUrl(
   const encodedArticle = encodeURIComponent(articleId);
   const encodedFile = encodeURIComponent(result.file_name);
   return `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/exports/${encodedFile}`;
+}
+
+function triggerBrowserDownload(url: string, fileName: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = "noreferrer";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
 }

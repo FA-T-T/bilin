@@ -12,10 +12,13 @@ import {
 import { BookOpen, Library, Moon, Settings, Sun, TerminalSquare } from "lucide-react";
 import { Link, Outlet } from "react-router-dom";
 
+import { useProductName, useT } from "../i18n";
 import { useUiStore } from "../state/ui";
 import { TaskDrawer } from "./TaskDrawer";
 
 export function AppLayout() {
+  const t = useT();
+  const productName = useProductName();
   const { setColorScheme } = useMantineColorScheme();
   const colorScheme = useComputedColorScheme("light", { getInitialValueInEffect: true });
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
@@ -30,10 +33,10 @@ export function AppLayout() {
             </span>
             <div>
               <Title order={3} className="brand-title">
-                Bilin
+                {productName}
               </Title>
               <Text c="dimmed" size="xs" className="brand-subtitle">
-                Local paper reader
+                {t("app.subtitle")}
               </Text>
             </div>
           </Group>
@@ -43,29 +46,33 @@ export function AppLayout() {
               to="/"
               variant="subtle"
               leftSection={<Library size={16} />}
-              aria-label="Library"
+              aria-label={t("nav.library")}
             >
-              Library
+              {t("nav.library")}
             </Button>
             <Button
               component={Link}
               to="/settings"
               variant="subtle"
               leftSection={<Settings size={16} />}
-              aria-label="Settings"
+              aria-label={t("nav.settings")}
             >
-              Settings
+              {t("nav.settings")}
             </Button>
-            <Tooltip label="Tasks">
-              <ActionIcon variant="default" onClick={openTaskDrawer} aria-label="Open task drawer">
+            <Tooltip label={t("nav.tasks")}>
+              <ActionIcon
+                variant="default"
+                onClick={openTaskDrawer}
+                aria-label={t("nav.openTasks")}
+              >
                 <TerminalSquare size={18} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label="Toggle theme">
+            <Tooltip label={t("nav.toggleTheme")}>
               <ActionIcon
                 variant="default"
                 onClick={() => setColorScheme(colorScheme === "dark" ? "light" : "dark")}
-                aria-label="Toggle theme"
+                aria-label={t("nav.toggleTheme")}
               >
                 {colorScheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
               </ActionIcon>

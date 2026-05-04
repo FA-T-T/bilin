@@ -1,12 +1,12 @@
-# Bilin MVP Todo
+# Ilios MVP Todo
 
-This document is the execution queue for closing the Bilin MVP. It does not
+This document is the execution queue for closing the Ilios MVP. It does not
 replace `docs/mvp-plan.md`; the MVP plan describes product intent, while this
 file tracks the remaining engineering work in implementation order.
 
 ## Current Baseline
 
-Bilin already has the lightweight monorepo foundation, arXiv import, a LaTeXML
+Ilios already has the lightweight monorepo foundation, arXiv import, a LaTeXML
 parser vertical slice, provider-backed block translation, article-level
 glossary, FTS5-backed article question answering, lecture-note patch generation,
 and Markdown or bundle export. The remaining work below only tracks gaps that
@@ -324,6 +324,36 @@ modules, builds, and test artifacts. Backend tests cover the documentation
 contract, gitignore contract, doctor messages, parse failure logs, CLI guidance,
 and worker job error shape; frontend tests cover task drawer error rendering.
 
+## 10. Naming And Language Foundation
+
+- [x] Target: separate public product naming from stable technical identifiers.
+- [x] Use 衔牍 as the Simplified Chinese product name, Ilios as the English and
+      default international product name, and 理紐 as the Japanese product name.
+- [x] Keep the technical repository path, Python package, frontend package, CLI
+      command, database keys, and environment variables on the existing `bilin`
+      identifiers until a deliberate migration is worth the compatibility cost.
+- [x] Mark Simplified Chinese and English as actively maintained core languages.
+- [x] Mark Japanese as the third experimental README, keep Korean, Spanish,
+      French, and German README files as community contribution placeholders,
+      and preserve all five as experimental or community-friendly UI languages.
+- [x] Add a lightweight frontend i18n layer with browser-language detection,
+      persistent user override, Settings-page language switching, and product
+      display names by locale.
+- [x] Completion standard: public docs and the application shell communicate the
+      new names and language maintenance levels without breaking existing
+      install commands.
+- [x] Required tests: documentation tests for localized README coverage and a
+      frontend render test that exercises the interface language selector.
+
+Progress: public-facing README files now use 衔牍, Ilios, or 理紐 according to
+language. The Simplified Chinese README is the main human entry, English is the
+second maintained entry, Japanese is experimental, and Korean, Spanish, French,
+and German README files are community contribution placeholders. The frontend
+has a shared locale registry and key-value translation helper, defaults from the
+browser language on first launch, persists explicit language choice, and exposes
+the switch in Settings. Engineering identifiers remain `bilin`, `bilin_api`,
+`@bilin/web`, and `BILIN_HOME` for compatibility.
+
 ## Backlog After MVP
 
 - [x] Local embedding and hybrid vector retrieval vertical slice.
@@ -335,6 +365,10 @@ and worker job error shape; frontend tests cover task drawer error rendering.
       gating.
 - [ ] Word, EPUB, PDF, and polished print export.
 - [ ] Rich command palette and high-frequency keyboard shortcuts.
+- [ ] Obsidian/Notion-oriented Markdown export with YAML front matter and
+      wiki-link friendly references.
+- [ ] Paper comparison reading mode for side-by-side section and method
+      comparison.
 - [ ] Model usage and cost metadata display.
 - [ ] Desktop shell packaging.
 - [ ] External sync conflict detection and repair guidance.

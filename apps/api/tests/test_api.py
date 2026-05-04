@@ -107,16 +107,24 @@ def test_export_api_returns_metadata_and_queues_job(bilin_home: Path, tmp_path: 
             f"/libraries/{library_id}/articles/{revision_id}/exports",
             json={"kind": "source_markdown"},
         )
+        export_payload = export_response.json()
+        download_response = client.get(
+            f"/libraries/{library_id}/articles/{revision_id}/exports/{export_payload['file_name']}",
+        )
         job_response = client.post(
             f"/libraries/{library_id}/articles/{revision_id}/exports/jobs",
             json={"kind": "bundle_zip"},
         )
 
     assert export_response.status_code == 200
-    export_payload = export_response.json()
     assert export_payload["file_name"] == "source.md"
     assert export_payload["metadata"]["relative_path"] == "export/source.md"
     assert export_payload["metadata"]["bundle_path"]
+    assert download_response.status_code == 200
+    assert download_response.headers["content-disposition"].startswith("attachment")
+    assert "source.md" in download_response.headers["content-disposition"]
+    assert download_response.headers["content-type"].startswith("text/markdown")
+    assert b"# Uploaded" in download_response.content
     assert job_response.status_code == 201
     job_payload = job_response.json()
     assert job_payload["type"] == "export_article"

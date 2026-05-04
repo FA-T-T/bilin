@@ -4,6 +4,7 @@ import {
   type ReaderToolbarActionId,
   type ToolbarKind
 } from "./readerToolbarActions";
+import { useT } from "../i18n";
 
 export function HoverToolbar({
   kind,
@@ -14,21 +15,28 @@ export function HoverToolbar({
   disabledActions?: ReaderToolbarActionId[];
   onAction?: (actionId: ReaderToolbarActionId) => void;
 }) {
+  const t = useT();
   return (
     <Group className="hover-toolbar" gap={4}>
-      {READER_TOOLBAR_ACTIONS[kind].map((action) => (
-        <Tooltip key={action.id} label={action.label}>
-          <ActionIcon
-            size="sm"
-            variant="default"
-            aria-label={action.label}
-            disabled={disabledActions.includes(action.id) || !onAction}
-            onClick={() => onAction?.(action.id)}
-          >
-            {action.icon}
-          </ActionIcon>
-        </Tooltip>
-      ))}
+      {READER_TOOLBAR_ACTIONS[kind].map((action) => {
+        const label = t(action.labelKey);
+        return (
+          <Tooltip key={action.id} label={label}>
+            <ActionIcon
+              size="sm"
+              variant="default"
+              aria-label={label}
+              disabled={disabledActions.includes(action.id) || !onAction}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction?.(action.id);
+              }}
+            >
+              {action.icon}
+            </ActionIcon>
+          </Tooltip>
+        );
+      })}
     </Group>
   );
 }

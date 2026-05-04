@@ -1,6 +1,6 @@
 # GitHub Release Guide
 
-This guide describes how to turn the current Bilin checkout into a GitHub release. It assumes the repository is being published as source code plus optional release archives, not as a hosted service or desktop installer. The default repository README is Simplified Chinese for the primary audience, with the English version available as `README.en.md`. AI coding agents should read `AGENT_GUIDE.md` before installing, configuring, starting, or modifying the project.
+This guide describes how to turn the current Ilios checkout into a GitHub release. It assumes the repository is being published as source code plus optional release archives, not as a hosted service or desktop installer. The default repository README is Simplified Chinese for the primary audience, with the English version available as `README.en.md`. AI coding agents should read `AGENT_GUIDE.md` before installing, configuring, starting, or modifying the project.
 
 ## Release Scope
 
@@ -60,7 +60,7 @@ Create a GitHub repository, push the source tree, and tag the release. If the re
 ```sh
 git init
 git add .
-git commit -m "Release Bilin v0.1.0"
+git commit -m "Release Ilios v0.1.0"
 git branch -M main
 git remote add origin <your-github-repo-url>
 git push -u origin main

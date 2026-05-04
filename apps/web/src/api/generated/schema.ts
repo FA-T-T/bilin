@@ -1169,7 +1169,7 @@ export interface components {
         DoctorCapabilityStatus: "available" | "missing";
         /** DoctorReport */
         DoctorReport: {
-            /** Bilin Home */
+            /** App Home */
             bilin_home: string;
             /** Capabilities */
             capabilities: components["schemas"]["DoctorCapability"][];
@@ -1392,7 +1392,7 @@ export interface components {
             status: string;
             /**
              * App
-             * @default Bilin
+             * @default Ilios
              */
             app: string;
             /** Version */

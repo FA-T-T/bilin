@@ -1,9 +1,11 @@
-import { Copy, MessageSquare, RefreshCw, ScrollText, Terminal } from "lucide-react";
+import { Copy, FileInput, MessageSquare, RefreshCw, ScrollText, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
+import type { MessageKey } from "../i18n";
 
 export type ToolbarKind = "source" | "translation" | "environment";
 export type ReaderToolbarActionId =
   | "copy-source"
+  | "copy-obsidian"
   | "ask-source"
   | "show-latex"
   | "copy-translation"
@@ -15,7 +17,7 @@ export type ReaderToolbarActionId =
 
 export interface ToolbarActionDefinition {
   id: ReaderToolbarActionId;
-  label: string;
+  labelKey: MessageKey;
   icon: ReactNode;
 }
 
@@ -23,18 +25,23 @@ const iconSize = 15;
 
 export const READER_TOOLBAR_ACTIONS: Record<ToolbarKind, ToolbarActionDefinition[]> = {
   source: [
-    { id: "copy-source", label: "Copy source", icon: <Copy size={iconSize} /> },
-    { id: "ask-source", label: "Ask about source", icon: <MessageSquare size={iconSize} /> },
-    { id: "show-latex", label: "Show LaTeX", icon: <Terminal size={iconSize} /> }
+    { id: "copy-source", labelKey: "toolbar.copySource", icon: <Copy size={iconSize} /> },
+    { id: "copy-obsidian", labelKey: "toolbar.copyObsidian", icon: <FileInput size={iconSize} /> },
+    { id: "ask-source", labelKey: "toolbar.askSource", icon: <MessageSquare size={iconSize} /> },
+    { id: "show-latex", labelKey: "toolbar.showLatex", icon: <Terminal size={iconSize} /> }
   ],
   translation: [
-    { id: "copy-translation", label: "Copy translation", icon: <Copy size={iconSize} /> },
-    { id: "retranslate", label: "Retranslate", icon: <RefreshCw size={iconSize} /> },
-    { id: "add-note-patch", label: "Add note patch", icon: <ScrollText size={iconSize} /> }
+    { id: "copy-translation", labelKey: "toolbar.copyTranslation", icon: <Copy size={iconSize} /> },
+    { id: "retranslate", labelKey: "toolbar.retranslate", icon: <RefreshCw size={iconSize} /> },
+    { id: "add-note-patch", labelKey: "toolbar.addNotePatch", icon: <ScrollText size={iconSize} /> }
   ],
   environment: [
-    { id: "copy-block", label: "Copy block", icon: <Copy size={iconSize} /> },
-    { id: "explain-block", label: "Explain block", icon: <MessageSquare size={iconSize} /> },
-    { id: "show-source", label: "Show source", icon: <Terminal size={iconSize} /> }
+    { id: "copy-block", labelKey: "toolbar.copyBlock", icon: <Copy size={iconSize} /> },
+    {
+      id: "explain-block",
+      labelKey: "toolbar.explainBlock",
+      icon: <MessageSquare size={iconSize} />
+    },
+    { id: "show-source", labelKey: "toolbar.showSource", icon: <Terminal size={iconSize} /> }
   ]
 };

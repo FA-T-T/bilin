@@ -1,188 +1,84 @@
-# Bilin
+<h1 align="center">
+  Ilios<br>
+  <sub><sub>衔牍 · 理紐</sub></sub>
+</h1>
 
-Language: [简体中文](README.md) | English | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
+<p align="center">
+  <em>A local-first research-paper reader that turns English papers into structured, bilingual study material.</em>
+</p>
+
+<p align="center">
+  <a href="README.md">简体中文 · Core</a> ·
+  <a href="README.en.md">English · Core</a> ·
+  <a href="README.ja.md">日本語 · Experimental</a> ·
+  <a href="README.ko.md">한국어 · Community</a> ·
+  <a href="README.es.md">Español · Community</a> ·
+  <a href="README.fr.md">Français · Community</a> ·
+  <a href="README.de.md">Deutsch · Community</a>
+</p>
 
 AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM consumption, not human browsing.
 
-## Why Bilin? 📚✨
+## What Is Ilios? 📚
 
-Bilin has a simple purpose: turn paper reading from “fight through an English PDF alone” into a structured workflow for reading, translation, questioning, note-taking, and review. It is not meant to replace the English original, and it is not a generic AI summary layer. It keeps the paper structure visible: sections, paragraphs, equations, figures, tables, captions, terminology, questions, and lecture notes.
+You are facing a dense thirty-page English paper. Your advisor expects a group-meeting presentation next week. A generic AI summary sounds fluent but hides what it skipped. A sentence-by-sentence translation still leaves the formula context, figures, terminology, and section logic disconnected.
 
-For researchers, Bilin brings scattered work into one local workflow. You can import an arXiv paper or local TeX archive, parse paragraph-level Markdown, translate and cache blocks, preserve translation variants, manage technical terminology, ask questions about the current block or the whole paper, turn answers into lecture notes, and export Markdown or bundles. Papers, PDFs, TeX sources, parsed documents, translation cache, question history, and notes stay inside the library folder you choose, which makes long-term organization and external folder sync easier.
+Ilios starts from arXiv or local LaTeX source packages and turns the paper into sections, paragraphs, equations, figures, tables, captions, references, translations, questions, and lecture notes. You can read first in your native language, then return to the English original to calibrate terminology and phrasing. Your papers, sources, PDFs, translations, Q&A history, and notes remain in a local library folder that you choose.
 
-For researchers whose native language is not English, the value is sharper. Undergraduates, graduate students, and newcomers to a field are often blocked not by intelligence, but by English sentence structure, dense terminology, equation context, and domain writing conventions all at once. Reading first in one’s native language can make it much faster to understand the background, motivation, key equations, experiment logic, and limitations. Returning to the English original afterward then becomes a way to calibrate terminology and learn academic English from a paper that already makes conceptual sense.
+The point is not to replace the English paper. The point is to make the first pass humane for students, graduate researchers, and cross-field readers whose native language is not English. Once the research logic is clear in your own language, the English original becomes something you can learn from instead of something that blocks entry. 🌱
 
-Bilin is therefore designed as the first reading layer for research onboarding. It helps turn “I cannot get through this paper” into “I know what problem it studies, why it matters, how it works, and which parts I should revisit in the English original.” Serious reading still returns to the English text, equations, figures, and citations. Bilin makes that path less punishing and helps new researchers enter the actual research faster. 🌱
+The Chinese name is **衔牍**. The English name is **Ilios**. The Japanese name is **理紐**. Other languages currently use the English name.
 
-Bilin is a local-first web application for reading, translating, questioning, annotating, and exporting academic papers. The primary path is arXiv TeX source, because TeX preserves the structure that a serious paper reader needs: sections, paragraphs, equations, figures, tables, captions, labels, citations, and source assets. Bilin runs on your own machine with a React and TypeScript frontend, a FastAPI backend, a SQLite job queue, and a Python worker. It does not require Docker, Redis, Celery, accounts, a hosted backend, or built-in cloud sync.
+## Why It Helps ✨
 
-The current version is the v0.1.0 MVP. It can create local libraries, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX through LaTeXML when the toolchain is installed, preserve document blocks and assets in SQLite, build deterministic local block embeddings, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, keep translation variants, manage reviewed local translation memory, maintain article terminology, store provider keys in macOS Keychain when available, stream article-grounded answers with cited evidence, create editable lecture-note patches, edit custom note templates, and export source, translated, bilingual, lecture-note, or bundle artifacts.
+| Pain point | Ilios response |
+| --- | --- |
+| An English paper feels like a wall | Read by section, paragraph, equation, figure, and table instead of a flattened summary |
+| Translation loses structure | Source, translation, captions, terms, and context stay aligned to document blocks |
+| A formula or figure is unclear | Ask about the current block and keep cited paper evidence |
+| A presentation is due soon | Generate editable lecture-note patches from reading templates |
+| Cloud upload is unacceptable | Local-first FastAPI + React + SQLite, with no accounts or built-in sync |
+| You use Obsidian or Notion | Export Markdown, lecture notes, and complete bundles |
 
-## Future Plans
+## Current MVP
 
-Future versions will extend Bilin with PDF LLM fallback parsing, optional neural embedding providers, Word/EPUB/polished PDF export, a desktop shell, and a more complete installation shape. PDFs can already be stored as source artifacts in article bundles; future PDF support will be added as an optional parsing path without changing the TeX-first workflow or introducing default OCR or heavy service dependencies. Accounts and built-in sync are not part of the default product direction. Bilin will remain local-first and keep library folders easy to sync through external tools such as iCloud, OneDrive, and Syncthing.
+Ilios v0.1.0 can create local libraries, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX with LaTeXML when installed, store structured document blocks and assets, build deterministic local block embeddings, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, preserve translation variants, review translation memory, manage article glossary terms, store provider keys in macOS Keychain when available, stream article-grounded Q&A, create editable lecture-note patches, edit custom note templates, and export source, translated, bilingual, lecture-note, or full bundle artifacts.
 
-## Repository Layout
+The project remains local and lightweight. It does not use Docker, Redis, Celery, accounts, a hosted backend, or built-in cloud sync. PDFs can be imported and saved, but this MVP does not parse, open, OCR, translate, or embed PDFs in the reader.
 
-The repository is a lightweight monorepo. `apps/api` contains the FastAPI backend, CLI, SQLite migrations, arXiv and upload import services, LaTeXML parser path, provider profiles, translation jobs, deterministic local embeddings, glossary services, question answering, lecture-note services, export services, worker, and doctor command. `apps/web` contains the Vite React TypeScript frontend. `docs` contains design, MVP, local-safety notes, and developer documentation. `fixtures/golden` contains deterministic parser regression fixtures used by tests and acceptance checks.
+## Multilingual Policy 🌍
 
-## Requirements
+Simplified Chinese and English are core maintained languages. Japanese is the third README and is marked Experimental. Korean, Spanish, French, and German README files are intentionally kept as Community contribution entry points until maintainers can keep them accurate.
 
-Bilin expects Node.js, pnpm, Python 3.13, and uv. The frontend package manager is pnpm 10.32.1. The backend uses uv to create and manage its Python environment. The core app can start without a TeX installation, but real TeX parsing requires both `latexml` and `latexmlpost` on `PATH`. Optional asset conversion benefits from ImageMagick `magick`, Ghostscript `gs`, and a TeX engine such as `tectonic` or `pdflatex`.
+The web interface already keeps multilingual hooks. Simplified Chinese and English should stay accurate with every release. Japanese, Korean, Spanish, French, and German are experimental or community-friendly UI languages and may fall back to English. Interface language follows the browser on first launch and can be changed in Settings.
 
-On macOS with Homebrew, a practical development setup looks like this.
+## Quick Start
+
+Ilios expects Node.js, pnpm, Python 3.13, and uv. Real TeX parsing requires `latexml` and `latexmlpost` on `PATH`. Asset conversion benefits from ImageMagick `magick`, Ghostscript `gs`, and a TeX engine such as `tectonic` or `pdflatex`.
 
 ```sh
 brew install node pnpm uv latexml tectonic imagemagick ghostscript poppler
-```
-
-On Linux, install equivalent packages through your distribution package manager. If LaTeXML is not available, Markdown import, PDF save-only import, provider setup, translation, notes, exports, and fixture tests still work. TeX parse jobs fail explicitly with `missing_dependency:latexml` until LaTeXML is installed.
-
-## Installation
-
-Start from the source directory or downloaded project directory. Install frontend dependencies from the repository root, then initialize the backend environment.
-
-```sh
+git clone https://github.com/FA-T-T/bilin.git
+cd bilin
 pnpm install
 cd apps/api
 uv sync
 cd ../..
-```
-
-Run doctor before starting real work. It reports the application data directory, macOS Keychain support, and local document tools. Missing optional tools are shown as degraded capabilities rather than startup blockers.
-
-```sh
 make doctor
-```
-
-## Running The App
-
-For development, run all three local processes with one command. This starts FastAPI on `127.0.0.1:8000`, the worker process beside it, and Vite on `127.0.0.1:5173`.
-
-```sh
 make dev
 ```
 
-The individual services can also be started separately when debugging.
-
-```sh
-make api
-make worker
-make web
-```
-
-Open `http://127.0.0.1:5173` in the browser. Create a library by choosing a name and local directory path. A library is a portable folder containing `library.sqlite`, original source packages, uploaded PDFs, unpacked TeX, parsed `document.json`, generated `source.md`, assets, logs, lecture notes, exports, and bundle manifests.
-
-## First Paper Through The UI
-
-After creating a library, open it from the Library page and use the Add article panel. The normal path is an arXiv ID such as `1706.03762`; Bilin downloads the source package and PDF, creates a self-contained article bundle, and queues a parse job when parsing is enabled. Local TeX archives use the same bundle path as arXiv source packages. Markdown imports generate a weak structured document immediately. PDF uploads are saved into the bundle but are not parsed, opened, OCR-processed, or translated in this MVP.
-
-Open the reader from the article table once parsing or import has produced a document. The reader supports study, focus, bilingual, translation-only, and source-only views. Sections are available through a collapsible chapter control. Paragraph blocks expose hover actions for copying, inspecting source, asking about the current block, and retranslation. Figures and tables show real assets when available and preserve structured captions and references when assets are not generated.
-
-## Provider Setup
-
-Open Settings and choose Models. In simple mode, paste an API key, discover models from an OpenAI-compatible or Anthropic-compatible endpoint, and select a returned model by display name. In advanced mode, you can also set a profile label, base URL, concurrency, and requests per minute. Bilin does not ask users to guess raw model names when the provider supports model listing.
-
-Provider keys are stored outside library directories. On macOS, Bilin stores keys in Keychain by default and keeps only a `keychain:` reference in the global application database. On other platforms, in CI, or when `BILIN_CREDENTIAL_STORE=app_settings` is set, Bilin uses the SQLite development fallback. If you want Keychain failures to stop provider creation instead of falling back, set `BILIN_CREDENTIAL_STORE=keychain`.
-
-```sh
-export BILIN_CREDENTIAL_STORE=keychain
-```
-
-## Translation And Memory Review
-
-Translation jobs are block-based. Paragraph and caption blocks are translated; formulas and structural environment blocks are preserved as source structure. Translations are saved as variants, so retranslation does not overwrite earlier output. The selected default variant is persisted per block.
-
-Validated translations enter app-level translation memory as pending entries. Pending entries do not affect later papers. Open Settings and choose Translation memory to review entries by language and status. Approving an entry with reuse enabled allows later papers with the same content hash, target language, and glossary version to reuse it. Disabling or rejecting an entry stops cross-paper reuse without deleting the original article-local translation variant.
-
-## Question Answering And Notes
-
-The reader can ask questions about the whole article or a selected block. Bilin retrieves article evidence from local indexes, streams the answer, and stores cited block references. If a selected model profile declares native search support, external model-native search can be enabled; otherwise answers are constrained to the article context.
-
-Lecture notes are built from editable patches. Built-in templates cover deep reading, group meeting preparation, quick skim, and reproduction-oriented reading, and users can save custom templates from the Notes panel. Proposed patches can be edited before acceptance. Accepted notes are materialized into `lecture-notes.md` inside the article bundle.
-
-## CLI Workflow
-
-The CLI command is `bilin` and is available through `uv run` from `apps/api`. It reuses the same services as the web app. The cleanest CLI path is to create a library, import a paper, run the worker or parse directly, translate, and export.
-
-```sh
-cd apps/api
-uv run bilin library create /tmp/bilin-library --name Papers
-uv run bilin import arxiv /tmp/bilin-library 1706.03762 --pdf --parse
-uv run bilin jobs run-worker
-```
-
-If you already know the article revision id, parsing and export can be run directly. Exported Markdown files and generated lecture notes automatically include an invisible HTML comment watermark stating that the file was generated by Bilin, may contain third-party paper content or derived material, and should be redistributed only when the original license or rights holder permits it. The watermark does not change normal rendered reading layout.
-
-```sh
-uv run bilin parse article /tmp/bilin-library <article_revision_id>
-uv run bilin embed article /tmp/bilin-library <article_revision_id>
-uv run bilin export article /tmp/bilin-library <article_revision_id> --kind bilingual_markdown --target-language zh-CN
-```
-
-Provider profiles can also be created from the CLI, although the web Settings page is better for model discovery.
-
-```sh
-uv run bilin provider create --name "OpenAI Compatible" --protocol openai-compatible --api-key "$OPENAI_API_KEY" --model gpt-5.5
-```
-
-## Deterministic Smoke Path
-
-The repository includes golden fixtures so a new machine can validate the reader pipeline without public arXiv network access or LaTeXML. The acceptance command creates a disposable library, imports the golden source, materializes a reader-ready document from saved converter output, and exports the MVP artifact set.
+Open `http://127.0.0.1:5173`, create a library, then import an arXiv ID such as `1706.03762`. The technical CLI command remains `bilin` for compatibility:
 
 ```sh
 cd apps/api
 uv run bilin acceptance golden ../../fixtures/golden/minimal-paper --output-dir /tmp/bilin-acceptance
 ```
 
-The command returns a `reader_route` and a `library_id`. Start the app, then open the route in the browser to inspect the generated article.
+If LaTeXML is missing, the app still starts, but TeX parse jobs fail explicitly with `missing_dependency:latexml`.
 
-## Local Data And Sync
+## License And Content Boundary
 
-Bilin uses a global application data directory for app-level SQLite state, registered libraries, provider profile metadata, jobs, settings, note templates, translation memory, and API-key fallback storage when Keychain is unavailable or disabled. The location is chosen by `platformdirs`. Development can override it with `BILIN_HOME`.
+Ilios source code, project-owned documentation, tests, and project-owned fixtures are licensed under Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The license does not grant rights to user-imported papers, PDFs, TeX packages, figures, tables, captions, datasets, translations, or lecture notes containing third-party material. Exported Markdown and notes include an invisible HTML comment watermark reminding users to redistribute only when the original license or rights holder permits it.
 
-```sh
-export BILIN_HOME=/tmp/bilin-home
-cd apps/api
-uv run bilin dev-info
-```
-
-Library directories are user-chosen and self-contained. This makes them suitable for external folder sync tools such as iCloud, OneDrive, or Syncthing. Bilin itself does not resolve sync conflicts. Close Bilin before moving or merging synced libraries, and recover conflicts through the external sync tool's version history.
-
-## Developer Checks
-
-Backend checks run from `apps/api`.
-
-```sh
-uv run ruff check .
-uv run ruff format --check .
-uv run basedpyright
-uv run pytest
-```
-
-Frontend checks run from the repository root.
-
-```sh
-pnpm --filter @bilin/web lint
-pnpm --filter @bilin/web typecheck
-pnpm --filter @bilin/web test:run
-pnpm --filter @bilin/web format:check
-pnpm --filter @bilin/web build
-pnpm --filter @bilin/web test:e2e
-```
-
-Default tests use fixtures and mocks. They do not require live arXiv access or a full TeX toolchain. Optional live arXiv and live LaTeXML integration tests are deliberately opt-in.
-
-## License
-
-Bilin source code, project-owned documentation, tests, and project-owned fixtures are licensed under Apache-2.0. See `LICENSE` and `NOTICE`. This license applies only to the Bilin project itself. It does not grant rights to user-imported papers, PDFs, TeX source packages, figures, tables, captions, datasets, machine translations, or lecture notes containing third-party material. Whether an export can be redistributed depends on the original paper or material license, permission from the rights holder, or an applicable legal exception.
-
-## Troubleshooting
-
-If the API is unreachable, confirm `make api` is running and that `http://127.0.0.1:8000/health` returns JSON. If the web app cannot reach the API, confirm Vite is running on `127.0.0.1:5173` and that no browser extension is blocking localhost requests.
-
-If TeX parsing fails with `missing_dependency:latexml`, install LaTeXML and confirm both `latexml` and `latexmlpost` appear in `bilin doctor`. Bilin will not silently fall back to regex parsing because stable block identity depends on deterministic parser output.
-
-If provider model discovery fails, verify the API key, protocol, and base URL. OpenAI-compatible endpoints normally expose `/models` under the configured base URL. Anthropic-compatible endpoints must accept the Anthropic model-listing protocol.
-
-If a translation looks wrong but keeps reappearing, inspect the block's translation variants and the Settings translation memory page. Article-local variants can be reselected, and global memory entries can be disabled or rejected without deleting the original article data.
+For full installation, provider setup, local data placement, CLI usage, troubleshooting, and developer checks, use the Chinese main README first or contribute improvements to this English version.

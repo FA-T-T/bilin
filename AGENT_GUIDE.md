@@ -1,10 +1,10 @@
-# Bilin Agent Guide
+# Ilios Agent Guide
 
-This file is for AI coding agents. It is optimized for installation, configuration, startup, verification, and safe project maintenance. Human-facing product documentation lives in `README.md` and `README.en.md`.
+This file is for AI coding agents. It is optimized for installation, configuration, startup, verification, and safe project maintenance. Human-facing product documentation lives in `README.md`, `README.en.md`, and the localized README files.
 
 ## Mission
 
-Bilin is a local-first paper reading and study application. The main path is TeX-first arXiv or local TeX archive import, LaTeXML parsing, structured document blocks, provider-backed translation, article-grounded question answering, lecture-note editing, and local export. Preserve this direction when modifying the project.
+Ilios is a local-first paper reading and study application. The main path is TeX-first arXiv or local TeX archive import, LaTeXML parsing, structured document blocks, provider-backed translation, article-grounded question answering, lecture-note editing, and local export. Preserve this direction when modifying the project.
 
 Do not introduce Docker, Redis, Celery, accounts, hosted backend requirements, or built-in sync as default dependencies. Do not treat PDF parsing, OCR, Word export, EPUB export, polished PDF export, or neural embedding downloads as currently required startup features. Those are future or optional paths.
 
@@ -13,7 +13,18 @@ Do not introduce Docker, Redis, Celery, accounts, hosted backend requirements, o
 Use this block as the first-pass mental model before running commands.
 
 ```yaml
-project_name: Bilin
+project_name: Ilios
+product_names:
+  zh-CN: 衔牍
+  en: Ilios
+  ja: 理紐
+  default_international: Ilios
+language_policy:
+  core: [zh-CN, en]
+  experimental_docs: [ja]
+  community_readme_placeholders: [ko, es, fr, de]
+  experimental_ui: [ja, ko, es, fr, de]
+technical_project_id: bilin
 repo_root: /Users/taotao/Documents/DAC2026presentation/bilin
 frontend:
   package: "@bilin/web"
@@ -43,7 +54,7 @@ Keep runtime data out of the repository. Do not commit or package `.venv/`, `nod
 
 Do not store provider API keys in source files, README examples with real values, fixtures, or generated artifacts. On macOS the application should prefer Keychain. For CI or local fallback, use the documented credential-store environment variable instead of hardcoding secrets.
 
-Generated Markdown exports and lecture notes must keep the invisible Bilin content notice watermark. It is an HTML comment, so it should not affect normal rendered reading layout. Do not remove it when changing export code.
+Generated Markdown exports and lecture notes must keep the invisible Ilios content notice watermark. It is an HTML comment, so it should not affect normal rendered reading layout. Do not remove it when changing export code.
 
 Do not edit generated frontend API types by hand. When backend schemas or routes change, run `make generate-api-client`, then edit hooks and UI code outside `apps/web/src/api/generated`.
 

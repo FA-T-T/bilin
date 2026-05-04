@@ -9,6 +9,7 @@ from rich.table import Table
 
 from bilin_api.acceptance import run_golden_acceptance
 from bilin_api.article_store import resolve_library
+from bilin_api.branding import PRODUCT_NAME_EN
 from bilin_api.doctor import build_doctor_report
 from bilin_api.embedding_service import build_article_embeddings, queue_article_embedding
 from bilin_api.export_service import export_article
@@ -34,7 +35,7 @@ from bilin_api.schemas import (
 from bilin_api.translation_service import queue_article_translation
 from bilin_api.worker import run_worker
 
-app = typer.Typer(help="Bilin local-first backend CLI.")
+app = typer.Typer(help=f"{PRODUCT_NAME_EN} local-first backend CLI.")
 library_app = typer.Typer(help="Manage local libraries.")
 jobs_app = typer.Typer(help="Run and inspect background jobs.")
 import_app = typer.Typer(help="Import external paper sources.")
@@ -76,7 +77,7 @@ GOLDEN_LIVE_LATEXML_OPTION = typer.Option(
 def doctor() -> None:
     """Check local document tool capabilities."""
     report = build_doctor_report()
-    table = Table(title=f"Bilin doctor ({report.bilin_home})")
+    table = Table(title=f"{PRODUCT_NAME_EN} doctor ({report.bilin_home})")
     table.add_column("Tool")
     table.add_column("Status")
     table.add_column("Level")

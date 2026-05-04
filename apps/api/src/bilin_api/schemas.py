@@ -7,12 +7,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from bilin_api.branding import PRODUCT_NAME_EN
+
 JsonDict = dict[str, Any]
 
 
 class Health(BaseModel):
     status: str = "ok"
-    app: str = "Bilin"
+    app: str = PRODUCT_NAME_EN
     version: str
 
 
@@ -37,7 +39,7 @@ class DoctorCapability(BaseModel):
 
 
 class DoctorReport(BaseModel):
-    bilin_home: str
+    bilin_home: str = Field(title="App Home")
     capabilities: list[DoctorCapability]
 
 

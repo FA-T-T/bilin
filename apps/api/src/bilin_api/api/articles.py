@@ -83,6 +83,11 @@ from bilin_api.translation_service import (
 
 router = APIRouter(prefix="/libraries/{library_id}/articles", tags=["articles"])
 
+_EXPORT_MEDIA_TYPES = {
+    ".md": "text/markdown; charset=utf-8",
+    ".zip": "application/zip",
+}
+
 
 @router.get("", response_model=list[ArticleListItem])
 async def list_articles(library_id: str) -> list[ArticleListItem]:
@@ -455,7 +460,11 @@ async def get_article_export(
     path = Path(revision.bundle_path) / "export" / file_name
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
-    return FileResponse(path)
+    return FileResponse(
+        path,
+        media_type=_EXPORT_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+        filename=file_name,
+    )
 
 
 @router.get("/{revision_id}/source-md", response_class=PlainTextResponse)

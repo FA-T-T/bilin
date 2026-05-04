@@ -1,6 +1,6 @@
-# Bilin Local Safety
+# Ilios Local Safety
 
-This document defines the MVP operating contract for local setup, data placement, dependency failures, job controls, and external folder sync. Bilin stays local-first and lightweight. It does not add Docker, Redis, Celery, accounts, or built-in sync for MVP.
+This document defines the MVP operating contract for local setup, data placement, dependency failures, job controls, and external folder sync. Ilios stays local-first and lightweight. It does not add Docker, Redis, Celery, accounts, or built-in sync for MVP.
 
 ## Clean Setup Path
 
@@ -26,7 +26,7 @@ The command creates a disposable library, imports the golden TeX source package,
 
 ## Dependency Failure Contract
 
-LaTeXML is the only official MVP TeX parser path. If either `latexml` or `latexmlpost` is missing, parse jobs fail with `missing_dependency:latexml`. This is intentional. Bilin must not silently fall back to regex parsing or low-quality conversion.
+LaTeXML is the only official MVP TeX parser path. If either `latexml` or `latexmlpost` is missing, parse jobs fail with `missing_dependency:latexml`. This is intentional. Ilios must not silently fall back to regex parsing or low-quality conversion.
 
 The failure appears in four places. The worker job stores a structured error with `code`, `message`, and `details`. The article revision moves to `parse_failed`, and `manifest.json` stores the same parse error. The bundle writes `logs/parse-error.json`. The CLI prints the error and suggests `bilin doctor`. The web task drawer displays the failed job error so users do not need to inspect SQLite manually.
 
@@ -59,7 +59,7 @@ The global app directory contains app-level SQLite state, registered libraries, 
 
 Each library directory is chosen by the user. A library is meant to be portable as one folder. It contains `library.sqlite`, `articles/`, original source packages, downloaded or uploaded PDFs, unpacked TeX, `manifest.json`, `document/document.json`, `document/source.md`, `assets/`, `logs/`, `export/`, and generated `lecture-notes.md`.
 
-External folder sync tools such as iCloud, OneDrive, or Syncthing should sync the whole library directory, not individual files inside a bundle. Close Bilin before moving or merging synced libraries. If two machines edit the same library simultaneously, Bilin does not resolve conflicts; keep the newer whole library folder or recover from the external sync tool's version history.
+External folder sync tools such as iCloud, OneDrive, or Syncthing should sync the whole library directory, not individual files inside a bundle. Close Ilios before moving or merging synced libraries. If two machines edit the same library simultaneously, Ilios does not resolve conflicts; keep the newer whole library folder or recover from the external sync tool's version history.
 
 ## Ignored Local Artifacts
 

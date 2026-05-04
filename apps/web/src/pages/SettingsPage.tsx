@@ -27,10 +27,17 @@ import type {
   ProviderProtocol,
   TranslationMemoryReviewStatus
 } from "../api/types";
+import { useProductName, useT } from "../i18n";
+import { SUPPORTED_LOCALES, type AppLocale } from "../product";
+import { useUiStore } from "../state/ui";
 
 type SettingsMode = "user" | "developer";
 
 export function SettingsPage() {
+  const t = useT();
+  const productName = useProductName();
+  const locale = useUiStore((state) => state.locale);
+  const setLocale = useUiStore((state) => state.setLocale);
   const doctor = useDoctor();
   const providers = useProviders();
   const createProvider = useCreateProvider();
@@ -97,32 +104,33 @@ export function SettingsPage() {
   return (
     <Stack gap="lg">
       <div>
-        <Title order={1}>Settings</Title>
-        <Text c="dimmed">Connect a model provider once, then choose models by display name.</Text>
+        <Title order={1}>{t("settings.title")}</Title>
+        <Text c="dimmed">{t("settings.subtitle")}</Text>
       </div>
 
       <Tabs defaultValue="models" keepMounted={false} className="settings-tabs">
         <Tabs.List>
-          <Tabs.Tab value="models">Models</Tabs.Tab>
-          <Tabs.Tab value="memory">Translation memory</Tabs.Tab>
-          <Tabs.Tab value="tools">Local tools</Tabs.Tab>
+          <Tabs.Tab value="models">{t("settings.models")}</Tabs.Tab>
+          <Tabs.Tab value="interface">{t("settings.interface")}</Tabs.Tab>
+          <Tabs.Tab value="memory">{t("settings.memory")}</Tabs.Tab>
+          <Tabs.Tab value="tools">{t("settings.tools")}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="models">
           <div className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Title order={3}>Connect model</Title>
+                <Title order={3}>{t("settings.connectModel")}</Title>
                 <Text c="dimmed" size="sm">
-                  Paste a key, find the available models, then pick the one Bilin should use.
+                  {t("settings.connectModelHelp", { product: productName })}
                 </Text>
               </div>
               <SegmentedControl
                 value={mode}
                 onChange={(value) => setMode(value as SettingsMode)}
                 data={[
-                  { label: "Simple", value: "user" },
-                  { label: "Advanced", value: "developer" }
+                  { label: t("settings.simple"), value: "user" },
+                  { label: t("settings.advanced"), value: "developer" }
                 ]}
               />
             </Group>
@@ -130,14 +138,14 @@ export function SettingsPage() {
             <div className="provider-form-grid">
               {mode === "developer" ? (
                 <TextInput
-                  label="Profile label"
-                  placeholder="Optional"
+                  label={t("settings.profileLabel")}
+                  placeholder={t("settings.optional")}
                   value={providerName}
                   onChange={(event) => setProviderName(event.target.value)}
                 />
               ) : null}
               <Select
-                label="Provider type"
+                label={t("settings.providerType")}
                 value={protocol}
                 onChange={(value) => {
                   if (value === "openai-compatible" || value === "anthropic-compatible") {
@@ -153,8 +161,8 @@ export function SettingsPage() {
               />
               <TextInput
                 className="provider-key-input"
-                label="API key"
-                placeholder="Paste key"
+                label={t("settings.apiKey")}
+                placeholder={t("settings.pasteKey")}
                 type="password"
                 value={apiKey}
                 onChange={(event) => {
@@ -166,7 +174,7 @@ export function SettingsPage() {
               {mode === "developer" ? (
                 <>
                   <TextInput
-                    label="Base URL"
+                    label={t("settings.baseUrl")}
                     placeholder="https://api.example.com/v1"
                     value={baseUrl}
                     onChange={(event) => {
@@ -176,14 +184,14 @@ export function SettingsPage() {
                     }}
                   />
                   <TextInput
-                    label="Concurrency"
+                    label={t("settings.concurrency")}
                     placeholder="1"
                     value={maxConcurrentRequests}
                     onChange={(event) => setMaxConcurrentRequests(event.target.value)}
                   />
                   <TextInput
-                    label="Requests per minute"
-                    placeholder="Optional"
+                    label={t("settings.requestsPerMinute")}
+                    placeholder={t("settings.optional")}
                     value={requestsPerMinute}
                     onChange={(event) => setRequestsPerMinute(event.target.value)}
                   />
@@ -198,26 +206,25 @@ export function SettingsPage() {
                 disabled={!apiKey.trim()}
                 variant="light"
               >
-                Find models
+                {t("settings.findModels")}
               </Button>
               <Button
                 onClick={submitProvider}
                 loading={createProvider.isPending}
                 disabled={!apiKey.trim() || !selectedModelCanRun}
               >
-                Use selected model
+                {t("settings.useSelectedModel")}
               </Button>
             </Group>
 
             {discoverModels.isError ? (
               <Alert color="red" mt="md">
-                Could not detect models. Check the key and provider endpoint.
+                {t("settings.modelDetectError")}
               </Alert>
             ) : null}
             {discoveredModels.length > 0 && runnableModelCount === 0 ? (
               <Alert color="yellow" mt="md">
-                This provider returned models, but none look usable for chat-based translation or
-                question answering.
+                {t("settings.noRunnableModels")}
               </Alert>
             ) : null}
             {discoveredModels.length > 0 ? (
@@ -243,7 +250,7 @@ export function SettingsPage() {
                       </span>
                       <Group gap="xs" justify="flex-end">
                         <Badge color={runnable ? "blue" : "gray"} variant="light">
-                          {runnable ? "Ready" : "Unavailable"}
+                          {runnable ? t("settings.ready") : t("settings.unavailable")}
                         </Badge>
                         {model.capabilities?.streaming !== false ? (
                           <Badge variant="light">streaming</Badge>
@@ -257,7 +264,7 @@ export function SettingsPage() {
                         {model.capabilities?.pdf === true ? (
                           <Badge variant="light">pdf</Badge>
                         ) : null}
-                        {selected ? <Badge variant="filled">Selected</Badge> : null}
+                        {selected ? <Badge variant="filled">{t("settings.selected")}</Badge> : null}
                       </Group>
                     </button>
                   );
@@ -266,21 +273,19 @@ export function SettingsPage() {
             ) : null}
 
             <Text c="dimmed" size="sm" mt="md">
-              API keys are kept in the application profile, outside portable library folders.
-              Translation quality across languages depends on the selected model and domain
-              coverage.
+              {t("settings.providerStorageNotice")}
             </Text>
             {createProvider.isError ? (
               <Text c="red" size="sm" mt="sm">
-                Provider could not be saved. Check that the API is running.
+                {t("settings.providerSaveError")}
               </Text>
             ) : null}
 
             <div className="saved-provider-section">
-              <Title order={4}>Saved providers</Title>
+              <Title order={4}>{t("settings.savedProviders")}</Title>
               {(providers.data ?? []).length === 0 ? (
                 <Text c="dimmed" size="sm" mt="xs">
-                  No model provider has been saved yet.
+                  {t("settings.noProviders")}
                 </Text>
               ) : (
                 <div className="saved-provider-list">
@@ -299,7 +304,7 @@ export function SettingsPage() {
                             : `${provider.max_concurrent_requests ?? 1} parallel`}
                         </Badge>
                         <Badge color={provider.key_ref ? "green" : "gray"}>
-                          {provider.key_ref ? "configured" : "missing"}
+                          {provider.key_ref ? t("settings.configured") : t("settings.missing")}
                         </Badge>
                       </Group>
                     </div>
@@ -310,23 +315,47 @@ export function SettingsPage() {
           </div>
         </Tabs.Panel>
 
+        <Tabs.Panel value="interface">
+          <div className="panel settings-panel">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Title order={3}>{t("settings.languageTitle")}</Title>
+                <Text c="dimmed" size="sm">
+                  {t("settings.languageHelp")}
+                </Text>
+              </div>
+              <Select
+                label={t("settings.language")}
+                value={locale}
+                onChange={(value) => {
+                  if (value) setLocale(value as AppLocale);
+                }}
+                data={SUPPORTED_LOCALES.map((item) => ({
+                  value: item.value,
+                  label: item.nativeLabel
+                }))}
+              />
+            </Group>
+          </div>
+        </Tabs.Panel>
+
         <Tabs.Panel value="memory">
           <div className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Title order={3}>Translation memory review</Title>
+                <Title order={3}>{t("settings.memoryReview")}</Title>
                 <Text c="dimmed" size="sm">
-                  Review reusable translations before they affect other papers.
+                  {t("settings.memoryReviewHelp")}
                 </Text>
               </div>
               <Group align="end">
                 <TextInput
-                  label="Language"
+                  label={t("settings.language")}
                   value={memoryTargetLanguage}
                   onChange={(event) => setMemoryTargetLanguage(event.target.value)}
                 />
                 <Select
-                  label="Review status"
+                  label={t("settings.reviewStatus")}
                   value={memoryReviewStatus}
                   onChange={(value) => {
                     if (value === "pending" || value === "approved" || value === "rejected") {
@@ -334,9 +363,9 @@ export function SettingsPage() {
                     }
                   }}
                   data={[
-                    { value: "pending", label: "Pending" },
-                    { value: "approved", label: "Approved" },
-                    { value: "rejected", label: "Rejected" }
+                    { value: "pending", label: t("settings.pending") },
+                    { value: "approved", label: t("settings.approved") },
+                    { value: "rejected", label: t("settings.rejected") }
                   ]}
                 />
               </Group>
@@ -344,23 +373,23 @@ export function SettingsPage() {
 
             {memory.isError ? (
               <Alert color="yellow" mt="md">
-                Translation memory could not be loaded from the API.
+                {t("settings.memoryLoadError")}
               </Alert>
             ) : null}
 
             {(memory.data?.entries ?? []).length === 0 ? (
               <Text c="dimmed" size="sm" mt="md">
-                No translation memory entries match this filter.
+                {t("settings.noMemory")}
               </Text>
             ) : (
               <Table mt="md" verticalSpacing="sm" className="memory-review-table">
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>Source</Table.Th>
-                    <Table.Th>Translation</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Updated</Table.Th>
-                    <Table.Th>Actions</Table.Th>
+                    <Table.Th>{t("settings.source")}</Table.Th>
+                    <Table.Th>{t("settings.translation")}</Table.Th>
+                    <Table.Th>{t("library.status")}</Table.Th>
+                    <Table.Th>{t("library.updated")}</Table.Th>
+                    <Table.Th>{t("settings.actions")}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -403,7 +432,7 @@ export function SettingsPage() {
                               })
                             }
                           >
-                            Approve
+                            {t("settings.approve")}
                           </Button>
                           <Button
                             size="xs"
@@ -415,7 +444,7 @@ export function SettingsPage() {
                               })
                             }
                           >
-                            Disable
+                            {t("settings.disable")}
                           </Button>
                           <Button
                             size="xs"
@@ -428,7 +457,7 @@ export function SettingsPage() {
                               })
                             }
                           >
-                            Reject
+                            {t("settings.reject")}
                           </Button>
                         </Group>
                       </Table.Td>
@@ -442,22 +471,22 @@ export function SettingsPage() {
 
         <Tabs.Panel value="tools">
           <div className="panel">
-            <Title order={3}>Local tools</Title>
+            <Title order={3}>{t("settings.tools")}</Title>
             <Text c="dimmed" size="sm">
-              Missing TeX tools only disable the features that need them; Bilin should still start.
+              {t("settings.localToolsHelp", { product: productName })}
             </Text>
             {doctor.isError ? (
               <Alert color="yellow" mt="md">
-                The API is not reachable. Start FastAPI on port 8000 to inspect local tools.
+                {t("settings.toolsApiError")}
               </Alert>
             ) : null}
             <Table mt="md">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Tool</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Level</Table.Th>
-                  <Table.Th>Path</Table.Th>
+                  <Table.Th>{t("settings.tool")}</Table.Th>
+                  <Table.Th>{t("library.status")}</Table.Th>
+                  <Table.Th>{t("settings.level")}</Table.Th>
+                  <Table.Th>{t("library.path")}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

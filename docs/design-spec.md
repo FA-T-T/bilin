@@ -1,5 +1,23 @@
 # Local Paper Reading System Design Specification
 
+## Product Naming And Language Policy
+
+The product has language-specific display names. In Simplified Chinese it is
+衔牍. In English it is Ilios. In Japanese it is 理紐. Other languages use the
+English name Ilios until a maintained local name is deliberately chosen. These
+display names are user-facing. The repository path, Python package, frontend
+package, CLI command, database keys, and environment variables may continue to
+use the existing `bilin` technical identifier until a migration is justified.
+
+Simplified Chinese and English are core maintained languages. They should be
+accurate, synchronized, and release-blocking for public documentation and main
+interface copy. Japanese is the third human README and is labeled experimental.
+Korean, Spanish, French, and German README files are community contribution
+placeholders until maintainers can keep them accurate. The interface still keeps
+Japanese, Korean, Spanish, French, and German hooks as experimental or
+community-friendly UI languages. They may be incomplete, lag behind the core
+languages, or fall back to English for newly added interface strings.
+
 ## Purpose
 
 This project is a local-first web application for reading, translating, questioning, and studying academic papers. The primary input is the arXiv TeX source package, because TeX preserves the semantic structure that a serious reading system needs: sections, paragraphs, equations, figures, tables, labels, citations, theorem-like environments, algorithms, and bibliography entries. PDF is supported as an archived source file and as a weak fallback input through capable LLMs, but PDF is not the canonical path for structured reading.
@@ -10,7 +28,7 @@ The system is not a SaaS product in its first form. It has no account system, no
 
 The canonical mode is TeX mode. In this mode the user imports an arXiv ID or uploads a TeX `zip` or `tar.gz` package. The backend builds a deterministic document model, renders semantic Markdown for reading, extracts or renders assets, creates paragraph-level translation jobs, caches translated blocks, supports paragraph-level operations, and lets the user ask questions grounded in the paper.
 
-PDF mode is an LLM-assisted fallback mode. A PDF can be saved in the library, and a recommended capable model may attempt to parse or summarize it, but this mode does not promise strict paragraph alignment or TeX-level structure. The interface must label PDF-derived structure as model-generated fallback structure. The main product claim remains high-quality TeX-based reading and translation.
+PDF mode is experimental and secondary. A PDF can be saved in the library today, but the MVP does not parse, open, OCR, translate, or embed it in the reader. A future recommended capable model may attempt LLM-assisted fallback parsing or summarization, but that path must be explicitly labeled as model-generated fallback structure and must not claim strict paragraph alignment or TeX-level reliability. The main product claim remains high-quality TeX-based reading and translation.
 
 Markdown input is a weak structured input. The system can import a Markdown file, split it into headings and paragraphs, and then provide translation, question answering, and lecture-note generation. It cannot infer TeX-level equation labels, figure references, or bibliography structure unless that information is already present.
 

@@ -19,6 +19,7 @@ from bilin_api.api import (
     providers,
     translation_memory,
 )
+from bilin_api.branding import PRODUCT_NAME_EN
 from bilin_api.database import init_global_db
 from bilin_api.schemas import (
     ArticleChatHistory,
@@ -83,9 +84,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Bilin API",
+    title=f"{PRODUCT_NAME_EN} API",
     version=__version__,
-    description="Local-first API skeleton for Bilin.",
+    description=f"Local-first API for {PRODUCT_NAME_EN}.",
     lifespan=lifespan,
 )
 
