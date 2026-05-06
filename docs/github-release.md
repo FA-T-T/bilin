@@ -4,7 +4,7 @@ This guide describes how to turn the current Ilios checkout into a GitHub releas
 
 ## Release Scope
 
-The v0.1.0 package is an MVP source release. It contains the React web app, FastAPI backend, CLI, worker, SQLite migrations, generated OpenAPI TypeScript schema, golden fixtures, documentation, Apache-2.0 `LICENSE` and `NOTICE` files, and release packaging script. It does not contain local application data, user libraries, API keys, SQLite databases, virtual environments, node modules, build output, Playwright test output, or machine caches.
+The v0.2.0 package is an MVP source release. It contains the React web app, FastAPI backend, CLI, worker, SQLite migrations, generated OpenAPI TypeScript schema, golden fixtures, documentation, Apache-2.0 `LICENSE` and `NOTICE` files, and release packaging script. It does not contain local application data, user libraries, API keys, SQLite databases, virtual environments, node modules, build output, Playwright test output, or machine caches.
 
 ## Preflight
 
@@ -39,18 +39,18 @@ cd ../..
 Create release archives from a clean staging copy. The script does not require a git repository; it packages the current working tree after excluding local-only artifacts.
 
 ```sh
-./scripts/package-release.sh
+./scripts/package-release.sh 0.2.0
 ```
 
-The output is written to `release/`. The expected files are `bilin-v0.1.0-source.tar.gz`, `bilin-v0.1.0-source.zip`, and matching `.sha256` files.
+The output is written to `release/`. The expected files are `bilin-v0.2.0-source.tar.gz`, `bilin-v0.2.0-source.zip`, and matching `.sha256` files.
 
-Inspect the archive before uploading it. The archive root should be `bilin-v0.1.0-source/`, and it should not contain `.venv`, `node_modules`, `.bilin`, `papers`, `*.sqlite`, `dist`, `test-results`, `.DS_Store`, or `__pycache__`.
+Inspect the archive before uploading it. The archive root should be `bilin-v0.2.0-source/`, and it should not contain `.venv`, `node_modules`, `.bilin`, `papers`, `*.sqlite`, `dist`, `test-results`, `.DS_Store`, or `__pycache__`.
 
 ```sh
-tar -tzf release/bilin-v0.1.0-source.tar.gz | head
-tar -tzf release/bilin-v0.1.0-source.tar.gz | rg 'node_modules|\\.venv|\\.bilin|papers/|\\.sqlite|__pycache__|\\.DS_Store|test-results' || true
-shasum -a 256 -c release/bilin-v0.1.0-source.tar.gz.sha256
-shasum -a 256 -c release/bilin-v0.1.0-source.zip.sha256
+tar -tzf release/bilin-v0.2.0-source.tar.gz | head
+tar -tzf release/bilin-v0.2.0-source.tar.gz | rg 'node_modules|\\.venv|\\.bilin|papers/|\\.sqlite|__pycache__|\\.DS_Store|test-results' || true
+shasum -a 256 -c release/bilin-v0.2.0-source.tar.gz.sha256
+shasum -a 256 -c release/bilin-v0.2.0-source.zip.sha256
 ```
 
 ## Publish
@@ -60,15 +60,15 @@ Create a GitHub repository, push the source tree, and tag the release. If the re
 ```sh
 git init
 git add .
-git commit -m "Release Ilios v0.1.0"
+git commit -m "Release Ilios v0.2.0"
 git branch -M main
 git remote add origin <your-github-repo-url>
 git push -u origin main
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-On GitHub, create a new release from tag `v0.1.0`. Use `RELEASE_NOTES.md` as the release body and upload the files from `release/` as release assets if you want explicit archives in addition to GitHub's automatic source archives.
+On GitHub, create a new release from tag `v0.2.0`. Use `RELEASE_NOTES.md` as the release body and upload the files from `release/` as release assets if you want explicit archives in addition to GitHub's automatic source archives.
 
 ## Post-Publish Check
 

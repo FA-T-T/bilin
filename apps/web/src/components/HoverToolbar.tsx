@@ -1,4 +1,5 @@
 import { ActionIcon, Group, Tooltip } from "@mantine/core";
+import { memo } from "react";
 import {
   READER_TOOLBAR_ACTIONS,
   type ReaderToolbarActionId,
@@ -6,9 +7,11 @@ import {
 } from "./readerToolbarActions";
 import { useT } from "../i18n";
 
-export function HoverToolbar({
+const emptyDisabledActions: ReaderToolbarActionId[] = [];
+
+export const HoverToolbar = memo(function HoverToolbar({
   kind,
-  disabledActions = [],
+  disabledActions = emptyDisabledActions,
   onAction
 }: {
   kind: ToolbarKind;
@@ -39,4 +42,4 @@ export function HoverToolbar({
       })}
     </Group>
   );
-}
+});

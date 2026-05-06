@@ -12,6 +12,11 @@ from bilin_api.article_store import (
     read_article_document,
     resolve_library,
 )
+from bilin_api.citation_service import (
+    get_article_citations,
+    lookup_citation_scholar,
+    queue_citation_library_import,
+)
 from bilin_api.embedding_service import (
     build_article_embeddings,
     get_article_embedding_status,
@@ -35,6 +40,7 @@ from bilin_api.note_service import (
     update_article_note_patch,
     update_user_note_template,
 )
+from bilin_api.obsidian_service import save_obsidian_clip
 from bilin_api.qa_service import (
     ask_article_question,
     get_article_chat_history,
@@ -43,6 +49,7 @@ from bilin_api.qa_service import (
 )
 from bilin_api.schemas import (
     ArticleChatHistory,
+    ArticleCitations,
     ArticleDocument,
     ArticleEmbeddingStatus,
     ArticleExportRequest,
@@ -54,6 +61,9 @@ from bilin_api.schemas import (
     ChatAskRequest,
     ChatAskResult,
     ChatToNotePatchRequest,
+    CitationLibraryImportRequest,
+    CitationLibraryImportResult,
+    CitationScholarResult,
     EmbedArticleRequest,
     EmbedArticleResult,
     GlossaryExtractionRequest,
@@ -69,6 +79,8 @@ from bilin_api.schemas import (
     NoteTemplate,
     NoteTemplateCreate,
     NoteTemplateUpdate,
+    ObsidianClipRequest,
+    ObsidianClipResult,
     TranslationBatchRequest,
     TranslationBatchResult,
     TranslationMemoryLookupResult,
@@ -111,6 +123,46 @@ async def get_article_document(library_id: str, revision_id: str) -> ArticleDocu
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
     return document
+
+
+@router.get("/{revision_id}/citations", response_model=ArticleCitations)
+async def get_citations(library_id: str, revision_id: str) -> ArticleCitations:
+    library = await _library_or_404(library_id)
+    try:
+        return await get_article_citations(library, revision_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{revision_id}/citations/{citation_id}/scholar", response_model=CitationScholarResult)
+async def get_citation_scholar(
+    library_id: str,
+    revision_id: str,
+    citation_id: str,
+) -> CitationScholarResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await lookup_citation_scholar(library, revision_id, citation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{revision_id}/citations/{citation_id}/import-arxiv",
+    response_model=CitationLibraryImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_citation_arxiv_import(
+    library_id: str,
+    revision_id: str,
+    citation_id: str,
+    payload: CitationLibraryImportRequest,
+) -> CitationLibraryImportResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await queue_citation_library_import(library, revision_id, citation_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{revision_id}/translations", response_model=ArticleTranslations)
@@ -441,6 +493,19 @@ async def post_article_export_job(
     library = await _library_or_404(library_id)
     try:
         return await queue_article_export(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{revision_id}/obsidian/clips", response_model=ObsidianClipResult)
+async def post_obsidian_clip(
+    library_id: str,
+    revision_id: str,
+    payload: ObsidianClipRequest,
+) -> ObsidianClipResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await save_obsidian_clip(library, revision_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

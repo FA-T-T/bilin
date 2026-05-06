@@ -1,7 +1,7 @@
 {
   "name": "@bilin/web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -11,13 +11,13 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
+    "bundle:check": "node scripts/check-bundle-size.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format:check": "prettier --check .",
     "generate-api-client": "openapi-typescript ./openapi.json -o src/api/generated/schema.ts"
   },
   "dependencies": {
-    "@chenglou/pretext": "^0.0.6",
     "@mantine/core": "^7.16.0",
     "@mantine/hooks": "^7.16.0",
     "@tanstack/react-query": "^5.64.0",

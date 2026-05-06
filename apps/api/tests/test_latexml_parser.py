@@ -74,6 +74,81 @@ def test_normalize_latexml_html_outputs_blocks_assets_and_markdown() -> None:
     assert "# Introduction" in render_source_markdown(blocks)
 
 
+def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>
+              Most models cite <cite class="ltx_cite">[<a href="#bib.bib5">5</a>,
+              <a href="#bib.bib2">2</a>]</cite>. Here, the encoder maps
+              an input sequence of symbol representations
+              <math alttext="(x_1,\ldots,x_n)"></math> to a sequence of continuous
+              representations <math alttext="\mathbf{z}=(z_1,\ldots,z_n)"></math>.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert blocks[0].source_markdown == (
+        "Most models cite [5](#bib.bib5), [2](#bib.bib2). Here, the encoder maps "
+        "an input sequence of symbol representations "
+        "$(x_1,\\ldots,x_n)$ to a sequence of continuous representations "
+        "$\\mathbf{z}=(z_1,\\ldots,z_n)$."
+    )
+    assert "[[5]" not in blocks[0].source_markdown
+    assert "$(x_1,\\ldots,x_n)$" in render_source_markdown(blocks)
+
+
+def test_normalize_latexml_html_keeps_paragraph_headings_as_sections(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <h2>Model Architecture</h2>
+            <div class="ltx_para" id="S3.p1">
+              <h5 class="ltx_title ltx_title_paragraph">Encoder:</h5>
+              <p>The encoder is composed of a stack of identical layers.</p>
+            </div>
+            <div class="ltx_para" id="S3.p2">
+              <h6 class="ltx_title ltx_title_subparagraph">Decoder:</h6>
+              <p>The decoder follows the same overall structure.</p>
+            </div>
+            <h5 class="ltx_title ltx_title_paragraph" id="S3.p3">Attention:</h5>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == [
+        "section",
+        "section",
+        "paragraph",
+        "section",
+        "paragraph",
+        "section",
+    ]
+    assert blocks[1].source_markdown == "Encoder:"
+    assert blocks[1].metadata["label"] is None
+    assert blocks[2].source_markdown == "The encoder is composed of a stack of identical layers."
+    assert blocks[3].source_markdown == "Decoder:"
+    assert blocks[4].source_markdown == "The decoder follows the same overall structure."
+    assert blocks[5].source_markdown == "Attention:"
+    source_markdown = render_source_markdown(blocks)
+    assert "## Model Architecture" in source_markdown
+    assert "##### Encoder:" in source_markdown
+    assert "**Encoder:** The encoder is composed" not in source_markdown
+
+
 def test_normalize_latexml_html_accepts_html5_void_tags(tmp_path: Path) -> None:
     html_path = tmp_path / "latexml.html"
     image_path = tmp_path / "figures" / "pipeline.png"
@@ -155,6 +230,76 @@ def test_normalize_latexml_html_copies_assets_and_preserves_metadata(tmp_path: P
     assert (bundle_path / "assets" / "fig-0001.png").read_bytes() == b"fake image bytes"
 
 
+def test_normalize_latexml_html_recovers_missing_image_sources_from_latexml_xml(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    xml_path = tmp_path / "latexml.xml"
+    source_root = tmp_path / "source"
+    vis_dir = source_root / "vis"
+    vis_dir.mkdir(parents=True)
+    (vis_dir / "making.png").write_bytes(b"making")
+    (vis_dir / "anaphora-a.png").write_bytes(b"anaphora-a")
+    (vis_dir / "anaphora-b.png").write_bytes(b"anaphora-b")
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure id="Sx1.F3">
+              <img class="ltx_missing_image" id="Sx1.F3.g1" src="">
+              <figcaption>Figure 3: Missing HTML source.</figcaption>
+            </figure>
+            <figure id="Sx1.F4">
+              <img class="ltx_missing_image" id="Sx1.F4.g1" src="">
+              <img class="ltx_missing_image" id="Sx1.F4.g2" src="">
+              <figcaption>Figure 4: Two missing HTML sources.</figcaption>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    xml_path.write_text(
+        """
+        <document>
+          <figure xml:id="Sx1.F3">
+            <graphics xml:id="Sx1.F3.g1" candidates="vis/making.png"
+              options="width=433.62pt,trim=0.0pt 0.0pt 0.0pt 36.135pt,clip=true"/>
+          </figure>
+          <figure xml:id="Sx1.F4">
+            <graphics xml:id="Sx1.F4.g1" candidates="./vis/anaphora-a.png"
+              options="width=433.62pt,clip=true"/>
+            <graphics xml:id="Sx1.F4.g2" candidates="./vis/anaphora-b.png"
+              options="width=433.62pt,clip=true"/>
+          </figure>
+        </document>
+        """,
+        encoding="utf-8",
+    )
+    bundle_path = tmp_path / "bundle"
+
+    blocks, assets = normalize_latexml_html(
+        html_path,
+        "revision-1",
+        bundle_path=bundle_path,
+        source_root=source_root,
+    )
+
+    assert [block.block_type for block in blocks] == ["figure", "figure"]
+    assert blocks[0].metadata["asset_source"] == str(vis_dir / "making.png")
+    assert assets[0].web_path == str(bundle_path / "assets" / "fig-0001.png")
+    assert assets[0].metadata["original_reference"] == "vis/making.png"
+    assert assets[0].metadata["display_width_pt"] == 433.62
+    assert assets[0].metadata["asset_resolution"] == "copied"
+    assert assets[1].metadata["original_references"] == [
+        "vis/anaphora-a.png",
+        "vis/anaphora-b.png",
+    ]
+    assert assets[1].metadata["asset_files"][1]["web_path"] == str(
+        bundle_path / "assets" / "fig-0002-2.png"
+    )
+
+
 def test_normalize_latexml_html_treats_equation_tables_as_equations(tmp_path: Path) -> None:
     html_path = tmp_path / "latexml.html"
     html_path.write_text(
@@ -218,8 +363,12 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
           <body>
             <p>See Figure <a href="#fig:pair">1</a> and Table <a href="#tab:results">1</a>.</p>
             <figure id="fig:pair">
-              <img src="figures/left.png" />
-              <img src="figures/right.png" />
+              <div style="width:144pt;">
+                <img src="figures/left.png" width="288" height="180" />
+              </div>
+              <div style="width:216pt;">
+                <img src="figures/right.png" width="432" height="270" />
+              </div>
               <figcaption>A paired image figure.</figcaption>
             </figure>
             <figure class="ltx_table" id="tab:results">
@@ -248,6 +397,11 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
     assert blocks[2].metadata["label"] == "tab:results"
     figure_asset = next(asset for asset in assets if asset.kind == "figure")
     assert figure_asset.web_path == str(tmp_path / "bundle" / "assets" / "fig-0001.png")
+    assert figure_asset.metadata["article_layout"] == "multi-panel"
+    assert figure_asset.metadata["total_panel_width_pt"] == 360.0
+    assert figure_asset.metadata["asset_files"][0]["panel_width_pt"] == 144.0
+    assert figure_asset.metadata["asset_files"][0]["subfigure_group_width_pt"] == 360.0
+    assert figure_asset.metadata["asset_files"][1]["panel_width_pt"] == 216.0
     assert figure_asset.metadata["asset_files"][1]["web_path"] == str(
         tmp_path / "bundle" / "assets" / "fig-0001-2.png"
     )
@@ -284,6 +438,47 @@ def test_normalize_latexml_html_keeps_layout_tables_inside_figures_as_figures(
         "**Figure 1.** A figure whose internal layout happens to use a table."
     )
     assert assets[0].kind == "figure"
+
+
+def test_normalize_latexml_html_records_figure_layout_metadata(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    figure_dir = tmp_path / "figures"
+    figure_dir.mkdir()
+    (figure_dir / "wide.png").write_bytes(b"wide")
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure class="ltx_figure" id="fig:wide">
+              <div style="width:432.5pt;">
+                <img src="figures/wide.png" width="1200" height="460" />
+              </div>
+              <figcaption>
+                <span class="ltx_tag ltx_tag_figure">Figure 2: </span>
+                A double-column architecture figure.
+              </figcaption>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(
+        html_path,
+        "revision-1",
+        bundle_path=tmp_path / "bundle",
+    )
+
+    assert [block.block_type for block in blocks] == ["figure"]
+    figure_asset = assets[0]
+    assert figure_asset.metadata["article_layout"] == "double-column"
+    assert figure_asset.metadata["display_width_pt"] == 432.5
+    assert figure_asset.metadata["max_panel_width_pt"] == 432.5
+    assert figure_asset.metadata["image_width"] == 1200.0
+    assert figure_asset.metadata["image_height"] == 460.0
+    assert figure_asset.metadata["asset_files"][0]["display_width_pt"] == 432.5
+    assert figure_asset.metadata["asset_files"][0]["article_layout"] == "double-column"
 
 
 def test_normalize_latexml_html_degrades_pdf_asset_when_converter_missing(

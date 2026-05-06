@@ -85,6 +85,33 @@ async def resolve_arxiv_metadata(
             await active_client.aclose()
 
 
+async def search_arxiv_latest_by_title(
+    title: str,
+    client: httpx.AsyncClient | None = None,
+) -> ArxivMetadata | None:
+    query = " ".join(title.split()).strip()
+    if not query:
+        return None
+    owns_client = client is None
+    active_client = client or httpx.AsyncClient(timeout=30)
+    try:
+        response = await active_client.get(
+            ARXIV_API_URL,
+            params={
+                "search_query": f'ti:"{query}"',
+                "start": 0,
+                "max_results": 5,
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+            },
+        )
+        response.raise_for_status()
+        return best_title_match(response.text, query)
+    finally:
+        if owns_client:
+            await active_client.aclose()
+
+
 def parse_arxiv_atom(xml_text: str, requested: ArxivIdentity) -> ArxivMetadata:
     root = ET.fromstring(xml_text)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
@@ -92,10 +119,37 @@ def parse_arxiv_atom(xml_text: str, requested: ArxivIdentity) -> ArxivMetadata:
     if entry is None:
         msg = f"arXiv returned no entry for {requested.concrete_id}"
         raise ValueError(msg)
+    return metadata_from_entry(entry, requested=requested)
+
+
+def best_title_match(xml_text: str, query: str) -> ArxivMetadata | None:
+    root = ET.fromstring(xml_text)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    entries = root.findall("atom:entry", ns)
+    if not entries:
+        return None
+    candidates = [metadata_from_entry(entry) for entry in entries]
+    normalized_query = normalize_title(query)
+    for candidate in candidates:
+        normalized_title = normalize_title(candidate.title)
+        if normalized_query == normalized_title:
+            return candidate
+    for candidate in candidates:
+        normalized_title = normalize_title(candidate.title)
+        if normalized_query in normalized_title or normalized_title in normalized_query:
+            return candidate
+    return candidates[0]
+
+
+def metadata_from_entry(
+    entry: ET.Element,
+    requested: ArxivIdentity | None = None,
+) -> ArxivMetadata:
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
     raw_entry_id = _text(entry.find("atom:id", ns))
     concrete_id = raw_entry_id.rstrip("/").split("/")[-1]
     parsed = parse_arxiv_identity(concrete_id)
-    version = parsed.version or requested.version or "v1"
+    version = parsed.version or (requested.version if requested else None) or "v1"
     source_id = f"{parsed.bare_id}{version}"
     title = " ".join(_text(entry.find("atom:title", ns)).split())
     summary = " ".join(_text(entry.find("atom:summary", ns)).split())
@@ -116,6 +170,10 @@ def parse_arxiv_atom(xml_text: str, requested: ArxivIdentity) -> ArxivMetadata:
         source_url=ARXIV_SOURCE_URL.format(idv=source_id),
         pdf_url=ARXIV_PDF_URL.format(idv=source_id),
     )
+
+
+def normalize_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
 async def download_bytes(url: str, client: httpx.AsyncClient | None = None) -> bytes:

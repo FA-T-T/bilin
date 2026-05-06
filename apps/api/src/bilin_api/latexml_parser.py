@@ -277,6 +277,7 @@ def normalize_latexml_html(
     source_root: Path | None = None,
 ) -> tuple[list[DocumentBlock], list[AssetRecord]]:
     root = parse_latexml_html(html_path)
+    _hydrate_missing_graphics_from_latexml_xml(root, html_path.with_suffix(".xml"))
     body = _first_descendant(root, {"body"})
     if body is None:
         body = root
@@ -300,6 +301,100 @@ def parse_latexml_html(html_path: Path) -> Any:
         parser.feed(html_path.read_text(encoding="utf-8", errors="replace"))
         parser.close()
         return parser.root
+
+
+def _hydrate_missing_graphics_from_latexml_xml(root: Any, xml_path: Path) -> None:
+    graphic_records = _latexml_graphics_index(xml_path)
+    if not graphic_records:
+        return
+    for candidate in root.iter():
+        tag = _local_name(candidate.tag)
+        if tag not in {"img", "image", "object"}:
+            continue
+        if _image_reference(candidate):
+            continue
+        identifier = _element_identifier(candidate)
+        if not identifier:
+            continue
+        record = graphic_records.get(identifier)
+        if not record:
+            continue
+        candidate.attrib["src"] = record.reference
+        if record.display_width_pt is not None:
+            _merge_width_style(candidate, record.display_width_pt)
+
+
+class _LatexmlGraphicRecord:
+    def __init__(self, reference: str, display_width_pt: float | None) -> None:
+        self.reference = reference
+        self.display_width_pt = display_width_pt
+
+
+def _latexml_graphics_index(xml_path: Path) -> dict[str, _LatexmlGraphicRecord]:
+    if not xml_path.exists():
+        return {}
+    try:
+        root = ET.parse(xml_path).getroot()
+    except ET.ParseError:
+        return {}
+    records: dict[str, _LatexmlGraphicRecord] = {}
+    for candidate in root.iter():
+        if _local_name(candidate.tag) != "graphics":
+            continue
+        identifier = _element_identifier(candidate)
+        reference = _latexml_graphic_reference(candidate)
+        if not identifier or not reference:
+            continue
+        records[identifier] = _LatexmlGraphicRecord(
+            reference=reference,
+            display_width_pt=_graphics_option_width_pt(candidate.attrib.get("options")),
+        )
+    return records
+
+
+def _latexml_graphic_reference(element: Any) -> str | None:
+    for key in ("graphic", "candidates"):
+        value = element.attrib.get(key)
+        if not value:
+            continue
+        reference = value.split()[0].strip()
+        if reference:
+            return reference.removeprefix("./")
+    return None
+
+
+def _graphics_option_width_pt(options: str | None) -> float | None:
+    if not options:
+        return None
+    match = re.search(r"(?:^|,)\s*width\s*=\s*([0-9.]+)\s*pt\b", options)
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value if value > 0 else None
+
+
+def _element_identifier(element: Any) -> str | None:
+    for key in ("id", "xml:id", "{http://www.w3.org/XML/1998/namespace}id"):
+        value = element.attrib.get(key)
+        if value:
+            return value
+    return None
+
+
+def _image_reference(element: Any) -> str | None:
+    for key in ("src", "data", "href", "{http://www.w3.org/1999/xlink}href"):
+        value = element.attrib.get(key)
+        if value:
+            return value.strip()
+    return None
+
+
+def _merge_width_style(element: Any, width_pt: float) -> None:
+    style = element.attrib.get("style", "").strip()
+    width_style = f"width:{width_pt:g}pt;"
+    if re.search(r"\bwidth\s*:", style, flags=re.IGNORECASE):
+        return
+    element.attrib["style"] = f"{style.rstrip(';')};{width_style}" if style else width_style
 
 
 class HtmlElement:
@@ -550,7 +645,8 @@ class _DocumentBuilder:
         asset_id: str,
     ) -> tuple[str | None, str | None, dict[str, Any]]:
         references = _asset_references(element)
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = _environment_image_layout_metadata(element, len(references))
+        file_layout_metadata = _environment_image_file_layout_metadata(element, references)
         if not references:
             generated_kind = _code_generated_asset_kind(element)
             if generated_kind:
@@ -578,6 +674,8 @@ class _DocumentBuilder:
                     "original_reference": reference,
                     "index": index,
                 }
+                if index - 1 < len(file_layout_metadata):
+                    resolved_file_metadata.update(file_layout_metadata[index - 1])
                 if source_path is None:
                     resolved_file_metadata["asset_resolution"] = "missing"
                 else:
@@ -604,6 +702,8 @@ class _DocumentBuilder:
                 source_root=self.source_root,
             )
             file_metadata: dict[str, Any] = {"original_reference": reference, "index": index}
+            if index - 1 < len(file_layout_metadata):
+                file_metadata.update(file_layout_metadata[index - 1])
             if source_path is None:
                 file_metadata["asset_resolution"] = "missing"
                 asset_files.append(file_metadata)
@@ -685,19 +785,15 @@ def _markdown_text_inner(element: Any) -> str:
     for child in list(element):
         tag = _local_name(child.tag)
         child_text = _markdown_text_inner(child)
-        if tag == "a":
-            href = child.attrib.get("href")
-            if href and child_text.strip():
-                label = _collapse_markdown_whitespace(child_text)
-                if label.startswith("[") and label.endswith("]"):
-                    label = label[1:-1]
-                parts.append(f"[{label}]({href})")
-            else:
-                parts.append(child_text)
+        if _is_citation_element(child):
+            parts.append(_citation_markdown_text(child))
+        elif tag == "a":
+            parts.append(_markdown_link_text(child, child_text))
         elif tag == "br":
             parts.append(" ")
         elif tag == "math":
-            parts.append(_extract_math_tex(child) or _clean_text(child))
+            math_text = _extract_math_tex(child)
+            parts.append(_inline_math_markdown(math_text) if math_text else _clean_text(child))
         else:
             parts.append(child_text)
         parts.append(child.tail or "")
@@ -707,6 +803,45 @@ def _markdown_text_inner(element: Any) -> str:
 def _collapse_markdown_whitespace(text: str) -> str:
     normalized = " ".join(text.split())
     return normalized.replace(" ]", "]").replace("[ ", "[").replace(" )", ")").replace("( ", "(")
+
+
+def _markdown_link_text(element: Any, child_text: str) -> str:
+    href = element.attrib.get("href")
+    if not href or not child_text.strip():
+        return child_text
+    label = _collapse_markdown_whitespace(child_text)
+    if label.startswith("[") and label.endswith("]"):
+        label = label[1:-1]
+    return f"[{label}]({href})"
+
+
+def _is_citation_element(element: Any) -> bool:
+    class_name = str(element.attrib.get("class", "")).lower()
+    return _local_name(element.tag) == "cite" or "ltx_cite" in class_name
+
+
+def _citation_markdown_text(element: Any) -> str:
+    parts: list[str] = [_citation_wrapper_text(element.text or "")]
+    for child in list(element):
+        tag = _local_name(child.tag)
+        child_text = _markdown_text_inner(child)
+        if _is_citation_element(child):
+            parts.append(_citation_markdown_text(child))
+        elif tag == "a":
+            parts.append(_markdown_link_text(child, child_text))
+        else:
+            parts.append(child_text)
+        parts.append(_citation_wrapper_text(child.tail or ""))
+    return "".join(parts)
+
+
+def _citation_wrapper_text(value: str) -> str:
+    return value.replace("[", "").replace("]", "")
+
+
+def _inline_math_markdown(value: str) -> str:
+    escaped = value.replace("$", r"\$")
+    return f"${escaped}$"
 
 
 def _first_descendant(element: Any, tags: set[str]) -> Any | None:
@@ -851,6 +986,196 @@ def _asset_references(element: Any) -> list[str]:
                     references.append(value.strip())
                     break
     return references
+
+
+def _environment_image_layout_metadata(element: Any, reference_count: int) -> dict[str, Any]:
+    image_records = _image_element_records(element)
+    panel_widths = _image_panel_widths_pt(element) or _style_widths_pt(element)
+    image_count = max(reference_count, len(image_records))
+    metadata: dict[str, Any] = {}
+    first_image = image_records[0] if image_records else {}
+    first_width = _numeric_dict_value(first_image, "width")
+    first_height = _numeric_dict_value(first_image, "height")
+    max_panel_width = max(panel_widths) if panel_widths else None
+    total_panel_width = sum(panel_widths) if panel_widths else None
+    has_flex_layout = _has_latexml_flex_layout(element)
+    display_width = total_panel_width if image_count > 1 and has_flex_layout else max_panel_width
+    if display_width is None and first_width is not None:
+        display_width = first_width
+
+    if image_count:
+        metadata["image_count"] = image_count
+    if first_width is not None:
+        metadata["image_width"] = first_width
+        metadata["width"] = first_width
+    if first_height is not None:
+        metadata["image_height"] = first_height
+        metadata["height"] = first_height
+    if max_panel_width is not None:
+        metadata["max_panel_width_pt"] = round(max_panel_width, 3)
+    if total_panel_width is not None:
+        metadata["total_panel_width_pt"] = round(total_panel_width, 3)
+    if display_width is not None:
+        metadata["display_width_pt"] = round(display_width, 3)
+    if has_flex_layout:
+        metadata["has_flex_layout"] = True
+    article_layout = _article_layout_from_image_metrics(
+        image_count=image_count,
+        has_flex_layout=has_flex_layout,
+        max_panel_width_pt=max_panel_width,
+        width=first_width,
+        height=first_height,
+    )
+    if article_layout:
+        metadata["article_layout"] = article_layout
+    return metadata
+
+
+def _environment_image_file_layout_metadata(
+    element: Any,
+    references: list[str],
+) -> list[dict[str, Any]]:
+    if not references:
+        return []
+    image_records = _image_element_records(element)
+    panel_widths = _image_panel_widths_pt(element) or _style_widths_pt(element)
+    parent_metadata = _environment_image_layout_metadata(element, len(references))
+    parent_layout = parent_metadata.get("article_layout")
+    records: list[dict[str, Any]] = []
+    for index, reference in enumerate(references):
+        image_record = image_records[index] if index < len(image_records) else {}
+        panel_width = panel_widths[index] if index < len(panel_widths) else None
+        file_metadata: dict[str, Any] = {}
+        width = _numeric_dict_value(image_record, "width")
+        height = _numeric_dict_value(image_record, "height")
+        if width is not None:
+            file_metadata["width"] = width
+            file_metadata["image_width"] = width
+        if height is not None:
+            file_metadata["height"] = height
+            file_metadata["image_height"] = height
+        if panel_width is not None:
+            file_metadata["panel_width_pt"] = round(panel_width, 3)
+            file_metadata["display_width_pt"] = round(panel_width, 3)
+            file_metadata["max_panel_width_pt"] = round(panel_width, 3)
+        group_width = parent_metadata.get("total_panel_width_pt") or parent_metadata.get(
+            "display_width_pt"
+        )
+        if isinstance(group_width, (int, float)) and group_width > 0:
+            file_metadata["subfigure_group_width_pt"] = round(float(group_width), 3)
+            file_metadata["subfigure_count"] = len(references)
+        if isinstance(parent_layout, str):
+            file_metadata["article_layout"] = parent_layout
+        if image_record.get("reference") == reference:
+            file_metadata["layout_reference_matched"] = True
+        return_reference = image_record.get("reference")
+        if isinstance(return_reference, str) and return_reference != reference:
+            file_metadata["layout_reference"] = return_reference
+        records.append(file_metadata)
+    return records
+
+
+def _image_element_records(element: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for candidate in element.iter():
+        tag = _local_name(candidate.tag)
+        if tag not in {"img", "image", "object"}:
+            continue
+        reference = None
+        for key in ("src", "data", "href", "{http://www.w3.org/1999/xlink}href"):
+            value = candidate.attrib.get(key)
+            if value:
+                reference = value.strip()
+                break
+        record: dict[str, Any] = {}
+        width = _numeric_attribute(candidate, "width")
+        height = _numeric_attribute(candidate, "height")
+        if reference:
+            record["reference"] = reference
+        if width is not None:
+            record["width"] = width
+        if height is not None:
+            record["height"] = height
+        records.append(record)
+    return records
+
+
+def _style_widths_pt(element: Any) -> list[float]:
+    widths: list[float] = []
+    for candidate in element.iter():
+        value = _style_width_pt(candidate.attrib.get("style"))
+        if value is not None:
+            widths.append(value)
+    return widths
+
+
+def _image_panel_widths_pt(element: Any) -> list[float]:
+    widths: list[float] = []
+
+    def visit(candidate: Any, inherited_width: float | None) -> None:
+        own_width = _style_width_pt(candidate.attrib.get("style"))
+        panel_width = own_width if own_width is not None else inherited_width
+        tag = _local_name(candidate.tag)
+        if tag in {"img", "image", "object"}:
+            if panel_width is not None:
+                widths.append(panel_width)
+            return
+        for child in list(candidate):
+            visit(child, panel_width)
+
+    visit(element, None)
+    return widths
+
+
+def _style_width_pt(style: str | None) -> float | None:
+    if not style:
+        return None
+    match = re.search(r"\bwidth\s*:\s*([0-9.]+)\s*pt\b", style, flags=re.IGNORECASE)
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value if value > 0 else None
+
+
+def _has_latexml_flex_layout(element: Any) -> bool:
+    for candidate in element.iter():
+        class_name = candidate.attrib.get("class", "").lower()
+        if re.search(r"\bltx_flex_(?:figure|cell|size_)", class_name):
+            return True
+    return False
+
+
+def _article_layout_from_image_metrics(
+    *,
+    image_count: int,
+    has_flex_layout: bool,
+    max_panel_width_pt: float | None,
+    width: float | None,
+    height: float | None,
+) -> str | None:
+    if image_count > 1 or has_flex_layout:
+        return "multi-panel"
+    if max_panel_width_pt is not None:
+        return "double-column" if max_panel_width_pt >= 330 else "single-column"
+    if width and height and width / height >= 1.45:
+        return "double-column"
+    return None
+
+
+def _numeric_attribute(element: Any, attribute: str) -> float | None:
+    value = element.attrib.get(attribute)
+    if not value:
+        return None
+    match = re.match(r"\s*([0-9.]+)", value)
+    if not match:
+        return None
+    parsed = float(match.group(1))
+    return parsed if parsed > 0 else None
+
+
+def _numeric_dict_value(record: dict[str, Any], key: str) -> float | None:
+    value = record.get(key)
+    return float(value) if isinstance(value, (int, float)) and value > 0 else None
 
 
 def _code_generated_asset_kind(element: Any) -> str | None:

@@ -365,8 +365,10 @@ the switch in Settings. Engineering identifiers remain `bilin`, `bilin_api`,
       gating.
 - [ ] Word, EPUB, PDF, and polished print export.
 - [ ] Rich command palette and high-frequency keyboard shortcuts.
-- [ ] Obsidian/Notion-oriented Markdown export with YAML front matter and
-      wiki-link friendly references.
+- [x] Obsidian one-click excerpt capture into a OneDrive-backed vault, grouped
+      as one Markdown note per library and one section per article.
+- [ ] Notion-oriented Markdown export with YAML front matter and wiki-link
+      friendly references.
 - [ ] Paper comparison reading mode for side-by-side section and method
       comparison.
 - [ ] Model usage and cost metadata display.

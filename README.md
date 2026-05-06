@@ -44,17 +44,17 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 | 理解英文论文效率低 | 以母语阅读 |
 | 公式或图表不知道在讲什么 | 针对当前 block 提问，回答保存引用到的论文证据 |
 | 下周要组会汇报 | 内置精读、组会、快速扫读和复现导向讲义模板 |
-| 以后想整理到知识库 | 导出 Markdown、lecture notes 和完整 bundle，可放入 Obsidian/Notion 工作流 |
+| 以后想整理到知识库 | 一键保存段落到 OneDrive 中的 Obsidian vault，也可以导出 Markdown、lecture notes 和完整 bundle |
 
 ## 衔牍已经能做什么？
 
-它已经支持创建本地 library，导入 arXiv source package，导入本地 TeX archive，把 Markdown 导入为弱结构文档，把 PDF 作为源文件保存进 bundle，在本机安装 LaTeXML 时解析 TeX，保存结构化 document blocks 和 assets，构建确定性的本地 block embeddings，通过 OpenAI-compatible 或 Anthropic-compatible provider 翻译段落和 caption，保存多个 translation variants，审核并复用 translation memory，管理文章术语，使用 macOS Keychain 保存 provider key，在文章证据范围内流式问答，生成可编辑的讲义笔记 patch，编辑自定义笔记模板，并导出 source、translated、bilingual、lecture-note 或完整 bundle artifact。
+它已经支持创建本地 library，导入 arXiv source package，导入本地 TeX archive，把 Markdown 导入为弱结构文档，把 PDF 作为源文件保存进 bundle，在本机安装 LaTeXML 时解析 TeX，保存结构化 document blocks 和 assets，构建确定性的本地 block embeddings，通过 OpenAI-compatible 或 Anthropic-compatible provider 翻译段落和 caption，保存多个 translation variants，审核并复用 translation memory，管理文章术语，使用 macOS Keychain 保存 provider key，在文章证据范围内流式问答，生成可编辑的讲义笔记 patch，编辑自定义笔记模板，一键把中英文段落摘录保存到 Obsidian，并导出 source、translated、bilingual、lecture-note 或完整 bundle artifact。
 
-## 多语言策略 🌍
+完整功能说明见 [docs/user-feature-guide.md](docs/user-feature-guide.md)。这份文档解释了 Reader 的 Study、Focus、Bilingual、Translation 和 Source 模式，也说明了颜色标记、Obsidian 联动、段落工具栏、术语、问答、讲义和导出的实际用法。
 
-主 README 以简体中文维护，英文 README 是第二核心文档，日语 README 是第三入口并标记为 Experimental。韩语、西班牙语、法语、德语 README 当前只保留 Community 贡献入口，避免在功能快速变化时维护多份过期长文。
+## 界面语言 🌍
 
-前端界面已经保留多语言接口。简体中文和 English 是核心维护语言；日本語、한국어、Español、Français、Deutsch 是实验或社区友好语言，可能部分回退到 English。第一次打开时界面会跟随浏览器语言，之后可以在 Settings 的 Interface 页面手动切换。
+衔牍提供简体中文、English、日本語、한국어、Español、Français 和 Deutsch 入口。第一次打开时，界面会跟随浏览器语言；之后可以在 Settings 的 Interface 页面随时切换。部分语言的文案仍可能回退到 English，但不会影响导入、阅读、翻译、问答和导出流程。
 ## 快速开始
 
 衔牍需要 Node.js、pnpm、Python 3.13 和 uv。核心应用可以在没有 TeX 工具链的情况下启动，但真实 TeX 解析需要 `latexml` 和 `latexmlpost` 在 `PATH` 上。图像和资产转换建议安装 ImageMagick `magick`、Ghostscript `gs`，以及 `tectonic` 或 `pdflatex`。

@@ -30,6 +30,7 @@ import type {
 import { useProductName, useT } from "../i18n";
 import { SUPPORTED_LOCALES, type AppLocale } from "../product";
 import { useUiStore } from "../state/ui";
+import { ReaderPreferencesPanel } from "../components/ReaderPreferencesPanel";
 
 type SettingsMode = "user" | "developer";
 
@@ -336,6 +337,9 @@ export function SettingsPage() {
                 }))}
               />
             </Group>
+          </div>
+          <div className="panel settings-panel">
+            <ReaderPreferencesPanel />
           </div>
         </Tabs.Panel>
 

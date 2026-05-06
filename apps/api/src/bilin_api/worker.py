@@ -11,6 +11,7 @@ from bilin_api.latexml_parser import ParseFailure, parse_article_revision
 from bilin_api.repositories import (
     claim_next_job,
     complete_job,
+    create_job,
     fail_job,
     get_job,
     requeue_job,
@@ -23,8 +24,13 @@ from bilin_api.schemas import (
     Job,
     JobStatus,
     JobType,
+    TranslationBatchRequest,
 )
-from bilin_api.translation_service import is_transient_translation_error, run_translate_block_job
+from bilin_api.translation_service import (
+    is_transient_translation_error,
+    queue_article_translation,
+    run_translate_block_job,
+)
 
 
 async def run_worker(poll_interval: float = 0.5, once: bool = False) -> None:
@@ -63,14 +69,24 @@ async def run_job(job: Job) -> None:
 
 async def run_import_arxiv_job(job: Job) -> None:
     library = await resolve_library(str(job.payload["library_id"]))
+    parse_after_import = bool(job.payload.get("parse_after_import", True))
     request = ImportArxivRequest(
         arxiv_id=str(job.payload["arxiv_id"]),
         version=job.payload.get("version"),
         download_pdf=bool(job.payload.get("download_pdf", True)),
-        parse_after_import=bool(job.payload.get("parse_after_import", True)),
+        parse_after_import=False,
     )
     await update_job_progress(job.id, 0.1)
     result = await import_arxiv(library, request)
+    if parse_after_import:
+        parse_payload: dict[str, object] = {
+            "library_id": library.id,
+            "article_revision_id": result.article_revision_id,
+        }
+        if isinstance(job.payload.get("translate_after_parse"), dict):
+            parse_payload["translate_after_parse"] = job.payload["translate_after_parse"]
+        parse_job = await create_parse_job(parse_payload)
+        result = result.model_copy(update={"parse_job_id": parse_job.id})
     await update_job_progress(job.id, 1.0)
     await complete_job(job.id, import_result_to_json(result))
 
@@ -83,10 +99,22 @@ async def run_parse_article_job(job: Job) -> None:
         result = await parse_article_revision(library, revision_id)
         embed_job = await queue_article_embedding(library, revision_id)
         result["embed_job_id"] = embed_job.id
+        translation_payload = job.payload.get("translate_after_parse")
+        if isinstance(translation_payload, dict):
+            translation_result = await queue_article_translation(
+                library,
+                revision_id,
+                TranslationBatchRequest.model_validate(translation_payload),
+            )
+            result["translation_job_ids"] = translation_result.job_ids
         await update_job_progress(job.id, 1.0)
         await complete_job(job.id, result)
     except ParseFailure as exc:
         await fail_job(job.id, {"code": exc.code, "message": exc.message, "details": exc.details})
+
+
+async def create_parse_job(payload: dict[str, object]) -> Job:
+    return await create_job(JobType.parse_article, payload=payload)
 
 
 async def run_translate_block_worker_job(job: Job) -> None:

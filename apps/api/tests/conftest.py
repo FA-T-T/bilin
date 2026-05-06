@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture()
+@pytest.fixture(autouse=True)
 def bilin_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "bilin-home"
     monkeypatch.setenv("BILIN_HOME", str(home))

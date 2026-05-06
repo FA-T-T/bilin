@@ -5,12 +5,16 @@ import type {
   ArticleExportResult,
   ArticleGlossary,
   ArticleChatHistory,
+  ArticleCitations,
   ArticleListItem,
   ArticleNotePatches,
   ArticleTranslations,
   ChatAskRequest,
   ChatAskResult,
   ChatToNotePatchRequest,
+  CitationLibraryImportRequest,
+  CitationLibraryImportResult,
+  CitationScholarResult,
   DoctorReport,
   EmbedArticleRequest,
   EmbedArticleResult,
@@ -32,6 +36,8 @@ import type {
   NoteTemplate,
   NoteTemplateCreate,
   NoteTemplateUpdate,
+  ObsidianClipRequest,
+  ObsidianClipResult,
   ProviderModelDiscoveryRequest,
   ProviderModelDiscoveryResult,
   ProviderProfile,
@@ -193,6 +199,27 @@ export const apiClient = {
     request<ArticleDocument>(
       `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/document`
     ),
+  getArticleCitations: (libraryId: string, revisionId: string) =>
+    request<ArticleCitations>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/citations`
+    ),
+  getCitationScholar: (libraryId: string, revisionId: string, citationId: string) =>
+    request<CitationScholarResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/citations/${encodeURIComponent(citationId)}/scholar`
+    ),
+  importCitationArxiv: (
+    libraryId: string,
+    revisionId: string,
+    citationId: string,
+    payload: CitationLibraryImportRequest
+  ) =>
+    request<CitationLibraryImportResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/citations/${encodeURIComponent(citationId)}/import-arxiv`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   getArticleEmbeddingStatus: (libraryId: string, revisionId: string) =>
     request<ArticleEmbeddingStatus>(
       `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/embeddings/status`
@@ -216,6 +243,14 @@ export const apiClient = {
   exportArticle: (libraryId: string, revisionId: string, payload: ArticleExportRequest) =>
     request<ArticleExportResult>(
       `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/exports`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  saveObsidianClip: (libraryId: string, revisionId: string, payload: ObsidianClipRequest) =>
+    request<ObsidianClipResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/obsidian/clips`,
       {
         method: "POST",
         body: JSON.stringify(payload)

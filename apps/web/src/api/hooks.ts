@@ -6,6 +6,7 @@ import type {
   ArticleExportRequest,
   ChatAskRequest,
   ChatToNotePatchRequest,
+  CitationLibraryImportRequest,
   EmbedArticleRequest,
   GlossaryExtractionRequest,
   GlossaryTermCreate,
@@ -17,6 +18,7 @@ import type {
   NotePatchUpdate,
   NoteTemplateCreate,
   NoteTemplateUpdate,
+  ObsidianClipRequest,
   ProviderModelDiscoveryRequest,
   ProviderProfileCreate,
   ProviderProfileUpdate,
@@ -33,6 +35,10 @@ export const queryKeys = {
   articles: (libraryId: string) => ["articles", libraryId] as const,
   articleDocument: (libraryId: string, revisionId: string) =>
     ["article-document", libraryId, revisionId] as const,
+  articleCitations: (libraryId: string, revisionId: string) =>
+    ["article-citations", libraryId, revisionId] as const,
+  citationScholar: (libraryId: string, revisionId: string, citationId: string) =>
+    ["citation-scholar", libraryId, revisionId, citationId] as const,
   articleEmbeddingStatus: (libraryId: string, revisionId: string) =>
     ["article-embedding-status", libraryId, revisionId] as const,
   articleTranslations: (libraryId: string, revisionId: string, targetLanguage: string) =>
@@ -158,10 +164,62 @@ export function useArticleDocument(libraryId?: string, revisionId?: string) {
   });
 }
 
+export function useArticleCitations(libraryId?: string, revisionId?: string) {
+  return useQuery({
+    queryKey: queryKeys.articleCitations(libraryId ?? "", revisionId ?? ""),
+    queryFn: () => apiClient.getArticleCitations(libraryId ?? "", revisionId ?? ""),
+    enabled: Boolean(libraryId && revisionId),
+    staleTime: 60 * 60 * 1000,
+    retry: false
+  });
+}
+
+export function useCitationScholar(
+  libraryId?: string,
+  revisionId?: string,
+  citationId?: string,
+  enabled = false
+) {
+  return useQuery({
+    queryKey: queryKeys.citationScholar(libraryId ?? "", revisionId ?? "", citationId ?? ""),
+    queryFn: () =>
+      apiClient.getCitationScholar(libraryId ?? "", revisionId ?? "", citationId ?? ""),
+    enabled: Boolean(enabled && libraryId && revisionId && citationId),
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false
+  });
+}
+
 export function useExportArticle(libraryId?: string, revisionId?: string) {
   return useMutation({
     mutationFn: (payload: ArticleExportRequest) =>
       apiClient.exportArticle(libraryId ?? "", revisionId ?? "", payload)
+  });
+}
+
+export function useSaveObsidianClip(libraryId?: string, revisionId?: string) {
+  return useMutation({
+    mutationFn: (payload: ObsidianClipRequest) =>
+      apiClient.saveObsidianClip(libraryId ?? "", revisionId ?? "", payload)
+  });
+}
+
+export function useImportCitationArxiv(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      citationId,
+      payload
+    }: {
+      citationId: string;
+      payload: CitationLibraryImportRequest;
+    }) => apiClient.importCitationArxiv(libraryId ?? "", revisionId ?? "", citationId, payload),
+    onSuccess: () => {
+      if (libraryId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.articles(libraryId) });
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+    }
   });
 }
 

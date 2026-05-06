@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/health": {
@@ -749,6 +749,187 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArticleDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/citations": {
+      "get": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Get Citations",
+        "operationId": "get_citations_libraries__library_id__articles__revision_id__citations_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleCitations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/citations/{citation_id}/scholar": {
+      "get": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Get Citation Scholar",
+        "operationId": "get_citation_scholar_libraries__library_id__articles__revision_id__citations__citation_id__scholar_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "citation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Citation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationScholarResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/citations/{citation_id}/import-arxiv": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Citation Arxiv Import",
+        "operationId": "post_citation_arxiv_import_libraries__library_id__articles__revision_id__citations__citation_id__import_arxiv_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "citation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Citation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CitationLibraryImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationLibraryImportResult"
                 }
               }
             }
@@ -2395,6 +2576,67 @@
         }
       }
     },
+    "/libraries/{library_id}/articles/{revision_id}/obsidian/clips": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Obsidian Clip",
+        "operationId": "post_obsidian_clip_libraries__library_id__articles__revision_id__obsidian_clips_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObsidianClipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObsidianClipResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/libraries/{library_id}/articles/{revision_id}/exports/{file_name}": {
       "get": {
         "tags": [
@@ -2863,6 +3105,26 @@
           "article_revision_id"
         ],
         "title": "ArticleChatHistory"
+      },
+      "ArticleCitations": {
+        "properties": {
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationEntry"
+            },
+            "type": "array",
+            "title": "Citations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_revision_id"
+        ],
+        "title": "ArticleCitations"
       },
       "ArticleDocument": {
         "properties": {
@@ -3632,6 +3894,233 @@
         },
         "type": "object",
         "title": "ChatToNotePatchRequest"
+      },
+      "CitationArxivCandidate": {
+        "properties": {
+          "citation_id": {
+            "type": "string",
+            "title": "Citation Id"
+          },
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "abs_url": {
+            "type": "string",
+            "title": "Abs Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "citation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "citation_id",
+          "arxiv_id",
+          "title",
+          "abs_url"
+        ],
+        "title": "CitationArxivCandidate"
+      },
+      "CitationEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "raw_text": {
+            "type": "string",
+            "title": "Raw Text"
+          },
+          "authors": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authors"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id"
+          },
+          "scholar_query": {
+            "type": "string",
+            "title": "Scholar Query"
+          },
+          "scholar_url": {
+            "type": "string",
+            "title": "Scholar Url"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "title",
+          "raw_text",
+          "scholar_query",
+          "scholar_url"
+        ],
+        "title": "CitationEntry"
+      },
+      "CitationLibraryImportRequest": {
+        "properties": {
+          "download_pdf": {
+            "type": "boolean",
+            "title": "Download Pdf",
+            "default": true
+          },
+          "translate_after_import": {
+            "type": "boolean",
+            "title": "Translate After Import",
+            "default": false
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "provider_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Profile Id"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "title": "CitationLibraryImportRequest"
+      },
+      "CitationLibraryImportResult": {
+        "properties": {
+          "citation_id": {
+            "type": "string",
+            "title": "Citation Id"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/CitationArxivCandidate"
+          },
+          "job": {
+            "$ref": "#/components/schemas/Job"
+          },
+          "translate_after_import": {
+            "type": "boolean",
+            "title": "Translate After Import",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "citation_id",
+          "candidate",
+          "job"
+        ],
+        "title": "CitationLibraryImportResult"
+      },
+      "CitationScholarResult": {
+        "properties": {
+          "citation_id": {
+            "type": "string",
+            "title": "Citation Id"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "scholar_url": {
+            "type": "string",
+            "title": "Scholar Url"
+          },
+          "first_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScholarSearchResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "citation_id",
+          "query",
+          "scholar_url"
+        ],
+        "title": "CitationScholarResult"
       },
       "DoctorCapability": {
         "properties": {
@@ -4774,6 +5263,82 @@
         "type": "object",
         "title": "NoteTemplateUpdate"
       },
+      "ObsidianClipColor": {
+        "type": "string",
+        "enum": [
+          "none",
+          "yellow",
+          "blue",
+          "green",
+          "pink",
+          "purple"
+        ],
+        "title": "ObsidianClipColor"
+      },
+      "ObsidianClipRequest": {
+        "properties": {
+          "block_uid": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Block Uid"
+          },
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "color": {
+            "$ref": "#/components/schemas/ObsidianClipColor",
+            "default": "none"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_uid"
+        ],
+        "title": "ObsidianClipRequest"
+      },
+      "ObsidianClipResult": {
+        "properties": {
+          "vault_path": {
+            "type": "string",
+            "title": "Vault Path"
+          },
+          "note_path": {
+            "type": "string",
+            "title": "Note Path"
+          },
+          "article_heading": {
+            "type": "string",
+            "title": "Article Heading"
+          },
+          "block_uid": {
+            "type": "string",
+            "title": "Block Uid"
+          },
+          "created_file": {
+            "type": "boolean",
+            "title": "Created File",
+            "default": false
+          },
+          "updated_existing": {
+            "type": "boolean",
+            "title": "Updated Existing",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "vault_path",
+          "note_path",
+          "article_heading",
+          "block_uid"
+        ],
+        "title": "ObsidianClipResult"
+      },
       "ParseErrorInfo": {
         "properties": {
           "code": {
@@ -5272,6 +5837,40 @@
           "score"
         ],
         "title": "RetrievedBlock"
+      },
+      "ScholarSearchResult": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "google_scholar"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "ScholarSearchResult"
       },
       "TranslationBatchRequest": {
         "properties": {

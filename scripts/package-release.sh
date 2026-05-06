@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.2.0}"
 PACKAGE_NAME="bilin-v${VERSION}-source"
 RELEASE_DIR="${ROOT_DIR}/release"
 STAGING_ROOT="${RELEASE_DIR}/.staging"

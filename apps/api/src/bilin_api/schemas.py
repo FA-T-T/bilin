@@ -393,6 +393,63 @@ class ExternalCitation(BaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class CitationEntry(BaseModel):
+    id: str
+    label: str
+    title: str
+    raw_text: str
+    authors: str | None = None
+    year: str | None = None
+    arxiv_id: str | None = None
+    scholar_query: str
+    scholar_url: str
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ArticleCitations(BaseModel):
+    article_revision_id: str
+    citations: list[CitationEntry] = Field(default_factory=list)
+
+
+class ScholarSearchResult(BaseModel):
+    title: str
+    url: str
+    snippet: str | None = None
+    source: str = "google_scholar"
+
+
+class CitationScholarResult(BaseModel):
+    citation_id: str
+    query: str
+    scholar_url: str
+    first_result: ScholarSearchResult | None = None
+    status: str = "ok"
+    message: str | None = None
+
+
+class CitationArxivCandidate(BaseModel):
+    citation_id: str
+    arxiv_id: str
+    title: str
+    abs_url: str
+    source: str = "citation"
+
+
+class CitationLibraryImportRequest(BaseModel):
+    download_pdf: bool = True
+    translate_after_import: bool = False
+    target_language: str = "zh-CN"
+    provider_profile_id: str | None = None
+    model: str | None = None
+
+
+class CitationLibraryImportResult(BaseModel):
+    citation_id: str
+    candidate: CitationArxivCandidate
+    job: Job
+    translate_after_import: bool = False
+
+
 class ChatAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=8000)
     provider_profile_id: str = Field(min_length=1)
@@ -503,6 +560,30 @@ class ArticleExportResult(BaseModel):
     missing_translation_block_uids: list[str] = Field(default_factory=list)
     metadata: JsonDict = Field(default_factory=dict)
     created_at: datetime
+
+
+class ObsidianClipColor(StrEnum):
+    none = "none"
+    yellow = "yellow"
+    blue = "blue"
+    green = "green"
+    pink = "pink"
+    purple = "purple"
+
+
+class ObsidianClipRequest(BaseModel):
+    block_uid: str = Field(min_length=1, max_length=120)
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    color: ObsidianClipColor = ObsidianClipColor.none
+
+
+class ObsidianClipResult(BaseModel):
+    vault_path: str
+    note_path: str
+    article_heading: str
+    block_uid: str
+    created_file: bool = False
+    updated_existing: bool = False
 
 
 class BlockEmbedding(BaseModel):

@@ -15,12 +15,13 @@ import {
   Title
 } from "@mantine/core";
 import { Info } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useArticles, useImportArxiv, useImportLocalFile, useLibrary } from "../api/hooks";
 import type { ImportLocalKind } from "../api/types";
 import { useT } from "../i18n";
+import { useUiStore } from "../state/ui";
 
 export function LibraryDetailPage() {
   const t = useT();
@@ -29,6 +30,7 @@ export function LibraryDetailPage() {
   const articles = useArticles(libraryId);
   const importArxiv = useImportArxiv(libraryId);
   const importLocalFile = useImportLocalFile(libraryId);
+  const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const [importSource, setImportSource] = useState<"arxiv" | "file">("arxiv");
   const [showImportOptions, setShowImportOptions] = useState(false);
   const [arxivId, setArxivId] = useState("");
@@ -38,6 +40,8 @@ export function LibraryDetailPage() {
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [localKind, setLocalKind] = useState<ImportLocalKind>("tex_archive");
   const [localParseAfterImport, setLocalParseAfterImport] = useState(true);
+  const lastImportJobId = useRef<string | null>(null);
+  const lastLocalImportRevisionId = useRef<string | null>(null);
 
   const submitImport = () => {
     if (!arxivId.trim()) return;
@@ -57,6 +61,23 @@ export function LibraryDetailPage() {
       parseAfterImport: localKind === "tex_archive" && localParseAfterImport
     });
   };
+
+  useEffect(() => {
+    const job = importArxiv.data;
+    if (!job || lastImportJobId.current === job.id) return;
+    lastImportJobId.current = job.id;
+    setArxivId("");
+    setVersion("");
+    openTaskDrawer();
+  }, [importArxiv.data, openTaskDrawer]);
+
+  useEffect(() => {
+    const result = importLocalFile.data;
+    if (!result || lastLocalImportRevisionId.current === result.article_revision_id) return;
+    lastLocalImportRevisionId.current = result.article_revision_id;
+    setLocalFile(null);
+    openTaskDrawer();
+  }, [importLocalFile.data, openTaskDrawer]);
 
   return (
     <Stack gap="lg">

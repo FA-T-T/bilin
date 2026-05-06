@@ -1,5 +1,6 @@
 import {
   Alert,
+  ActionIcon,
   Badge,
   Button,
   Checkbox,
@@ -8,7 +9,6 @@ import {
   Group,
   Loader,
   Modal,
-  SegmentedControl,
   Select,
   Stack,
   Tabs,
@@ -18,10 +18,13 @@ import {
   Title
 } from "@mantine/core";
 import {
+  BookOpenText,
   BookMarked,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Check,
+  Columns2,
   Download,
   FileText,
   Languages,
@@ -30,13 +33,15 @@ import {
   RefreshCw,
   Search,
   Send,
+  SlidersHorizontal,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { API_BASE_URL } from "../api/client";
 import {
+  useArticleCitations,
   useArticleGlossary,
   useArticleChat,
   useArticleDocument,
@@ -48,10 +53,12 @@ import {
   useExportArticle,
   useExtractGlossary,
   useGenerateNotePatch,
+  useImportCitationArxiv,
   useNotePatches,
   useNoteTemplates,
   useProviders,
   useRejectNotePatch,
+  useSaveObsidianClip,
   useSelectTranslationVariant,
   useTranslateArticle,
   useTranslateBlock,
@@ -64,6 +71,7 @@ import type {
   ArticleExportResult,
   AssetRecord,
   ChatMessage,
+  CitationEntry,
   DocumentBlock,
   ExternalCitation,
   GlossaryTerm,
@@ -75,15 +83,20 @@ import type {
 } from "../api/types";
 import {
   ReaderBlock,
+  type CitationImportMode,
+  type CitationLookup,
   type ReaderBlockColor,
   type ReaderAssetFile,
   type ReferenceTargets
 } from "../components/ReaderBlock";
 import { ReaderBlockList } from "../components/ReaderBlockList";
+import { ReaderPreferencesPanel } from "../components/ReaderPreferencesPanel";
 import type { ReaderToolbarActionId } from "../components/readerToolbarActions";
 import { activeGlossaryTerms, applyGlossaryToMarkdown } from "../glossary";
 import { useT } from "../i18n";
-import { type ReaderViewMode, useUiStore } from "../state/ui";
+import { type ReaderPreferences, type ReaderViewMode, useUiStore } from "../state/ui";
+
+const emptyReaderAssetFiles: ReaderAssetFile[] = [];
 
 export function ReaderPage() {
   const t = useT();
@@ -93,6 +106,8 @@ export function ReaderPage() {
   const hasArticleContext = Boolean(libraryId && articleId);
   const viewMode = useUiStore((state) => state.readerViewMode);
   const setReaderViewMode = useUiStore((state) => state.setReaderViewMode);
+  const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
+  const readerPreferences = useUiStore((state) => state.readerPreferences);
   const providers = useProviders();
   const [targetLanguage, setTargetLanguage] = useState("zh-CN");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -109,11 +124,21 @@ export function ReaderPage() {
   const [streamingCitedBlocks, setStreamingCitedBlocks] = useState<RetrievedBlock[]>([]);
   const [readerActionMessage, setReaderActionMessage] = useState<string | null>(null);
   const [activeBlockUid, setActiveBlockUid] = useState<string | null>(null);
+  const [forcedBlockUid, setForcedBlockUid] = useState<string | null>(null);
+  const [pendingNavigationBlockUid, setPendingNavigationBlockUid] = useState<string | null>(null);
+  const [readerSearchQuery, setReaderSearchQuery] = useState("");
+  const [readerSearchCursor, setReaderSearchCursor] = useState(0);
   const [blockColors, setBlockColors] = useState<Record<string, ReaderBlockColor>>({});
-  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [chaptersOpen, setChaptersOpen] = useState(true);
+  const [readerPreferencesOpen, setReaderPreferencesOpen] = useState(false);
+  const [readerRailExpanded, setReaderRailExpanded] = useState(false);
   const lastExportDownloadKey = useRef<string | null>(null);
+  const lastInitialHashNavigation = useRef<string | null>(null);
   const document = useArticleDocument(libraryId, articleId);
+  const citations = useArticleCitations(libraryId, articleId);
   const exportArticle = useExportArticle(libraryId, articleId);
+  const saveObsidianClip = useSaveObsidianClip(libraryId, articleId);
+  const importCitationArxiv = useImportCitationArxiv(libraryId, articleId);
   const exportResult = exportArticle.data;
   const currentExportDownloadUrl = exportDownloadUrl(libraryId, articleId, exportResult);
   const translations = useArticleTranslations(libraryId, articleId, targetLanguage);
@@ -138,13 +163,36 @@ export function ReaderPage() {
   const title = articleTitle(document.data, t);
   const subtitle = documentSubtitle(document.data, libraryId, articleId, t);
   const navBlocks = blocks.filter((block) => block.block_type === "section");
+  const showReaderMasthead =
+    blocks.length === 0 || !blocks.some((block) => block.block_type === "title");
   const activeNavBlockUid = useMemo(
     () => navBlockUidForActiveBlock(blocks, navBlocks, activeBlockUid),
     [activeBlockUid, blocks, navBlocks]
   );
   const referenceTargets = useMemo(() => referenceTargetsForBlocks(blocks), [blocks]);
+  const citationLookup = useMemo(
+    () => citationLookupForEntries(citations.data?.citations ?? []),
+    [citations.data?.citations]
+  );
 
-  const assetById = new Map(assets.map((asset) => [asset.asset_id, asset] as const));
+  const assetById = useMemo(
+    () => new Map(assets.map((asset) => [asset.asset_id, asset] as const)),
+    [assets]
+  );
+  const assetUrlByAssetId = useMemo(() => {
+    const map = new Map<string, string | undefined>();
+    for (const asset of assets) {
+      map.set(asset.asset_id, assetUrl(libraryId, articleId, asset));
+    }
+    return map;
+  }, [articleId, assets, libraryId]);
+  const assetFileUrlsByAssetId = useMemo(() => {
+    const map = new Map<string, ReaderAssetFile[]>();
+    for (const asset of assets) {
+      map.set(asset.asset_id, assetFileUrls(libraryId, articleId, asset));
+    }
+    return map;
+  }, [articleId, assets, libraryId]);
   const variantsByBlockUid = useMemo(() => {
     const map = new Map<string, TranslationVariant[]>();
     for (const variant of translations.data?.variants ?? []) {
@@ -173,6 +221,13 @@ export function ReaderPage() {
     }
     return map;
   }, [variantOverrides, variantsByBlockUid]);
+  const translationVariantOptionsByBlockUid = useMemo(() => {
+    const map = new Map<string, { value: string; label: string }[]>();
+    for (const [blockUid, variants] of variantsByBlockUid.entries()) {
+      map.set(blockUid, translationVariantOptions(variants));
+    }
+    return map;
+  }, [variantsByBlockUid]);
   const translationByBlockUid = useMemo(() => {
     const map = new Map<string, string>();
     const terms = activeGlossaryTerms(glossary.data?.terms ?? []);
@@ -181,19 +236,61 @@ export function ReaderPage() {
     }
     return map;
   }, [glossary.data?.terms, selectedVariantByBlockUid]);
-  const flowTextForBlock = useCallback(
+  const blockTextForPlaceholder = useCallback(
     (block: DocumentBlock) =>
       viewMode === "translation"
         ? (translationByBlockUid.get(block.block_uid) ?? block.source_markdown)
         : block.source_markdown,
     [translationByBlockUid, viewMode]
   );
+  const readerSearchIndex = useMemo(
+    () => buildReaderSearchIndex(blocks, translationByBlockUid),
+    [blocks, translationByBlockUid]
+  );
+  const readerSearchMatches = useMemo(
+    () => searchReaderIndex(readerSearchIndex, readerSearchQuery),
+    [readerSearchIndex, readerSearchQuery]
+  );
+  const currentSearchMatch =
+    readerSearchMatches.length > 0
+      ? readerSearchMatches[Math.min(readerSearchCursor, readerSearchMatches.length - 1)]
+      : null;
+  const currentSearchBlockUid = currentSearchMatch?.blockUid ?? null;
   const affectedBlockUids = useMemo(
     () => new Set(glossary.data?.affected_block_uids ?? []),
     [glossary.data?.affected_block_uids]
   );
   const selectedProvider = (providers.data ?? []).find(
     (provider) => provider.id === selectedProviderId
+  );
+  const readerPreferenceStyle = useMemo(
+    () => readerStyleForPreferences(readerPreferences),
+    [readerPreferences]
+  );
+  const readerModeOptions = useMemo(
+    () => [
+      {
+        label: t("reader.study"),
+        value: "study" as ReaderViewMode,
+        icon: <BookOpenText size={14} />
+      },
+      {
+        label: t("reader.bilingual"),
+        value: "bilingual" as ReaderViewMode,
+        icon: <Columns2 size={14} />
+      },
+      {
+        label: t("reader.translationView"),
+        value: "translation" as ReaderViewMode,
+        icon: <Languages size={14} />
+      },
+      {
+        label: t("reader.sourceView"),
+        value: "source" as ReaderViewMode,
+        icon: <FileText size={14} />
+      }
+    ],
+    [t]
   );
 
   useEffect(() => {
@@ -211,7 +308,47 @@ export function ReaderPage() {
 
   useEffect(() => {
     setVariantOverrides({});
+    setForcedBlockUid(null);
+    setPendingNavigationBlockUid(null);
+    setReaderSearchQuery("");
+    setReaderSearchCursor(0);
+    lastInitialHashNavigation.current = null;
   }, [articleId, targetLanguage]);
+
+  useEffect(() => {
+    if (blocks.length === 0 || typeof window === "undefined") return;
+    const hashBlockUid = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+    if (!hashBlockUid) return;
+    if (!blocks.some((block) => block.block_uid === hashBlockUid)) return;
+    const navigationKey = `${articleId ?? "mock"}:${hashBlockUid}`;
+    if (lastInitialHashNavigation.current === navigationKey) return;
+    lastInitialHashNavigation.current = navigationKey;
+    setForcedBlockUid(hashBlockUid);
+    setActiveBlockUid(hashBlockUid);
+    setPendingNavigationBlockUid(hashBlockUid);
+  }, [articleId, blocks]);
+
+  useEffect(() => {
+    setReaderSearchCursor(0);
+  }, [readerSearchQuery]);
+
+  useEffect(() => {
+    if (readerSearchCursor < readerSearchMatches.length) return;
+    setReaderSearchCursor(Math.max(0, readerSearchMatches.length - 1));
+  }, [readerSearchCursor, readerSearchMatches.length]);
+
+  useEffect(() => {
+    if (!pendingNavigationBlockUid) return undefined;
+    let frame = 0;
+    frame = requestAnimationFrame(() => {
+      globalThis.document?.getElementById(pendingNavigationBlockUid)?.scrollIntoView({
+        block: "start",
+        behavior: "smooth"
+      });
+      setPendingNavigationBlockUid(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingNavigationBlockUid, forcedBlockUid]);
 
   useEffect(() => {
     if (!exportResult || !currentExportDownloadUrl) return;
@@ -244,70 +381,176 @@ export function ReaderPage() {
     }
   }, [activeBlockUid, blocks]);
 
-  const translationPayload = {
-    target_language: targetLanguage,
-    provider_profile_id: selectedProviderId ?? "",
-    model: selectedProvider?.default_model ?? null,
-    glossary_version: glossary.data?.active_version ?? null,
-    force: false,
-    block_uids: null,
-    custom_prompt: null
-  };
+  const translationPayload = useMemo(
+    () => ({
+      target_language: targetLanguage,
+      provider_profile_id: selectedProviderId ?? "",
+      model: selectedProvider?.default_model ?? null,
+      glossary_version: glossary.data?.active_version ?? null,
+      force: false,
+      block_uids: null,
+      custom_prompt: null
+    }),
+    [
+      glossary.data?.active_version,
+      selectedProvider?.default_model,
+      selectedProviderId,
+      targetLanguage
+    ]
+  );
 
-  const queueArticleTranslation = () => {
+  const navigateToBlock = useCallback((blockUid: string) => {
+    setForcedBlockUid(blockUid);
+    setActiveBlockUid(blockUid);
+    setPendingNavigationBlockUid(blockUid);
+    if (typeof window !== "undefined") {
+      const nextUrl = `${window.location.pathname}${window.location.search}#${encodeURIComponent(blockUid)}`;
+      window.history.replaceState(null, "", nextUrl);
+    }
+  }, []);
+
+  const moveReaderSearch = useCallback(
+    (delta: number) => {
+      if (readerSearchMatches.length === 0) return;
+      const nextIndex =
+        (readerSearchCursor + delta + readerSearchMatches.length) % readerSearchMatches.length;
+      setReaderSearchCursor(nextIndex);
+      navigateToBlock(readerSearchMatches[nextIndex].blockUid);
+    },
+    [navigateToBlock, readerSearchCursor, readerSearchMatches]
+  );
+
+  const jumpToCurrentReaderSearchMatch = useCallback(() => {
+    if (!currentSearchMatch) return;
+    navigateToBlock(currentSearchMatch.blockUid);
+  }, [currentSearchMatch, navigateToBlock]);
+
+  const clearReaderSearch = useCallback(() => {
+    setReaderSearchQuery("");
+    setReaderSearchCursor(0);
+    setForcedBlockUid(null);
+  }, []);
+
+  const handleActiveBlockChange = useCallback((blockUid: string) => {
+    setActiveBlockUid((current) => (current === blockUid ? current : blockUid));
+  }, []);
+
+  const queueArticleTranslation = useCallback(() => {
     if (!selectedProviderId) return;
     translateArticle.mutate(translationPayload);
-  };
+  }, [selectedProviderId, translateArticle, translationPayload]);
 
-  const queueBlockTranslation = (blockUid: string, customPrompt?: string) => {
-    if (!selectedProviderId) return;
-    translateBlock.mutate({
-      blockUid,
-      payload: {
-        ...translationPayload,
-        force: true,
-        block_uids: [blockUid],
-        custom_prompt: customPrompt?.trim() || null
+  const importCitationToLibrary = useCallback(
+    (citation: CitationEntry, mode: CitationImportMode) => {
+      const translateAfterImport = mode === "add-and-translate";
+      if (translateAfterImport && !selectedProviderId) {
+        setReaderActionMessage(t("reader.selectProviderForCitationTranslation"));
+        return;
       }
-    });
-  };
+      importCitationArxiv.mutate(
+        {
+          citationId: citation.id,
+          payload: {
+            download_pdf: true,
+            translate_after_import: translateAfterImport,
+            target_language: targetLanguage,
+            provider_profile_id: translateAfterImport ? selectedProviderId : null,
+            model: translateAfterImport ? (selectedProvider?.default_model ?? null) : null
+          }
+        },
+        {
+          onSuccess: (result) => {
+            openTaskDrawer();
+            setReaderActionMessage(
+              t(
+                translateAfterImport
+                  ? "reader.citationImportTranslateQueued"
+                  : "reader.citationImportQueued",
+                {
+                  title: result.candidate.title,
+                  arxivId: result.candidate.arxiv_id
+                }
+              )
+            );
+          },
+          onError: (error) => {
+            setReaderActionMessage(
+              t("reader.citationImportFailed", {
+                message: error instanceof Error ? error.message : String(error)
+              })
+            );
+          }
+        }
+      );
+    },
+    [
+      importCitationArxiv,
+      openTaskDrawer,
+      selectedProvider?.default_model,
+      selectedProviderId,
+      t,
+      targetLanguage
+    ]
+  );
 
-  const submitCustomRetranslation = () => {
+  const queueBlockTranslation = useCallback(
+    (blockUid: string, customPrompt?: string) => {
+      if (!selectedProviderId) return;
+      translateBlock.mutate({
+        blockUid,
+        payload: {
+          ...translationPayload,
+          force: true,
+          block_uids: [blockUid],
+          custom_prompt: customPrompt?.trim() || null
+        }
+      });
+    },
+    [selectedProviderId, translateBlock, translationPayload]
+  );
+
+  const submitCustomRetranslation = useCallback(() => {
     if (!retranslationBlock) return;
     queueBlockTranslation(retranslationBlock.block_uid, customRetranslationPrompt);
     setReaderActionMessage(`Queued retranslation for ${retranslationBlock.block_uid}.`);
     setRetranslationBlock(null);
     setCustomRetranslationPrompt("");
-  };
+  }, [customRetranslationPrompt, queueBlockTranslation, retranslationBlock]);
 
-  const handleTranslationVariantChange = (blockUid: string, variantId: string) => {
-    setVariantOverrides((current) => ({ ...current, [blockUid]: variantId }));
-    selectTranslationVariant.mutate({ variantId, targetLanguage });
-    setReaderActionMessage(`Selected translation variant for ${blockUid}.`);
-  };
+  const handleTranslationVariantChange = useCallback(
+    (blockUid: string, variantId: string) => {
+      setVariantOverrides((current) => ({ ...current, [blockUid]: variantId }));
+      selectTranslationVariant.mutate({ variantId, targetLanguage });
+      setReaderActionMessage(`Selected translation variant for ${blockUid}.`);
+    },
+    [selectTranslationVariant, targetLanguage]
+  );
 
-  const handleBlockColorChange = (blockUid: string, color: ReaderBlockColor) => {
-    if (!libraryId || !articleId) return;
-    setBlockColors((current) => {
-      const next = { ...current };
-      if (color === "none") {
-        delete next[blockUid];
-      } else {
-        next[blockUid] = color;
-      }
-      try {
-        globalThis.localStorage?.setItem(
-          blockColorStorageKey(libraryId, articleId),
-          JSON.stringify(next)
-        );
-      } catch {
-        // Color marks remain usable in memory if localStorage is unavailable.
-      }
-      return next;
-    });
-  };
+  const handleBlockColorChange = useCallback(
+    (blockUid: string, color: ReaderBlockColor) => {
+      if (!libraryId || !articleId) return;
+      setBlockColors((current) => {
+        const next = { ...current };
+        if (color === "none") {
+          delete next[blockUid];
+        } else {
+          next[blockUid] = color;
+        }
+        try {
+          globalThis.localStorage?.setItem(
+            blockColorStorageKey(libraryId, articleId),
+            JSON.stringify(next)
+          );
+        } catch {
+          // Color marks remain usable in memory if localStorage is unavailable.
+        }
+        return next;
+      });
+    },
+    [articleId, libraryId]
+  );
 
-  const queueAffectedRetranslation = () => {
+  const queueAffectedRetranslation = useCallback(() => {
     const affected = glossary.data?.affected_block_uids ?? [];
     if (!selectedProviderId || affected.length === 0) return;
     translateArticle.mutate({
@@ -315,7 +558,12 @@ export function ReaderPage() {
       force: true,
       block_uids: affected
     });
-  };
+  }, [
+    glossary.data?.affected_block_uids,
+    selectedProviderId,
+    translateArticle,
+    translationPayload
+  ]);
 
   const submitQuestion = () => {
     if (!selectedProviderId || !question.trim()) return;
@@ -374,7 +622,7 @@ export function ReaderPage() {
     });
   };
 
-  const copyText = async (text: string, label: string) => {
+  const copyText = useCallback(async (text: string, label: string) => {
     if (!text.trim()) {
       setReaderActionMessage(`${label} has no text to copy.`);
       return;
@@ -385,58 +633,137 @@ export function ReaderPage() {
     } catch {
       setReaderActionMessage("Clipboard is unavailable. Select the text and copy it manually.");
     }
-  };
+  }, []);
 
-  const handleToolbarAction = (
-    actionId: ReaderToolbarActionId,
-    block: DocumentBlock,
-    content: string
-  ) => {
-    if (actionId === "copy-source" || actionId === "copy-block") {
-      void copyText(block.source_markdown, "Source block");
-      return;
-    }
-    if (actionId === "copy-obsidian") {
-      void copyText(
-        obsidianCalloutForBlock(
-          block,
-          translationByBlockUid.get(block.block_uid),
-          blockColors[block.block_uid] ?? "none"
-        ),
-        "Obsidian callout"
-      );
-      return;
-    }
-    if (actionId === "copy-translation") {
-      void copyText(content, "Translation block");
-      return;
-    }
-    if (actionId === "ask-source" || actionId === "explain-block") {
-      setChatBlockUid(block.block_uid);
-      setReaderActionMessage(`Current block set to ${block.block_uid}.`);
-      return;
-    }
-    if (actionId === "show-latex" || actionId === "show-source") {
-      setInspectedBlock(block);
-      return;
-    }
-    if (actionId === "retranslate") {
-      if (!selectedProviderId) {
-        setReaderActionMessage("Select a provider before retranslating this block.");
+  const handleToolbarAction = useCallback(
+    (actionId: ReaderToolbarActionId, block: DocumentBlock, content: string) => {
+      if (actionId === "copy-source" || actionId === "copy-block") {
+        void copyText(block.source_markdown, "Source block");
         return;
       }
-      setRetranslationBlock(block);
-      setCustomRetranslationPrompt("");
-      return;
-    }
-    if (actionId === "add-note-patch") {
-      setChatBlockUid(block.block_uid);
-      setReaderActionMessage(`Block ${block.block_uid} is selected for notes and questions.`);
-    }
-  };
+      if (actionId === "copy-obsidian") {
+        const color = blockColors[block.block_uid] ?? "none";
+        saveObsidianClip.mutate(
+          {
+            block_uid: block.block_uid,
+            target_language: targetLanguage,
+            color
+          },
+          {
+            onSuccess: (result) => setReaderActionMessage(`Saved to Obsidian: ${result.note_path}`),
+            onError: () =>
+              void copyText(
+                obsidianCalloutForBlock(block, translationByBlockUid.get(block.block_uid), color),
+                "Obsidian callout"
+              )
+          }
+        );
+        return;
+      }
+      if (actionId === "copy-translation") {
+        void copyText(content, "Translation block");
+        return;
+      }
+      if (actionId === "ask-source" || actionId === "explain-block") {
+        setChatBlockUid(block.block_uid);
+        setReaderActionMessage(`Current block set to ${block.block_uid}.`);
+        return;
+      }
+      if (actionId === "show-latex" || actionId === "show-source") {
+        setInspectedBlock(block);
+        return;
+      }
+      if (actionId === "retranslate") {
+        if (!selectedProviderId) {
+          setReaderActionMessage("Select a provider before retranslating this block.");
+          return;
+        }
+        setRetranslationBlock(block);
+        setCustomRetranslationPrompt("");
+        return;
+      }
+      if (actionId === "add-note-patch") {
+        setChatBlockUid(block.block_uid);
+        setReaderActionMessage(`Block ${block.block_uid} is selected for notes and questions.`);
+      }
+    },
+    [
+      blockColors,
+      copyText,
+      saveObsidianClip,
+      selectedProviderId,
+      targetLanguage,
+      translationByBlockUid
+    ]
+  );
+
+  const renderReaderBlock = useCallback(
+    (block: DocumentBlock) => {
+      const asset = assetForBlock(block, assetById);
+      const assetId = asset?.asset_id;
+      return (
+        <ReaderBlock
+          key={block.block_uid}
+          block={block}
+          asset={asset}
+          assetUrl={assetId ? assetUrlByAssetId.get(assetId) : undefined}
+          assetFileUrls={
+            assetId
+              ? (assetFileUrlsByAssetId.get(assetId) ?? emptyReaderAssetFiles)
+              : emptyReaderAssetFiles
+          }
+          referenceTargets={referenceTargets}
+          citations={citationLookup}
+          citationImportPending={importCitationArxiv.isPending}
+          canImportCitationWithTranslation={Boolean(selectedProviderId)}
+          onCitationImport={libraryId && articleId ? importCitationToLibrary : undefined}
+          translation={translationByBlockUid.get(block.block_uid)}
+          translationVariantOptions={translationVariantOptionsByBlockUid.get(block.block_uid) ?? []}
+          selectedTranslationVariantId={selectedVariantByBlockUid.get(block.block_uid)?.id}
+          glossaryAffected={affectedBlockUids.has(block.block_uid)}
+          viewMode={viewMode}
+          active={activeBlockUid === block.block_uid}
+          controlsVisible={currentSearchBlockUid === block.block_uid}
+          searchActive={currentSearchBlockUid === block.block_uid}
+          blockColor={blockColors[block.block_uid] ?? "none"}
+          onActivate={handleActiveBlockChange}
+          onBlockColorChange={handleBlockColorChange}
+          onTranslationVariantChange={handleTranslationVariantChange}
+          onToolbarAction={handleToolbarAction}
+        />
+      );
+    },
+    [
+      activeBlockUid,
+      affectedBlockUids,
+      articleId,
+      assetById,
+      assetFileUrlsByAssetId,
+      assetUrlByAssetId,
+      blockColors,
+      citationLookup,
+      currentSearchBlockUid,
+      handleActiveBlockChange,
+      handleBlockColorChange,
+      handleToolbarAction,
+      handleTranslationVariantChange,
+      importCitationArxiv.isPending,
+      importCitationToLibrary,
+      libraryId,
+      referenceTargets,
+      selectedProviderId,
+      selectedVariantByBlockUid,
+      translationByBlockUid,
+      translationVariantOptionsByBlockUid,
+      viewMode
+    ]
+  );
 
   return (
-    <div className="reader-page">
+    <div
+      className={`reader-page${readerRailExpanded ? " reader-page-rail-expanded" : ""}`}
+      style={readerPreferenceStyle}
+    >
       <Modal
         opened={Boolean(inspectedBlock)}
         onClose={() => setInspectedBlock(null)}
@@ -484,28 +811,69 @@ export function ReaderPage() {
         </Group>
       </Modal>
       <main className="reader-main">
-        <Group justify="space-between" align="flex-start" mb="md">
-          <div>
+        <section className="reader-command-center" aria-label={t("reader.readingControls")}>
+          <div className="reader-command-actions">
+            <ActionIcon
+              aria-label={
+                readerRailExpanded ? t("reader.collapseToolbar") : t("reader.expandToolbar")
+              }
+              className="reader-rail-toggle"
+              size="lg"
+              variant="subtle"
+              onClick={() => setReaderRailExpanded((expanded) => !expanded)}
+            >
+              {readerRailExpanded ? (
+                <ChevronRight size={17} aria-hidden="true" />
+              ) : (
+                <ChevronLeft size={17} aria-hidden="true" />
+              )}
+            </ActionIcon>
+            <div
+              data-testid="reader-view-mode"
+              className="reader-mode-list"
+              aria-label={t("reader.readingControls")}
+            >
+              {readerModeOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  aria-label={option.label}
+                  aria-pressed={viewMode === option.value}
+                  className="reader-mode-button"
+                  leftSection={option.icon}
+                  size="xs"
+                  title={option.label}
+                  variant={viewMode === option.value ? "light" : "subtle"}
+                  onClick={() => {
+                    setReaderViewMode(option.value);
+                  }}
+                >
+                  <span className="reader-mode-label">{option.label}</span>
+                </Button>
+              ))}
+            </div>
+            <Button
+              aria-expanded={readerPreferencesOpen}
+              aria-label={t("reader.preferences")}
+              className="reader-mode-button reader-preferences-trigger"
+              title={t("reader.preferences")}
+              variant={readerPreferencesOpen ? "light" : "subtle"}
+              size="xs"
+              leftSection={<SlidersHorizontal size={15} aria-hidden="true" />}
+              onClick={() => setReaderPreferencesOpen((open) => !open)}
+            >
+              <span className="reader-mode-label">{t("reader.preferences")}</span>
+            </Button>
+          </div>
+          <Collapse className="reader-preferences-flyout" in={readerPreferencesOpen}>
+            <ReaderPreferencesPanel compact showTitle={false} />
+          </Collapse>
+        </section>
+        {showReaderMasthead ? (
+          <section className="reader-document-masthead">
             <Title order={1}>{title}</Title>
             <Text c="dimmed">{subtitle}</Text>
-          </div>
-          <SegmentedControl
-            data-testid="reader-view-mode"
-            value={viewMode}
-            onChange={(value) => {
-              const nextMode = value as ReaderViewMode;
-              setReaderViewMode(nextMode);
-              setReaderActionMessage(nextMode === "focus" ? t("reader.focusModeHint") : null);
-            }}
-            data={[
-              { label: t("reader.study"), value: "study" },
-              { label: t("reader.focus"), value: "focus" },
-              { label: t("reader.bilingual"), value: "bilingual" },
-              { label: t("reader.translationView"), value: "translation" },
-              { label: t("reader.sourceView"), value: "source" }
-            ]}
-          />
-        </Group>
+          </section>
+        ) : null}
         {navBlocks.length > 0 ? (
           <section className="reader-chapters" aria-label={t("reader.chapters")}>
             <Button
@@ -516,6 +884,71 @@ export function ReaderPage() {
             >
               {t("reader.chapters")}
             </Button>
+            <div className="reader-search-dock" role="search">
+              <TextInput
+                className="reader-search-input"
+                aria-label={t("reader.searchPaper")}
+                placeholder={t("reader.searchPlaceholder")}
+                value={readerSearchQuery}
+                leftSection={<Search size={14} aria-hidden="true" />}
+                rightSection={
+                  readerSearchQuery ? (
+                    <ActionIcon
+                      aria-label={t("reader.searchClear")}
+                      size="sm"
+                      variant="subtle"
+                      onClick={clearReaderSearch}
+                    >
+                      <X size={13} aria-hidden="true" />
+                    </ActionIcon>
+                  ) : null
+                }
+                onChange={(event) => setReaderSearchQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (event.shiftKey) {
+                    moveReaderSearch(-1);
+                  } else {
+                    jumpToCurrentReaderSearchMatch();
+                  }
+                }}
+              />
+              <Group gap={4} wrap="nowrap" className="reader-search-actions">
+                <ActionIcon
+                  aria-label={t("reader.searchPrevious")}
+                  size="sm"
+                  variant="subtle"
+                  disabled={readerSearchMatches.length === 0}
+                  onClick={() => moveReaderSearch(-1)}
+                >
+                  <ChevronLeft size={13} aria-hidden="true" />
+                </ActionIcon>
+                <ActionIcon
+                  aria-label={t("reader.searchNext")}
+                  size="sm"
+                  variant="subtle"
+                  disabled={readerSearchMatches.length === 0}
+                  onClick={() => moveReaderSearch(1)}
+                >
+                  <ChevronRight size={13} aria-hidden="true" />
+                </ActionIcon>
+                <Text
+                  size="xs"
+                  c={readerSearchQuery && readerSearchMatches.length === 0 ? "red" : "dimmed"}
+                  className="reader-search-status"
+                >
+                  {readerSearchQuery
+                    ? readerSearchMatches.length > 0
+                      ? t("reader.searchCount", {
+                          current: Math.min(readerSearchCursor + 1, readerSearchMatches.length),
+                          total: readerSearchMatches.length
+                        })
+                      : t("reader.searchNoMatches")
+                    : t("reader.searchHelp")}
+                </Text>
+              </Group>
+            </div>
             <Collapse in={chaptersOpen}>
               <nav className="reader-chapter-list" aria-label={t("reader.chapters")}>
                 {navBlocks.map((block, index) => (
@@ -526,8 +959,11 @@ export function ReaderPage() {
                       activeNavBlockUid === block.block_uid ? "reader-nav-active" : undefined
                     }
                     aria-current={activeNavBlockUid === block.block_uid ? "location" : undefined}
-                    onMouseEnter={() => setActiveBlockUid(block.block_uid)}
-                    onClick={() => setActiveBlockUid(block.block_uid)}
+                    onMouseEnter={() => handleActiveBlockChange(block.block_uid)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigateToBlock(block.block_uid);
+                    }}
                   >
                     <Badge variant="light" size="sm">
                       {chapterNumber(index, block)}
@@ -540,9 +976,10 @@ export function ReaderPage() {
           </section>
         ) : null}
         {readerActionMessage ? (
-          <Text c="dimmed" size="sm" mb="md" role="status">
+          <div className="reader-action-status" role="status">
+            <Check size={15} aria-hidden="true" />
             {readerActionMessage}
-          </Text>
+          </div>
         ) : null}
         {hasArticleContext ? (
           <Tabs defaultValue="translate" className="reader-workbench" keepMounted={false}>
@@ -747,35 +1184,14 @@ export function ReaderPage() {
         <ReaderBlockList
           blocks={blocks}
           activeBlockUid={activeBlockUid}
-          enableMediaFlow={viewMode !== "bilingual"}
-          getFlowText={flowTextForBlock}
-          onActiveBlockChange={setActiveBlockUid}
-          renderBlock={(block) => {
-            const asset = assetForBlock(block, assetById);
-            return (
-              <ReaderBlock
-                key={block.block_uid}
-                block={block}
-                asset={asset}
-                assetUrl={assetUrl(libraryId, articleId, asset)}
-                assetFileUrls={assetFileUrls(libraryId, articleId, asset)}
-                referenceTargets={referenceTargets}
-                translation={translationByBlockUid.get(block.block_uid)}
-                translationVariantOptions={translationVariantOptions(
-                  variantsByBlockUid.get(block.block_uid) ?? []
-                )}
-                selectedTranslationVariantId={selectedVariantByBlockUid.get(block.block_uid)?.id}
-                glossaryAffected={affectedBlockUids.has(block.block_uid)}
-                viewMode={viewMode}
-                active={activeBlockUid === block.block_uid}
-                blockColor={blockColors[block.block_uid] ?? "none"}
-                onActivate={setActiveBlockUid}
-                onBlockColorChange={handleBlockColorChange}
-                onTranslationVariantChange={handleTranslationVariantChange}
-                onToolbarAction={handleToolbarAction}
-              />
-            );
-          }}
+          fontScale={readerPreferences.fontScale}
+          paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
+          forcedBlockUid={forcedBlockUid}
+          searchTargetBlockUid={currentSearchBlockUid}
+          getBlockText={blockTextForPlaceholder}
+          onActiveBlockChange={handleActiveBlockChange}
+          onNavigateToBlock={navigateToBlock}
+          renderBlock={renderReaderBlock}
         />
       </main>
     </div>
@@ -784,6 +1200,28 @@ export function ReaderPage() {
 
 function blockColorStorageKey(libraryId: string, articleId: string) {
   return `ilios-block-colors:${libraryId}:${articleId}`;
+}
+
+type ReaderPreferenceStyle = CSSProperties & Record<`--${string}`, string>;
+
+function readerStyleForPreferences(preferences: ReaderPreferences): ReaderPreferenceStyle {
+  const lineWidthPercent = Math.round(preferences.lineWidthPercent);
+  const wideWidthPercent = Math.min(100, Math.max(lineWidthPercent + 22, lineWidthPercent * 1.34));
+  const fontScale = preferences.fontScale;
+  const sourceRatio = preferences.bilingualSourceRatio;
+  const translationRatio = 1 - sourceRatio;
+
+  return {
+    "--reader-line-width": `${lineWidthPercent}%`,
+    "--reader-wide-width": `${Math.round(wideWidthPercent)}%`,
+    "--reader-table-width": "100%",
+    "--reader-body-font-size": `${16.32 * fontScale}px`,
+    "--reader-source-font-size": `${16.72 * fontScale}px`,
+    "--reader-translation-font-size": `${16.24 * fontScale}px`,
+    "--reader-paragraph-spacing": `${preferences.paragraphSpacingEm}em`,
+    "--reader-source-column": `${sourceRatio}fr`,
+    "--reader-translation-column": `${translationRatio}fr`
+  };
 }
 
 async function writeClipboardText(text: string) {
@@ -1633,6 +2071,82 @@ function isDeltaStreamData(data: unknown): data is { text: string } {
   );
 }
 
+export interface ReaderSearchIndexEntry {
+  blockUid: string;
+  title: string;
+  sourceText: string;
+  translationText: string;
+  haystack: string;
+}
+
+export interface ReaderSearchState {
+  query: string;
+  cursor: number;
+  matches: ReaderSearchMatch[];
+}
+
+interface ReaderSearchMatch {
+  blockUid: string;
+  label: string;
+  index: number;
+}
+
+function buildReaderSearchIndex(
+  blocks: DocumentBlock[],
+  translationByBlockUid: Map<string, string>
+): ReaderSearchIndexEntry[] {
+  return blocks.map((block) => {
+    const sourceText = plainTextForReaderSearch(block.source_markdown);
+    const translationText = plainTextForReaderSearch(
+      translationByBlockUid.get(block.block_uid) ?? ""
+    );
+    const title = isSearchTitleBlock(block) ? chapterTitle(block) : block.block_uid;
+    return {
+      blockUid: block.block_uid,
+      title,
+      sourceText,
+      translationText,
+      haystack: `${title}\n${sourceText}\n${translationText}`.toLocaleLowerCase()
+    };
+  });
+}
+
+function searchReaderIndex(index: ReaderSearchIndexEntry[], query: string): ReaderSearchMatch[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [];
+  return index.flatMap((entry) => {
+    const matchIndex = entry.haystack.indexOf(normalizedQuery);
+    if (matchIndex < 0) return [];
+    return [
+      {
+        blockUid: entry.blockUid,
+        label: entry.title,
+        index: matchIndex
+      }
+    ];
+  });
+}
+
+function plainTextForReaderSearch(markdown: string) {
+  return markdown
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\\\((.*?)\\\)/g, "$1")
+    .replace(/\\\[(.*?)\\\]/gs, "$1")
+    .replace(/\$([^$]+)\$/g, "$1")
+    .replace(/^#+\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSearchTitleBlock(block: DocumentBlock) {
+  return ["title", "abstract", "section", "subsection", "subsubsection"].includes(block.block_type);
+}
+
 function articleTitle(document: ArticleDocument | undefined, t: ReturnType<typeof useT>): string {
   const title = document?.manifest.arxiv_metadata?.title;
   return typeof title === "string" && title.trim() ? title : t("reader.emptyTitle");
@@ -1696,6 +2210,14 @@ function referenceTargetsForBlocks(blocks: DocumentBlock[]): ReferenceTargets {
     }
   }
   return targets;
+}
+
+function citationLookupForEntries(citations: CitationEntry[]): CitationLookup {
+  const lookup: CitationLookup = {};
+  for (const citation of citations) {
+    lookup[citation.id] = citation;
+  }
+  return lookup;
 }
 
 function referenceTargetBlockType(block: DocumentBlock): string {
@@ -1777,7 +2299,8 @@ function assetFileUrls(
       {
         index,
         originalReference,
-        url: `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}/files/${index}`
+        url: `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}/files/${index}`,
+        metadata: item as Record<string, unknown>
       }
     ];
   });

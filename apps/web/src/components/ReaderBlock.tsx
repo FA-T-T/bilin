@@ -1,18 +1,25 @@
-import { Badge, Group, Select, Tooltip } from "@mantine/core";
+import { Badge, Button, Group, HoverCard, Select, Text, Tooltip } from "@mantine/core";
 import katex from "katex";
 import { Languages } from "lucide-react";
 import {
   Children,
+  cloneElement,
   Fragment,
+  memo,
   type CSSProperties,
+  type FocusEvent,
+  isValidElement,
+  type MouseEvent,
+  type PointerEvent,
   type ReactNode,
+  useCallback,
   useMemo,
   useRef,
   useState
 } from "react";
 import ReactMarkdown from "react-markdown";
 
-import type { AssetRecord, DocumentBlock } from "../api/types";
+import type { AssetRecord, CitationEntry, DocumentBlock } from "../api/types";
 import { useT, type MessageKey } from "../i18n";
 import type { ReaderViewMode } from "../state/ui";
 import { HoverToolbar } from "./HoverToolbar";
@@ -24,13 +31,45 @@ export interface ReferenceTarget {
 }
 
 export type ReferenceTargets = Record<string, ReferenceTarget>;
+export type CitationLookup = Record<string, CitationEntry>;
+export type CitationImportMode = "add" | "add-and-translate";
 export type ReaderBlockColor = "none" | "yellow" | "blue" | "green" | "pink" | "purple";
 
 export interface ReaderAssetFile {
   index: number;
   originalReference: string;
   url: string;
+  metadata?: AssetRecord["metadata"];
 }
+
+class BoundedCache<Value> {
+  private readonly values = new Map<string, Value>();
+
+  constructor(private readonly limit: number) {}
+
+  get(key: string): Value | undefined {
+    const value = this.values.get(key);
+    if (value === undefined) return undefined;
+    this.values.delete(key);
+    this.values.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: Value): Value {
+    if (this.values.has(key)) this.values.delete(key);
+    this.values.set(key, value);
+    if (this.values.size > this.limit) {
+      const firstKey = this.values.keys().next().value;
+      if (firstKey !== undefined) this.values.delete(firstKey);
+    }
+    return value;
+  }
+}
+
+const katexRenderCache = new BoundedCache<string>(500);
+const sentenceRangeCache = new BoundedCache<TextRange[]>(800);
+const linkedContentCache = new BoundedCache<string>(600);
+const sanitizedHtmlCache = new BoundedCache<string>(120);
 
 interface ReaderBlockProps {
   block: DocumentBlock;
@@ -38,12 +77,18 @@ interface ReaderBlockProps {
   assetUrl?: string;
   assetFileUrls?: ReaderAssetFile[];
   referenceTargets?: ReferenceTargets;
+  citations?: CitationLookup;
+  citationImportPending?: boolean;
+  canImportCitationWithTranslation?: boolean;
+  onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
   translation?: string;
   translationVariantOptions?: { value: string; label: string }[];
   selectedTranslationVariantId?: string;
   glossaryAffected?: boolean;
   viewMode: ReaderViewMode;
   active?: boolean;
+  controlsVisible?: boolean;
+  searchActive?: boolean;
   blockColor?: ReaderBlockColor;
   onActivate?: (blockUid: string) => void;
   onBlockColorChange?: (blockUid: string, color: ReaderBlockColor) => void;
@@ -55,18 +100,24 @@ interface ReaderBlockProps {
   ) => void;
 }
 
-export function ReaderBlock({
+export const ReaderBlock = memo(function ReaderBlock({
   block,
   asset,
   assetUrl,
   assetFileUrls = [],
   referenceTargets = {},
+  citations = {},
+  citationImportPending = false,
+  canImportCitationWithTranslation = false,
+  onCitationImport,
   translation,
   translationVariantOptions = [],
   selectedTranslationVariantId,
   glossaryAffected = false,
   viewMode,
   active = false,
+  controlsVisible = false,
+  searchActive = false,
   blockColor = "none",
   onActivate,
   onBlockColorChange,
@@ -75,41 +126,67 @@ export function ReaderBlock({
 }: ReaderBlockProps) {
   const t = useT();
   const displayBlock = displayBlockForReader(block, asset);
-  const activateBlock = () => onActivate?.(block.block_uid);
+  const activateBlock = useCallback(
+    () => onActivate?.(block.block_uid),
+    [block.block_uid, onActivate]
+  );
   const [translationExpanded, setTranslationExpanded] = useState(false);
-  const focusMode = viewMode === "focus";
-  const activeFocus = focusMode && active;
-  const translationOpen = translationExpanded || activeFocus;
+  const [localControlsVisible, setLocalControlsVisible] = useState(false);
+  const translationOpen = translationExpanded;
   const translationText = translation ?? "";
-  const focusClass = focusMode
-    ? active
-      ? " reader-block-focus-current"
-      : " reader-block-dimmed"
-    : "";
   const colorClass = blockColor === "none" ? "" : ` reader-block-color-${blockColor}`;
-  const hoverActivate = focusMode ? undefined : activateBlock;
+  const visibleControls = controlsVisible || localControlsVisible;
+  const searchClass = searchActive ? " reader-block-search-current" : "";
   const environmentTranslation = environmentTranslationForReader(displayBlock, translation);
+  const sentenceHighlightPlan = createSentenceHighlightPlan(
+    displayBlock,
+    translationText,
+    viewMode
+  );
   const lastPointerToggleAt = useRef(0);
   const showEnvironmentTranslation =
     Boolean(environmentTranslation) && displayBlock.block_type !== "equation";
   const toggleTranslationLabel = translationOpen
     ? t("reader.hideTranslation")
     : t("reader.showTranslation");
+  const showControls = () => setLocalControlsVisible(true);
+  const hideControls = () => setLocalControlsVisible(false);
+  const activateFromPointer = (event: PointerEvent<HTMLElement>) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("a, button, [role='button'], .citation-link, .xref-link")
+    ) {
+      return;
+    }
+    showControls();
+  };
+  const activateFromFocus = () => {
+    showControls();
+    activateBlock();
+  };
+  const handleBlur = (event: FocusEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    hideControls();
+  };
 
   if (isStructuralBlock(displayBlock)) {
     return (
       <section
-        className={`reader-block structural-block structural-block-${structuralRole(displayBlock)} structural-block-level-${structuralDisplayLevel(displayBlock)}${active ? " reader-block-active" : ""}${focusClass}`}
+        className={`reader-block structural-block structural-block-${structuralRole(displayBlock)} structural-block-level-${structuralDisplayLevel(displayBlock)}${active ? " reader-block-active" : ""}${searchClass}`}
         id={block.block_uid}
-        onFocusCapture={activateBlock}
-        onMouseEnter={hoverActivate}
+        onBlur={handleBlur}
+        onFocusCapture={activateFromFocus}
+        onPointerEnter={activateFromPointer}
+        onPointerLeave={hideControls}
       >
-        <HoverToolbar
-          kind="environment"
-          onAction={(actionId) =>
-            onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
-          }
-        />
+        {visibleControls ? (
+          <HoverToolbar
+            kind="environment"
+            onAction={(actionId) =>
+              onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
+            }
+          />
+        ) : null}
         <StructuralContent block={displayBlock} />
       </section>
     );
@@ -118,17 +195,21 @@ export function ReaderBlock({
   if (["equation", "figure", "table", "algorithm"].includes(displayBlock.block_type)) {
     return (
       <section
-        className={`reader-block environment-block environment-block-${displayBlock.block_type} environment-block-${viewMode}${active ? " reader-block-active" : ""}${focusClass}`}
+        className={`reader-block environment-block environment-block-${displayBlock.block_type} environment-block-${viewMode}${active ? " reader-block-active" : ""}${searchClass}`}
         id={block.block_uid}
-        onFocusCapture={activateBlock}
-        onMouseEnter={hoverActivate}
+        onBlur={handleBlur}
+        onFocusCapture={activateFromFocus}
+        onPointerEnter={activateFromPointer}
+        onPointerLeave={hideControls}
       >
-        <HoverToolbar
-          kind="environment"
-          onAction={(actionId) =>
-            onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
-          }
-        />
+        {visibleControls ? (
+          <HoverToolbar
+            kind="environment"
+            onAction={(actionId) =>
+              onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
+            }
+          />
+        ) : null}
         {["figure", "table"].includes(displayBlock.block_type) ? (
           <AssetPreview
             kind={displayBlock.block_type}
@@ -142,6 +223,10 @@ export function ReaderBlock({
           block={displayBlock}
           content={displayBlock.source_markdown}
           referenceTargets={referenceTargets}
+          citations={citations}
+          citationImportPending={citationImportPending}
+          canImportCitationWithTranslation={canImportCitationWithTranslation}
+          onCitationImport={onCitationImport}
         />
         {showEnvironmentTranslation ? (
           <div className="caption-translation">
@@ -149,6 +234,10 @@ export function ReaderBlock({
             <MarkdownContent
               content={environmentTranslation ?? ""}
               referenceTargets={referenceTargets}
+              citations={citations}
+              citationImportPending={citationImportPending}
+              canImportCitationWithTranslation={canImportCitationWithTranslation}
+              onCitationImport={onCitationImport}
             />
             <TranslationVariantSelect
               blockUid={block.block_uid}
@@ -162,26 +251,23 @@ export function ReaderBlock({
     );
   }
 
-  if (viewMode === "study" || viewMode === "focus") {
+  if (viewMode === "study") {
     const toggleStudyTranslation = () => setTranslationExpanded((open) => !open);
-    const manualStudyTranslationOpen = viewMode === "study" && translationExpanded;
+    const manualStudyTranslationOpen = translationExpanded;
     const translationToggle = (
       <button
         type="button"
         className="study-translation-toggle"
         data-translation-open={translationOpen ? "true" : undefined}
-        aria-label={activeFocus ? t("reader.translationOpen") : toggleTranslationLabel}
-        title={activeFocus ? t("reader.translationOpen") : toggleTranslationLabel}
-        disabled={activeFocus}
+        aria-label={toggleTranslationLabel}
+        title={toggleTranslationLabel}
         onPointerDown={(event) => {
-          if (activeFocus) return;
           event.preventDefault();
           event.stopPropagation();
           lastPointerToggleAt.current = Date.now();
           toggleStudyTranslation();
         }}
         onMouseDown={(event) => {
-          if (activeFocus) return;
           event.preventDefault();
           event.stopPropagation();
           if (Date.now() - lastPointerToggleAt.current < 250) return;
@@ -203,43 +289,69 @@ export function ReaderBlock({
     );
     return (
       <section
-        className={`reader-block text-block study-block${manualStudyTranslationOpen ? " study-block-translation-open" : ""}${focusMode ? " focus-study-block" : ""}${active ? " reader-block-active" : ""}${focusClass}${colorClass}`}
+        className={`reader-block text-block study-block${manualStudyTranslationOpen ? " study-block-translation-open" : ""}${active ? " reader-block-active" : ""}${searchClass}${colorClass}`}
         id={block.block_uid}
-        onFocusCapture={activateBlock}
-        onMouseEnter={hoverActivate}
+        onBlur={handleBlur}
+        onFocusCapture={activateFromFocus}
+        onPointerEnter={activateFromPointer}
+        onPointerLeave={hideControls}
       >
-        <BlockColorPalette
-          blockUid={block.block_uid}
-          value={blockColor}
-          onChange={onBlockColorChange}
-        />
         <article className="block-pane source-pane study-source-pane">
-          <HoverToolbar
-            kind="source"
-            onAction={(actionId) =>
-              onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
-            }
-          />
           <div className={`study-reading-grid${translationOpen ? " study-reading-grid-open" : ""}`}>
             <div className="study-source-content">
+              <BlockColorMarker value={blockColor} side="source" />
+              {visibleControls ? (
+                <BlockColorPalette
+                  blockUid={block.block_uid}
+                  value={blockColor}
+                  onChange={onBlockColorChange}
+                  className="source-color-palette"
+                />
+              ) : null}
+              {visibleControls ? (
+                <HoverToolbar
+                  kind="source"
+                  onAction={(actionId) =>
+                    onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
+                  }
+                />
+              ) : null}
               <BlockContent
                 block={displayBlock}
                 content={displayBlock.source_markdown}
                 referenceTargets={referenceTargets}
+                citations={citations}
+                citationImportPending={citationImportPending}
+                canImportCitationWithTranslation={canImportCitationWithTranslation}
+                onCitationImport={onCitationImport}
+                sentenceHighlightPlan={sentenceHighlightPlan}
+                sentenceHighlightKind="source"
                 trailingInline={displayBlock.block_type === "paragraph" ? translationToggle : null}
               />
             </div>
             {translationOpen ? (
               <aside className="study-translation-column">
                 <section className="study-translation-panel translation-pane">
-                  <HoverToolbar
-                    kind="translation"
-                    disabledActions={translation ? [] : ["copy-translation"]}
-                    onAction={(actionId) => onToolbarAction?.(actionId, block, translationText)}
-                  />
+                  <BlockColorMarker value={blockColor} side="translation" />
+                  {visibleControls ? (
+                    <HoverToolbar
+                      kind="translation"
+                      disabledActions={translation ? [] : ["copy-translation"]}
+                      onAction={(actionId) => onToolbarAction?.(actionId, block, translationText)}
+                    />
+                  ) : null}
                   {glossaryAffected ? <GlossaryBadge /> : null}
                   {translation ? (
-                    <MarkdownContent content={translation} referenceTargets={referenceTargets} />
+                    <MarkdownContent
+                      content={translation}
+                      referenceTargets={referenceTargets}
+                      citations={citations}
+                      citationImportPending={citationImportPending}
+                      canImportCitationWithTranslation={canImportCitationWithTranslation}
+                      onCitationImport={onCitationImport}
+                      sentenceHighlightPlan={sentenceHighlightPlan}
+                      sentenceHighlightKind="translation"
+                    />
                   ) : (
                     <p className="translation-placeholder">{t("reader.translationPending")}</p>
                   )}
@@ -263,41 +375,75 @@ export function ReaderBlock({
 
   return (
     <section
-      className={`reader-block text-block ${blockLayoutClass}${active ? " reader-block-active" : ""}${colorClass}`}
+      className={`reader-block text-block ${blockLayoutClass}${active ? " reader-block-active" : ""}${searchClass}${colorClass}`}
       id={block.block_uid}
-      onFocusCapture={activateBlock}
-      onMouseEnter={hoverActivate}
+      onBlur={handleBlur}
+      onFocusCapture={activateFromFocus}
+      onPointerEnter={activateFromPointer}
+      onPointerLeave={hideControls}
     >
-      <BlockColorPalette
-        blockUid={block.block_uid}
-        value={blockColor}
-        onChange={onBlockColorChange}
-      />
       {viewMode !== "translation" ? (
         <article className="block-pane source-pane">
-          <HoverToolbar
-            kind="source"
-            onAction={(actionId) =>
-              onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
-            }
-          />
+          <BlockColorMarker value={blockColor} side="source" />
+          {visibleControls ? (
+            <BlockColorPalette
+              blockUid={block.block_uid}
+              value={blockColor}
+              onChange={onBlockColorChange}
+              className="source-color-palette"
+            />
+          ) : null}
+          {visibleControls ? (
+            <HoverToolbar
+              kind="source"
+              onAction={(actionId) =>
+                onToolbarAction?.(actionId, displayBlock, displayBlock.source_markdown)
+              }
+            />
+          ) : null}
           <BlockContent
             block={displayBlock}
             content={displayBlock.source_markdown}
             referenceTargets={referenceTargets}
+            citations={citations}
+            citationImportPending={citationImportPending}
+            canImportCitationWithTranslation={canImportCitationWithTranslation}
+            onCitationImport={onCitationImport}
+            sentenceHighlightPlan={sentenceHighlightPlan}
+            sentenceHighlightKind="source"
           />
         </article>
       ) : null}
       {viewMode !== "source" ? (
         <article className="block-pane translation-pane">
-          <HoverToolbar
-            kind="translation"
-            disabledActions={translation ? [] : ["copy-translation"]}
-            onAction={(actionId) => onToolbarAction?.(actionId, block, translation ?? "")}
-          />
+          <BlockColorMarker value={blockColor} side="translation" />
+          {viewMode === "translation" && visibleControls ? (
+            <BlockColorPalette
+              blockUid={block.block_uid}
+              value={blockColor}
+              onChange={onBlockColorChange}
+              className="translation-color-palette"
+            />
+          ) : null}
+          {visibleControls ? (
+            <HoverToolbar
+              kind="translation"
+              disabledActions={translation ? [] : ["copy-translation"]}
+              onAction={(actionId) => onToolbarAction?.(actionId, block, translation ?? "")}
+            />
+          ) : null}
           {glossaryAffected ? <GlossaryBadge /> : null}
           {translation ? (
-            <MarkdownContent content={translation} referenceTargets={referenceTargets} />
+            <MarkdownContent
+              content={translation}
+              referenceTargets={referenceTargets}
+              citations={citations}
+              citationImportPending={citationImportPending}
+              canImportCitationWithTranslation={canImportCitationWithTranslation}
+              onCitationImport={onCitationImport}
+              sentenceHighlightPlan={sentenceHighlightPlan}
+              sentenceHighlightKind="translation"
+            />
           ) : (
             <p className="translation-placeholder">{t("reader.translationPending")}</p>
           )}
@@ -310,6 +456,33 @@ export function ReaderBlock({
         </article>
       ) : null}
     </section>
+  );
+}, areReaderBlockPropsEqual);
+
+function areReaderBlockPropsEqual(left: ReaderBlockProps, right: ReaderBlockProps) {
+  return (
+    left.block === right.block &&
+    left.asset === right.asset &&
+    left.assetUrl === right.assetUrl &&
+    left.assetFileUrls === right.assetFileUrls &&
+    left.referenceTargets === right.referenceTargets &&
+    left.citations === right.citations &&
+    left.citationImportPending === right.citationImportPending &&
+    left.canImportCitationWithTranslation === right.canImportCitationWithTranslation &&
+    left.onCitationImport === right.onCitationImport &&
+    left.translation === right.translation &&
+    left.translationVariantOptions === right.translationVariantOptions &&
+    left.selectedTranslationVariantId === right.selectedTranslationVariantId &&
+    left.glossaryAffected === right.glossaryAffected &&
+    left.viewMode === right.viewMode &&
+    left.active === right.active &&
+    left.controlsVisible === right.controlsVisible &&
+    left.searchActive === right.searchActive &&
+    left.blockColor === right.blockColor &&
+    left.onActivate === right.onActivate &&
+    left.onBlockColorChange === right.onBlockColorChange &&
+    left.onTranslationVariantChange === right.onTranslationVariantChange &&
+    left.onToolbarAction === right.onToolbarAction
   );
 }
 
@@ -325,16 +498,22 @@ const blockColorOptions: { value: ReaderBlockColor; labelKey: MessageKey; swatch
 function BlockColorPalette({
   blockUid,
   value,
-  onChange
+  onChange,
+  className = ""
 }: {
   blockUid: string;
   value: ReaderBlockColor;
   onChange?: (blockUid: string, color: ReaderBlockColor) => void;
+  className?: string;
 }) {
   const t = useT();
   if (!onChange) return null;
   return (
-    <Group className="block-color-palette" gap={4} aria-label={t("reader.blockColor")}>
+    <Group
+      className={`block-color-palette${className ? ` ${className}` : ""}`}
+      gap={4}
+      aria-label={t("reader.blockColor")}
+    >
       {blockColorOptions.map((option) => (
         <Tooltip key={option.value} label={t(option.labelKey)}>
           <button
@@ -350,6 +529,22 @@ function BlockColorPalette({
         </Tooltip>
       ))}
     </Group>
+  );
+}
+
+function BlockColorMarker({
+  value,
+  side
+}: {
+  value: ReaderBlockColor;
+  side: "source" | "translation";
+}) {
+  if (value === "none") return null;
+  return (
+    <span
+      className={`block-color-marker block-color-marker-${side} block-color-marker-${value}`}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -387,6 +582,117 @@ function GlossaryBadge() {
       {t("reader.glossaryChanged")}
     </Badge>
   );
+}
+
+function CitationLink({
+  citation,
+  citationImportPending,
+  canImportCitationWithTranslation,
+  onCitationImport,
+  fallbackChildren
+}: {
+  citation: CitationEntry;
+  citationImportPending: boolean;
+  canImportCitationWithTranslation: boolean;
+  onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
+  fallbackChildren: ReactNode;
+}) {
+  const t = useT();
+  const linkLabel = citation.label ? `[${citation.label}]` : fallbackChildren;
+  const importCitation = (mode: CitationImportMode) => {
+    onCitationImport?.(citation, mode);
+  };
+  const importOnPointerDown = (
+    event: PointerEvent<HTMLButtonElement>,
+    mode: CitationImportMode
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    importCitation(mode);
+  };
+  const importOnKeyboardClick = (
+    event: MouseEvent<HTMLButtonElement>,
+    mode: CitationImportMode
+  ) => {
+    if (event.detail !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    importCitation(mode);
+  };
+  return (
+    <HoverCard width={360} position="top" withArrow shadow="md" openDelay={120} closeDelay={160}>
+      <HoverCard.Target>
+        <a className="citation-link" href={citation.scholar_url} target="_blank" rel="noreferrer">
+          {linkLabel}
+        </a>
+      </HoverCard.Target>
+      <HoverCard.Dropdown className="citation-popover">
+        <Text fw={650} size="sm" className="citation-popover-title">
+          {citation.title}
+        </Text>
+        {citation.authors ? (
+          <Text size="xs" c="dimmed">
+            {citation.authors}
+            {citation.year ? ` · ${citation.year}` : ""}
+          </Text>
+        ) : null}
+        {citation.raw_text ? (
+          <Text size="xs" c="dimmed" lineClamp={3}>
+            {citation.raw_text}
+          </Text>
+        ) : null}
+        <Group gap="xs" className="citation-actions">
+          <Button
+            component="a"
+            href={citation.scholar_url}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            variant="light"
+          >
+            {t("reader.searchScholar")}
+          </Button>
+          <Button
+            component="a"
+            href={arxivSearchUrl(citation)}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            variant="light"
+          >
+            {t("reader.searchArxiv")}
+          </Button>
+          <Button
+            size="xs"
+            onPointerDown={(event) => importOnPointerDown(event, "add")}
+            onClick={(event) => importOnKeyboardClick(event, "add")}
+            loading={citationImportPending}
+            disabled={!onCitationImport}
+          >
+            {t("reader.addToIliosLibrary")}
+          </Button>
+          {onCitationImport ? (
+            <Button
+              size="xs"
+              variant="outline"
+              onPointerDown={(event) => importOnPointerDown(event, "add-and-translate")}
+              onClick={(event) => importOnKeyboardClick(event, "add-and-translate")}
+              loading={citationImportPending}
+              disabled={!canImportCitationWithTranslation}
+            >
+              {t("reader.addAndTranslate")}
+            </Button>
+          ) : null}
+        </Group>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
+function arxivSearchUrl(citation: CitationEntry) {
+  if (citation.arxiv_id) return `https://arxiv.org/abs/${encodeURIComponent(citation.arxiv_id)}`;
+  const query = citation.title || citation.raw_text;
+  return `https://arxiv.org/search/?query=${encodeURIComponent(query)}&searchtype=all&source=header`;
 }
 
 function displayBlockForReader(block: DocumentBlock, asset?: AssetRecord): DocumentBlock {
@@ -659,11 +965,23 @@ function BlockContent({
   block,
   content,
   referenceTargets,
+  citations,
+  citationImportPending,
+  canImportCitationWithTranslation,
+  onCitationImport,
+  sentenceHighlightPlan,
+  sentenceHighlightKind,
   trailingInline = null
 }: {
   block: DocumentBlock;
   content: string;
   referenceTargets: ReferenceTargets;
+  citations: CitationLookup;
+  citationImportPending: boolean;
+  canImportCitationWithTranslation: boolean;
+  onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
+  sentenceHighlightPlan?: SentenceHighlightPlan;
+  sentenceHighlightKind?: SentenceHighlightKind;
   trailingInline?: ReactNode;
 }) {
   if (block.block_type === "equation") {
@@ -671,18 +989,21 @@ function BlockContent({
       <div
         className="math-block"
         dangerouslySetInnerHTML={{
-          __html: katex.renderToString(content, {
-            displayMode: true,
-            throwOnError: false
-          })
+          __html: renderKatexCached(content, true)
         }}
       />
     );
   }
   return (
     <MarkdownContent
-      content={linkDocumentReferences(content, block, referenceTargets)}
+      content={linkDocumentReferencesCached(content, block, referenceTargets, citations)}
       referenceTargets={referenceTargets}
+      citations={citations}
+      citationImportPending={citationImportPending}
+      canImportCitationWithTranslation={canImportCitationWithTranslation}
+      onCitationImport={onCitationImport}
+      sentenceHighlightPlan={sentenceHighlightPlan}
+      sentenceHighlightKind={sentenceHighlightKind}
       trailingInline={trailingInline}
     />
   );
@@ -691,16 +1012,42 @@ function BlockContent({
 function MarkdownContent({
   content,
   referenceTargets,
+  citations,
+  citationImportPending = false,
+  canImportCitationWithTranslation = false,
+  onCitationImport,
+  sentenceHighlightPlan,
+  sentenceHighlightKind,
   trailingInline = null
 }: {
   content: string;
   referenceTargets: ReferenceTargets;
+  citations?: CitationLookup;
+  citationImportPending?: boolean;
+  canImportCitationWithTranslation?: boolean;
+  onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
+  sentenceHighlightPlan?: SentenceHighlightPlan;
+  sentenceHighlightKind?: SentenceHighlightKind;
   trailingInline?: ReactNode;
 }) {
+  const preparedMarkdown = useMemo(() => prepareInlineMathMarkdown(content), [content]);
+  const sentenceCursor = { value: 0 };
   return (
     <ReactMarkdown
       components={{
         a({ href, children }) {
+          const citation = citationForHref(href, citations);
+          if (citation) {
+            return (
+              <CitationLink
+                citation={citation}
+                citationImportPending={citationImportPending}
+                canImportCitationWithTranslation={canImportCitationWithTranslation}
+                onCitationImport={onCitationImport}
+                fallbackChildren={children}
+              />
+            );
+          }
           const resolvedHref = resolveReferenceHref(href, referenceTargets);
           const linked = resolvedHref !== href && resolvedHref?.startsWith("#");
           return (
@@ -710,48 +1057,366 @@ function MarkdownContent({
           );
         },
         p({ children }) {
+          const inlineChildren =
+            sentenceHighlightPlan && sentenceHighlightKind
+              ? renderSentenceHighlightedChildren(
+                  children,
+                  sentenceHighlightPlan,
+                  sentenceHighlightKind,
+                  preparedMarkdown.inlineMathByToken,
+                  sentenceCursor
+                )
+              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
           return (
             <p>
-              {renderInlineMathChildren(children)}
+              {inlineChildren}
               {trailingInline}
             </p>
           );
         },
         li({ children }) {
-          return <li>{renderInlineMathChildren(children)}</li>;
+          const inlineChildren =
+            sentenceHighlightPlan && sentenceHighlightKind
+              ? renderSentenceHighlightedChildren(
+                  children,
+                  sentenceHighlightPlan,
+                  sentenceHighlightKind,
+                  preparedMarkdown.inlineMathByToken,
+                  sentenceCursor
+                )
+              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+          return <li>{inlineChildren}</li>;
         },
         td({ children }) {
-          return <td>{renderInlineMathChildren(children)}</td>;
+          const inlineChildren =
+            sentenceHighlightPlan && sentenceHighlightKind
+              ? renderSentenceHighlightedChildren(
+                  children,
+                  sentenceHighlightPlan,
+                  sentenceHighlightKind,
+                  preparedMarkdown.inlineMathByToken,
+                  sentenceCursor
+                )
+              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+          return <td>{inlineChildren}</td>;
         },
         th({ children }) {
-          return <th>{renderInlineMathChildren(children)}</th>;
+          const inlineChildren =
+            sentenceHighlightPlan && sentenceHighlightKind
+              ? renderSentenceHighlightedChildren(
+                  children,
+                  sentenceHighlightPlan,
+                  sentenceHighlightKind,
+                  preparedMarkdown.inlineMathByToken,
+                  sentenceCursor
+                )
+              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+          return <th>{inlineChildren}</th>;
         }
       }}
     >
-      {content}
+      {preparedMarkdown.markdown}
     </ReactMarkdown>
   );
 }
 
-function renderInlineMathChildren(children: ReactNode): ReactNode {
-  return Children.map(children, (child) =>
-    typeof child === "string" ? renderInlineMathText(child) : child
+type SentenceHighlightKind = "source" | "translation";
+
+interface SentenceHighlightPlan {
+  sourceSentenceCount: number;
+  translationSentenceCount: number;
+}
+
+const sentenceHighlightColorCount = 6;
+
+function createSentenceHighlightPlan(
+  block: DocumentBlock,
+  translation: string,
+  viewMode: ReaderViewMode
+): SentenceHighlightPlan | undefined {
+  if (block.block_type !== "paragraph") return undefined;
+  const sourceSentenceCount = cachedSentenceRanges(
+    plainTextForSentenceHighlight(block.source_markdown)
+  ).length;
+  const translationSentenceCount = cachedSentenceRanges(
+    plainTextForSentenceHighlight(translation)
+  ).length;
+  if (sourceSentenceCount === 0) return undefined;
+  if (viewMode !== "source" && translationSentenceCount === 0) return undefined;
+  return { sourceSentenceCount, translationSentenceCount };
+}
+
+function renderSentenceHighlightedChildren(
+  children: ReactNode,
+  plan: SentenceHighlightPlan,
+  kind: SentenceHighlightKind,
+  inlineMathByToken: Map<string, string>,
+  sentenceCursor: { value: number }
+): ReactNode {
+  const text = textContentOf(children);
+  const ranges = cachedSentenceRanges(text);
+  if (ranges.length === 0) return renderInlineMathChildren(children, inlineMathByToken);
+  const baseSentenceIndex = sentenceCursor.value;
+  sentenceCursor.value += ranges.length;
+  const offset = { value: 0 };
+  return renderHighlightedNode(
+    children,
+    ranges,
+    baseSentenceIndex,
+    plan,
+    kind,
+    inlineMathByToken,
+    offset
   );
 }
 
-function renderInlineMathText(text: string): ReactNode {
+function renderHighlightedNode(
+  node: ReactNode,
+  ranges: TextRange[],
+  baseSentenceIndex: number,
+  plan: SentenceHighlightPlan,
+  kind: SentenceHighlightKind,
+  inlineMathByToken: Map<string, string>,
+  offset: { value: number }
+): ReactNode {
+  return Children.map(node, (child) => {
+    if (typeof child === "string") {
+      const startOffset = offset.value;
+      offset.value += child.length;
+      return renderHighlightedText(
+        child,
+        startOffset,
+        ranges,
+        baseSentenceIndex,
+        plan,
+        kind,
+        inlineMathByToken
+      );
+    }
+    if (typeof child === "number" || typeof child === "bigint") {
+      const text = String(child);
+      const startOffset = offset.value;
+      offset.value += text.length;
+      return renderHighlightedText(
+        text,
+        startOffset,
+        ranges,
+        baseSentenceIndex,
+        plan,
+        kind,
+        inlineMathByToken
+      );
+    }
+    if (isValidElement<{ children?: ReactNode }>(child)) {
+      const childTextLength = textContentOf(child.props.children).length;
+      const renderedChildren =
+        childTextLength > 0
+          ? renderHighlightedNode(
+              child.props.children,
+              ranges,
+              baseSentenceIndex,
+              plan,
+              kind,
+              inlineMathByToken,
+              offset
+            )
+          : child.props.children;
+      return cloneElement(child, undefined, renderedChildren);
+    }
+    return child;
+  });
+}
+
+function renderHighlightedText(
+  text: string,
+  textStartOffset: number,
+  ranges: TextRange[],
+  baseSentenceIndex: number,
+  plan: SentenceHighlightPlan,
+  kind: SentenceHighlightKind,
+  inlineMathByToken: Map<string, string>
+): ReactNode {
   const parts: ReactNode[] = [];
-  const pattern = /\\\((.+?)\\\)|\$([^$\n]+)\$/g;
+  let cursor = 0;
+  for (const [rangeIndex, range] of ranges.entries()) {
+    const overlapStart = Math.max(textStartOffset, range.start);
+    const overlapEnd = Math.min(textStartOffset + text.length, range.end);
+    if (overlapEnd <= overlapStart) continue;
+    const localStart = overlapStart - textStartOffset;
+    const localEnd = overlapEnd - textStartOffset;
+    if (localStart > cursor) {
+      parts.push(
+        <Fragment key={`${textStartOffset}-${cursor}-${localStart}-plain`}>
+          {renderInlineMathText(text.slice(cursor, localStart), inlineMathByToken)}
+        </Fragment>
+      );
+    }
+    const absoluteSentenceIndex = baseSentenceIndex + rangeIndex;
+    const accentIndex = sentenceAccentIndex(absoluteSentenceIndex);
+    const highlightedText = text.slice(localStart, localEnd);
+    parts.push(
+      <span
+        className={`sentence-highlight sentence-highlight-${accentIndex % sentenceHighlightColorCount}`}
+        data-sentence-accent={accentIndex % sentenceHighlightColorCount}
+        data-sentence-kind={kind}
+        key={`${textStartOffset}-${localStart}-${localEnd}-${accentIndex}`}
+      >
+        {renderInlineMathText(highlightedText, inlineMathByToken)}
+      </span>
+    );
+    cursor = localEnd;
+  }
+  if (cursor < text.length) {
+    parts.push(
+      <Fragment key={`${textStartOffset}-${cursor}-${text.length}-plain`}>
+        {renderInlineMathText(text.slice(cursor), inlineMathByToken)}
+      </Fragment>
+    );
+  }
+  return parts.length > 0 ? (
+    <Fragment>{parts}</Fragment>
+  ) : (
+    renderInlineMathText(text, inlineMathByToken)
+  );
+}
+
+function sentenceAccentIndex(absoluteSentenceIndex: number): number {
+  return absoluteSentenceIndex;
+}
+
+interface TextRange {
+  start: number;
+  end: number;
+}
+
+function sentenceRanges(text: string): TextRange[] {
+  const ranges: TextRange[] = [];
+  let start = nextNonWhitespace(text, 0);
+  for (let index = start; index < text.length; index += 1) {
+    if (!isSentenceTerminator(text, index)) continue;
+    let end = index + 1;
+    while (end < text.length && /["'”’)\]}]/.test(text[end] ?? "")) end += 1;
+    const trimmed = trimRange(text, start, end);
+    if (trimmed.end > trimmed.start) ranges.push(trimmed);
+    start = nextNonWhitespace(text, end);
+    index = start - 1;
+  }
+  const tail = trimRange(text, start, text.length);
+  if (tail.end > tail.start) ranges.push(tail);
+  return ranges;
+}
+
+function cachedSentenceRanges(text: string): TextRange[] {
+  const cached = sentenceRangeCache.get(text);
+  if (cached) return cached;
+  return sentenceRangeCache.set(text, sentenceRanges(text));
+}
+
+function isSentenceTerminator(text: string, index: number): boolean {
+  const value = text[index] ?? "";
+  if (/[。！？；]/.test(value)) return true;
+  if (!/[.!?;]/.test(value)) return false;
+  if (value === "." && isDecimalPoint(text, index)) return false;
+  if (value === "." && isKnownAbbreviation(text, index)) return false;
+  return true;
+}
+
+function isDecimalPoint(text: string, index: number): boolean {
+  return /\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? "");
+}
+
+function isKnownAbbreviation(text: string, index: number): boolean {
+  const prefix = text.slice(Math.max(0, index - 18), index + 1).toLowerCase();
+  return /\b(?:e\.g|i\.e|fig|eq|eqn|sec|ref|dr|prof|vs|no|al)\.$/.test(prefix);
+}
+
+function nextNonWhitespace(text: string, start: number): number {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index] ?? "")) index += 1;
+  return index;
+}
+
+function trimRange(text: string, start: number, end: number): TextRange {
+  let trimmedStart = start;
+  let trimmedEnd = end;
+  while (trimmedStart < trimmedEnd && /\s/.test(text[trimmedStart] ?? "")) trimmedStart += 1;
+  while (trimmedEnd > trimmedStart && /\s/.test(text[trimmedEnd - 1] ?? "")) trimmedEnd -= 1;
+  return { start: trimmedStart, end: trimmedEnd };
+}
+
+function textContentOf(node: ReactNode): string {
+  let text = "";
+  Children.forEach(node, (child) => {
+    if (typeof child === "string" || typeof child === "number" || typeof child === "bigint") {
+      text += String(child);
+      return;
+    }
+    if (isValidElement<{ children?: ReactNode }>(child)) {
+      text += textContentOf(child.props.children);
+    }
+  });
+  return text;
+}
+
+function plainTextForSentenceHighlight(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_~#>|-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderInlineMathChildren(
+  children: ReactNode,
+  inlineMathByToken: Map<string, string>
+): ReactNode {
+  return Children.map(children, (child) =>
+    typeof child === "string" ? renderInlineMathText(child, inlineMathByToken) : child
+  );
+}
+
+function renderInlineMathText(text: string, inlineMathByToken = emptyInlineMathByToken): ReactNode {
+  const parts: ReactNode[] = [];
+  const pattern = /BILININLINE\d+MATH|\\\((.+?)\\\)|\$([^$\n]+)\$/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
     if (match.index > cursor) parts.push(text.slice(cursor, match.index));
-    const latex = match[1] ?? match[2] ?? "";
-    parts.push(<InlineMath latex={latex} key={`${match.index}-${latex}`} />);
+    const tokenLatex = inlineMathByToken.get(match[0]);
+    const latex = tokenLatex ?? match[1] ?? match[2] ?? "";
+    if (latex) {
+      parts.push(<InlineMath latex={latex} key={`${match.index}-${latex}`} />);
+    } else {
+      parts.push(match[0]);
+    }
     cursor = match.index + match[0].length;
   }
   if (cursor < text.length) parts.push(text.slice(cursor));
   return parts.length > 0 ? <Fragment>{parts}</Fragment> : text;
+}
+
+const emptyInlineMathByToken = new Map<string, string>();
+
+interface PreparedInlineMathMarkdown {
+  markdown: string;
+  inlineMathByToken: Map<string, string>;
+}
+
+function prepareInlineMathMarkdown(content: string): PreparedInlineMathMarkdown {
+  const inlineMathByToken = new Map<string, string>();
+  let index = 0;
+  const markdown = content.replace(/\\\((.+?)\\\)|\$([^$\n]+)\$/g, (match, paren, dollar) => {
+    const latex = String(paren ?? dollar ?? "");
+    if (!latex.trim()) return match;
+    const token = `BILININLINE${index}MATH`;
+    index += 1;
+    inlineMathByToken.set(token, latex);
+    return token;
+  });
+  return { markdown, inlineMathByToken };
 }
 
 function InlineMath({ latex }: { latex: string }) {
@@ -759,12 +1424,23 @@ function InlineMath({ latex }: { latex: string }) {
     <span
       className="inline-math"
       dangerouslySetInnerHTML={{
-        __html: katex.renderToString(normalizeLatex(latex), {
-          displayMode: false,
-          throwOnError: false
-        })
+        __html: renderKatexCached(latex, false)
       }}
     />
+  );
+}
+
+function renderKatexCached(latex: string, displayMode: boolean) {
+  const normalized = normalizeLatex(latex);
+  const key = `${displayMode ? "block" : "inline"}:${normalized}`;
+  const cached = katexRenderCache.get(key);
+  if (cached) return cached;
+  return katexRenderCache.set(
+    key,
+    katex.renderToString(normalized, {
+      displayMode,
+      throwOnError: false
+    })
   );
 }
 
@@ -823,7 +1499,7 @@ function AssetPreview({
             <AdaptiveAssetImage
               src={file.url}
               alt={asset?.caption ?? `${kind} asset ${file.index}`}
-              metadata={asset?.metadata}
+              metadata={metadataForAssetFile(asset?.metadata, file.metadata)}
               key={`${file.originalReference}-${file.index}`}
             />
           ))}
@@ -847,6 +1523,33 @@ function AssetPreview({
   return null;
 }
 
+function metadataForAssetFile(
+  assetMetadata: AssetRecord["metadata"] | undefined,
+  fileMetadata: AssetRecord["metadata"] | undefined
+): AssetRecord["metadata"] | undefined {
+  if (!assetMetadata && !fileMetadata) return undefined;
+  const panelWidth = numericMetadata(fileMetadata, "panel_width_pt", "display_width_pt");
+  const groupWidth = numericMetadata(
+    assetMetadata,
+    "total_panel_width_pt",
+    "subfigure_group_width_pt",
+    "display_width_pt"
+  );
+  return {
+    ...(assetMetadata ?? {}),
+    ...(fileMetadata ?? {}),
+    asset_files: undefined,
+    image_count: fileMetadata ? 1 : assetMetadata?.image_count,
+    ...(panelWidth
+      ? {
+          display_width_pt: panelWidth,
+          max_panel_width_pt: panelWidth
+        }
+      : {}),
+    ...(groupWidth ? { subfigure_group_width_pt: groupWidth } : {})
+  };
+}
+
 type AssetImageLayout = "unknown" | "narrow" | "single" | "wide";
 type AssetArticleLayout = "unknown" | "single-column" | "double-column" | "multi-panel";
 
@@ -856,6 +1559,7 @@ interface LatexmlImageMetrics {
   firstHeight?: number;
   maxPanelWidthPt?: number;
   totalPanelWidthPt?: number;
+  displayWidthPt?: number;
   hasFlexLayout: boolean;
 }
 
@@ -898,6 +1602,8 @@ function imageLayoutFromMetadata(metadata: AssetRecord["metadata"] | undefined):
 function articleImageLayoutFromMetadata(
   metadata: AssetRecord["metadata"] | undefined
 ): AssetArticleLayout {
+  const explicitLayout = stringMetadata(metadata, "article_layout");
+  if (isAssetArticleLayout(explicitLayout)) return explicitLayout;
   const metrics = latexmlImageMetricsFromMetadata(metadata);
   if (metrics.imageCount > 1 || metrics.hasFlexLayout) return "multi-panel";
   if (metrics.maxPanelWidthPt && metrics.maxPanelWidthPt >= 330) return "double-column";
@@ -908,6 +1614,15 @@ function articleImageLayoutFromMetadata(
   return "unknown";
 }
 
+function isAssetArticleLayout(value: string | undefined): value is AssetArticleLayout {
+  return (
+    value === "unknown" ||
+    value === "single-column" ||
+    value === "double-column" ||
+    value === "multi-panel"
+  );
+}
+
 function assetImageStyleFromMetadata(metadata: AssetRecord["metadata"] | undefined): CSSProperties {
   const metrics = latexmlImageMetricsFromMetadata(metadata);
   const articleLayout = articleImageLayoutFromMetadata(metadata);
@@ -916,18 +1631,31 @@ function assetImageStyleFromMetadata(metadata: AssetRecord["metadata"] | undefin
   const firstHeight =
     metrics.firstHeight ?? numericMetadata(metadata, "height", "natural_height", "pixel_height");
   const ratio = firstWidth && firstHeight ? firstWidth / firstHeight : undefined;
+  const displayWidthPt =
+    metrics.displayWidthPt ??
+    metrics.maxPanelWidthPt ??
+    numericMetadata(metadata, "panel_width_pt");
   let maxInlineSize = 480;
   let maxBlockSize = 520;
+  let renderInlineSize: number | undefined;
 
   if (articleLayout === "multi-panel") {
-    const panelWidth = metrics.maxPanelWidthPt ?? (firstWidth ? firstWidth * 0.62 : 220);
-    maxInlineSize = clampNumber(panelWidth, 160, 240);
+    const explicitPanelWidth = numericMetadata(metadata, "panel_width_pt");
+    const panelWidth =
+      explicitPanelWidth ??
+      metrics.maxPanelWidthPt ??
+      displayWidthPt ??
+      (firstWidth ? firstWidth * 0.62 : 220);
+    maxInlineSize = Math.round(panelWidth * multiPanelGroupScaleFromMetadata(metadata));
+    renderInlineSize = maxInlineSize;
     maxBlockSize = clampNumber(maxInlineSize * (ratio && ratio < 0.8 ? 1.55 : 1.25), 260, 360);
   } else if (articleLayout === "double-column") {
-    maxInlineSize = 820;
+    maxInlineSize = clampNumber(displayWidthPt ?? firstWidth ?? 640, 380, 760);
+    renderInlineSize = displayWidthPt ? maxInlineSize : undefined;
     maxBlockSize = 560;
   } else if (articleLayout === "single-column") {
-    maxInlineSize = clampNumber(metrics.maxPanelWidthPt ?? firstWidth ?? 460, 300, 520);
+    maxInlineSize = clampNumber(displayWidthPt ?? firstWidth ?? 460, 220, 520);
+    renderInlineSize = displayWidthPt ? maxInlineSize : undefined;
     maxBlockSize = ratio && ratio < 0.8 ? 520 : 460;
   } else if (ratio && ratio <= 0.9) {
     maxInlineSize = 340;
@@ -937,9 +1665,20 @@ function assetImageStyleFromMetadata(metadata: AssetRecord["metadata"] | undefin
   }
 
   return {
+    ...(renderInlineSize
+      ? { "--asset-render-inline-size": `${Math.round(renderInlineSize)}px` }
+      : {}),
     "--asset-max-inline-size": `${Math.round(maxInlineSize)}px`,
     "--asset-max-block-size": `${Math.round(maxBlockSize)}px`
   } as CSSProperties;
+}
+
+const MULTI_PANEL_GROUP_MAX_INLINE_SIZE = 760;
+
+function multiPanelGroupScaleFromMetadata(metadata: AssetRecord["metadata"] | undefined) {
+  const groupWidth = numericMetadata(metadata, "subfigure_group_width_pt", "total_panel_width_pt");
+  if (!groupWidth || groupWidth <= MULTI_PANEL_GROUP_MAX_INLINE_SIZE) return 1;
+  return MULTI_PANEL_GROUP_MAX_INLINE_SIZE / groupWidth;
 }
 
 function classifyImageLayout(width: number, height: number): AssetImageLayout {
@@ -955,8 +1694,25 @@ function classifyImageLayout(width: number, height: number): AssetImageLayout {
 function latexmlImageMetricsFromMetadata(
   metadata: AssetRecord["metadata"] | undefined
 ): LatexmlImageMetrics {
+  const metadataImageCount = numericMetadata(metadata, "image_count");
+  const metadataFirstWidth = numericMetadata(metadata, "image_width", "width", "natural_width");
+  const metadataFirstHeight = numericMetadata(metadata, "image_height", "height", "natural_height");
+  const metadataMaxPanelWidth = numericMetadata(metadata, "max_panel_width_pt", "panel_width_pt");
+  const metadataTotalPanelWidth = numericMetadata(metadata, "total_panel_width_pt");
+  const metadataDisplayWidth = numericMetadata(metadata, "display_width_pt", "panel_width_pt");
+  const metadataHasFlexLayout = booleanMetadata(metadata, "has_flex_layout");
   const html = stringMetadata(metadata, "html_fragment") ?? "";
-  if (!html) return { imageCount: 0, hasFlexLayout: false };
+  if (!html) {
+    return {
+      imageCount: Math.round(metadataImageCount ?? 0),
+      firstWidth: metadataFirstWidth,
+      firstHeight: metadataFirstHeight,
+      maxPanelWidthPt: metadataMaxPanelWidth,
+      totalPanelWidthPt: metadataTotalPanelWidth,
+      displayWidthPt: metadataDisplayWidth,
+      hasFlexLayout: Boolean(metadataHasFlexLayout)
+    };
+  }
   const imageTags = [...html.matchAll(/<img\b[^>]*>/gi)].map((match) => match[0]);
   const imageSizes = imageTags.flatMap((tag) => {
     const width = numberAttributeFromHtmlTag(tag, "width");
@@ -967,15 +1723,22 @@ function latexmlImageMetricsFromMetadata(
     .map((match) => Number.parseFloat(match[1] ?? ""))
     .filter((value) => Number.isFinite(value) && value > 0);
   return {
-    imageCount: imageTags.length,
-    firstWidth: imageSizes[0]?.width,
-    firstHeight: imageSizes[0]?.height,
-    maxPanelWidthPt: panelWidthsPt.length > 0 ? Math.max(...panelWidthsPt) : undefined,
+    imageCount: Math.round(metadataImageCount ?? imageTags.length),
+    firstWidth: metadataFirstWidth ?? imageSizes[0]?.width,
+    firstHeight: metadataFirstHeight ?? imageSizes[0]?.height,
+    maxPanelWidthPt:
+      metadataMaxPanelWidth ?? (panelWidthsPt.length > 0 ? Math.max(...panelWidthsPt) : undefined),
     totalPanelWidthPt:
-      panelWidthsPt.length > 0
+      metadataTotalPanelWidth ??
+      (panelWidthsPt.length > 0
         ? panelWidthsPt.reduce((total, value) => total + value, 0)
-        : undefined,
-    hasFlexLayout: /\bltx_flex_(?:figure|cell|size_)/i.test(html)
+        : undefined),
+    displayWidthPt:
+      metadataDisplayWidth ??
+      (panelWidthsPt.length > 0
+        ? panelWidthsPt.reduce((total, value) => total + value, 0)
+        : undefined),
+    hasFlexLayout: Boolean(metadataHasFlexLayout) || /\bltx_flex_(?:figure|cell|size_)/i.test(html)
   };
 }
 
@@ -1002,7 +1765,7 @@ function LatexmlFragmentPreview({
   referenceTargets: ReferenceTargets;
 }) {
   const sanitizedHtml = useMemo(
-    () => sanitizeLatexmlFragment(html, assetUrl, assetFileUrls, referenceTargets),
+    () => sanitizeLatexmlFragmentCached(html, assetUrl, assetFileUrls, referenceTargets),
     [assetFileUrls, assetUrl, html, referenceTargets]
   );
   if (!sanitizedHtml) return null;
@@ -1016,14 +1779,39 @@ interface BlockReference {
   text: string;
 }
 
-function linkDocumentReferences(
+function linkDocumentReferencesCached(
   content: string,
   block: DocumentBlock,
-  referenceTargets: ReferenceTargets
+  referenceTargets: ReferenceTargets,
+  citations: CitationLookup
 ) {
   if (content.includes("](")) return content;
-  let linked = content;
-  for (const reference of blockReferences(block)) {
+  const references = blockReferences(block);
+  if (references.length === 0) return content;
+  const key = [
+    block.content_hash,
+    hashString(content),
+    references.map((reference) => `${reference.href}:${reference.text}`).join("|"),
+    Object.keys(referenceTargets).length,
+    Object.keys(citations).join(",")
+  ].join("::");
+  const cached = linkedContentCache.get(key);
+  if (cached) return cached;
+  return linkedContentCache.set(
+    key,
+    linkDocumentReferencesWithReferences(content, references, referenceTargets, citations)
+  );
+}
+
+function linkDocumentReferencesWithReferences(
+  content: string,
+  references: BlockReference[],
+  referenceTargets: ReferenceTargets,
+  citations: CitationLookup
+) {
+  let linked = linkBibliographyReferences(content, references, citations);
+  for (const reference of references) {
+    if (isBibliographyHref(reference.href)) continue;
     const target = referenceTargetForHref(reference.href, referenceTargets);
     if (!target) continue;
     const escapedText = escapeRegExp(reference.text);
@@ -1037,6 +1825,32 @@ function linkDocumentReferences(
     }
   }
   return linked;
+}
+
+function linkBibliographyReferences(
+  content: string,
+  references: BlockReference[],
+  citations: CitationLookup
+) {
+  const citationHrefByLabel = new Map<string, string>();
+  for (const reference of references) {
+    if (!isBibliographyHref(reference.href)) continue;
+    const citation = citationForHref(reference.href, citations);
+    if (!citation) continue;
+    citationHrefByLabel.set(reference.text.trim(), reference.href);
+  }
+  if (citationHrefByLabel.size === 0) return content;
+  return content.replace(/\[([0-9,\s–-]+)\]/g, (_match, body: string) =>
+    body
+      .split(/(\s*,\s*)/)
+      .map((part) => {
+        const trimmed = part.trim();
+        const href = citationHrefByLabel.get(trimmed);
+        if (!href) return part;
+        return `[\\[${trimmed}\\]](${href})`;
+      })
+      .join("")
+  );
 }
 
 function blockReferences(block: DocumentBlock): BlockReference[] {
@@ -1076,6 +1890,20 @@ function resolveReferenceHref(href: string | undefined, referenceTargets: Refere
   return target ? `#${target.blockUid}` : href;
 }
 
+function citationForHref(
+  href: string | undefined,
+  citations: CitationLookup | undefined
+): CitationEntry | undefined {
+  if (!href || !citations || !isBibliographyHref(href)) return undefined;
+  const key = href.startsWith("#") ? href.slice(1) : href;
+  return citations[key];
+}
+
+function isBibliographyHref(href: string) {
+  const key = href.startsWith("#") ? href.slice(1) : href;
+  return key.startsWith("bib.");
+}
+
 function referenceTargetForHref(href: string, referenceTargets: ReferenceTargets) {
   const key = href.startsWith("#") ? href.slice(1) : href;
   return referenceTargets[key];
@@ -1108,6 +1936,14 @@ function numericMetadata(
   return undefined;
 }
 
+function booleanMetadata(
+  metadata: AssetRecord["metadata"] | DocumentBlock["metadata"] | undefined,
+  key: string
+) {
+  const value = metadata?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function sanitizeLatexmlFragment(
   html: string,
   assetUrl: string | undefined,
@@ -1133,10 +1969,7 @@ function sanitizeLatexmlFragment(
     const placeholderIndex = String(mathIndex++);
     mathFragments.set(
       placeholderIndex,
-      `<span class="table-math">${katex.renderToString(normalizeLatex(latex), {
-        displayMode: false,
-        throwOnError: false
-      })}</span>`
+      `<span class="table-math">${renderKatexCached(latex, false)}</span>`
     );
     const placeholder = document.createElement("span");
     placeholder.setAttribute("data-bilin-math-index", placeholderIndex);
@@ -1158,6 +1991,34 @@ function sanitizeLatexmlFragment(
     placeholder.replaceWith(template.content.cloneNode(true));
   }
   return root.innerHTML.trim();
+}
+
+function sanitizeLatexmlFragmentCached(
+  html: string,
+  assetUrl: string | undefined,
+  assetFileUrls: ReaderAssetFile[],
+  referenceTargets: ReferenceTargets
+) {
+  const key = [
+    hashString(html),
+    assetUrl ?? "",
+    assetFileUrls.map((file) => `${file.originalReference}:${file.url}`).join("|"),
+    Object.keys(referenceTargets).length
+  ].join("::");
+  const cached = sanitizedHtmlCache.get(key);
+  if (cached !== undefined) return cached;
+  return sanitizedHtmlCache.set(
+    key,
+    sanitizeLatexmlFragment(html, assetUrl, assetFileUrls, referenceTargets)
+  );
+}
+
+function hashString(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function normalizeLatex(value: string) {

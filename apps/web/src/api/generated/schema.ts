@@ -245,6 +245,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/libraries/{library_id}/articles/{revision_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Citations */
+        get: operations["get_citations_libraries__library_id__articles__revision_id__citations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/citations/{citation_id}/scholar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Citation Scholar */
+        get: operations["get_citation_scholar_libraries__library_id__articles__revision_id__citations__citation_id__scholar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/citations/{citation_id}/import-arxiv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Citation Arxiv Import */
+        post: operations["post_citation_arxiv_import_libraries__library_id__articles__revision_id__citations__citation_id__import_arxiv_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/libraries/{library_id}/articles/{revision_id}/translations": {
         parameters: {
             query?: never;
@@ -639,6 +690,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/libraries/{library_id}/articles/{revision_id}/obsidian/clips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Obsidian Clip */
+        post: operations["post_obsidian_clip_libraries__library_id__articles__revision_id__obsidian_clips_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/libraries/{library_id}/articles/{revision_id}/exports/{file_name}": {
         parameters: {
             query?: never;
@@ -819,6 +887,13 @@ export interface components {
             article_revision_id: string;
             /** Messages */
             messages?: components["schemas"]["ChatMessage"][];
+        };
+        /** ArticleCitations */
+        ArticleCitations: {
+            /** Article Revision Id */
+            article_revision_id: string;
+            /** Citations */
+            citations?: components["schemas"]["CitationEntry"][];
         };
         /** ArticleDocument */
         ArticleDocument: {
@@ -1143,6 +1218,98 @@ export interface components {
         ChatToNotePatchRequest: {
             /** Title */
             title?: string | null;
+        };
+        /** CitationArxivCandidate */
+        CitationArxivCandidate: {
+            /** Citation Id */
+            citation_id: string;
+            /** Arxiv Id */
+            arxiv_id: string;
+            /** Title */
+            title: string;
+            /** Abs Url */
+            abs_url: string;
+            /**
+             * Source
+             * @default citation
+             */
+            source: string;
+        };
+        /** CitationEntry */
+        CitationEntry: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Title */
+            title: string;
+            /** Raw Text */
+            raw_text: string;
+            /** Authors */
+            authors?: string | null;
+            /** Year */
+            year?: string | null;
+            /** Arxiv Id */
+            arxiv_id?: string | null;
+            /** Scholar Query */
+            scholar_query: string;
+            /** Scholar Url */
+            scholar_url: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** CitationLibraryImportRequest */
+        CitationLibraryImportRequest: {
+            /**
+             * Download Pdf
+             * @default true
+             */
+            download_pdf: boolean;
+            /**
+             * Translate After Import
+             * @default false
+             */
+            translate_after_import: boolean;
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** Provider Profile Id */
+            provider_profile_id?: string | null;
+            /** Model */
+            model?: string | null;
+        };
+        /** CitationLibraryImportResult */
+        CitationLibraryImportResult: {
+            /** Citation Id */
+            citation_id: string;
+            candidate: components["schemas"]["CitationArxivCandidate"];
+            job: components["schemas"]["Job"];
+            /**
+             * Translate After Import
+             * @default false
+             */
+            translate_after_import: boolean;
+        };
+        /** CitationScholarResult */
+        CitationScholarResult: {
+            /** Citation Id */
+            citation_id: string;
+            /** Query */
+            query: string;
+            /** Scholar Url */
+            scholar_url: string;
+            first_result?: components["schemas"]["ScholarSearchResult"] | null;
+            /**
+             * Status
+             * @default ok
+             */
+            status: string;
+            /** Message */
+            message?: string | null;
         };
         /** DoctorCapability */
         DoctorCapability: {
@@ -1641,6 +1808,44 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * ObsidianClipColor
+         * @enum {string}
+         */
+        ObsidianClipColor: "none" | "yellow" | "blue" | "green" | "pink" | "purple";
+        /** ObsidianClipRequest */
+        ObsidianClipRequest: {
+            /** Block Uid */
+            block_uid: string;
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** @default none */
+            color: components["schemas"]["ObsidianClipColor"];
+        };
+        /** ObsidianClipResult */
+        ObsidianClipResult: {
+            /** Vault Path */
+            vault_path: string;
+            /** Note Path */
+            note_path: string;
+            /** Article Heading */
+            article_heading: string;
+            /** Block Uid */
+            block_uid: string;
+            /**
+             * Created File
+             * @default false
+             */
+            created_file: boolean;
+            /**
+             * Updated Existing
+             * @default false
+             */
+            updated_existing: boolean;
+        };
         /** ParseErrorInfo */
         ParseErrorInfo: {
             /** Code */
@@ -1809,6 +2014,20 @@ export interface components {
             fts_score?: number | null;
             /** Vector Score */
             vector_score?: number | null;
+        };
+        /** ScholarSearchResult */
+        ScholarSearchResult: {
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Snippet */
+            snippet?: string | null;
+            /**
+             * Source
+             * @default google_scholar
+             */
+            source: string;
         };
         /** TranslationBatchRequest */
         TranslationBatchRequest: {
@@ -2550,6 +2769,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArticleDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_citations_libraries__library_id__articles__revision_id__citations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleCitations"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_citation_scholar_libraries__library_id__articles__revision_id__citations__citation_id__scholar_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+                citation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationScholarResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_citation_arxiv_import_libraries__library_id__articles__revision_id__citations__citation_id__import_arxiv_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+                citation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitationLibraryImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationLibraryImportResult"];
                 };
             };
             /** @description Validation Error */
@@ -3465,6 +3786,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_obsidian_clip_libraries__library_id__articles__revision_id__obsidian_clips_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObsidianClipRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianClipResult"];
                 };
             };
             /** @description Validation Error */

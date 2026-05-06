@@ -307,6 +307,20 @@ async def replace_document(
     assets: list[AssetRecord],
     source_md: str,
 ) -> None:
+    db_path = await ensure_library_database(library)
+    existing_blocks = await list_blocks(library, revision.id)
+    existing_by_uid = {block.block_uid: block for block in existing_blocks}
+    stored_blocks = [
+        block.model_copy(
+            update={
+                "id": existing_by_uid[block.block_uid].id,
+                "created_at": existing_by_uid[block.block_uid].created_at,
+            }
+        )
+        if block.block_uid in existing_by_uid
+        else block
+        for block in blocks
+    ]
     bundle_path = Path(revision.bundle_path)
     document_dir = bundle_path / "document"
     document_dir.mkdir(parents=True, exist_ok=True)
@@ -314,7 +328,7 @@ async def replace_document(
         ArticleDocument(
             article_revision=revision,
             manifest=manifest,
-            blocks=blocks,
+            blocks=stored_blocks,
             assets=assets,
         ).model_dump_json(indent=2),
         encoding="utf-8",
@@ -327,14 +341,31 @@ async def replace_document(
         }
     )
     write_manifest(bundle_path, manifest)
-    db_path = await ensure_library_database(library)
     now = utc_now()
+    incoming_uids = {block.block_uid for block in stored_blocks}
+    stale_block_ids = [
+        block.id for block in existing_blocks if block.block_uid not in incoming_uids
+    ]
+    unique_blocks_by_hash = _unique_blocks_by_content_hash(stored_blocks)
     async with open_db(db_path) as conn:
         await conn.execute("BEGIN")
         await conn.execute("DELETE FROM assets WHERE article_revision_id = ?", (revision.id,))
-        await conn.execute("DELETE FROM blocks WHERE article_revision_id = ?", (revision.id,))
         await conn.execute("DELETE FROM block_fts WHERE article_revision_id = ?", (revision.id,))
-        for block in blocks:
+        if stale_block_ids:
+            placeholders = ",".join("?" for _ in stale_block_ids)
+            await conn.execute(
+                f"DELETE FROM translation_variants WHERE block_id IN ({placeholders})",
+                stale_block_ids,
+            )
+            await conn.execute(
+                f"DELETE FROM block_embeddings WHERE block_id IN ({placeholders})",
+                stale_block_ids,
+            )
+            await conn.execute(
+                f"DELETE FROM blocks WHERE id IN ({placeholders})",
+                stale_block_ids,
+            )
+        for block in stored_blocks:
             await conn.execute(
                 """
                 INSERT INTO blocks(
@@ -343,6 +374,16 @@ async def replace_document(
                   metadata_json, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(article_revision_id, block_uid) DO UPDATE SET
+                  structural_path = excluded.structural_path,
+                  block_type = excluded.block_type,
+                  parent_uid = excluded.parent_uid,
+                  content_hash = excluded.content_hash,
+                  context_hash = excluded.context_hash,
+                  source_markdown = excluded.source_markdown,
+                  source_latex = excluded.source_latex,
+                  metadata_json = excluded.metadata_json,
+                  updated_at = excluded.updated_at
                 """,
                 (
                     block.id,
@@ -370,6 +411,12 @@ async def replace_document(
                     """,
                     (block.id, block.article_revision_id, block.block_uid, block.source_markdown),
                 )
+        await _reconcile_translation_variants_after_reparse(
+            conn,
+            revision.id,
+            unique_blocks_by_hash,
+            now,
+        )
         for asset in assets:
             await conn.execute(
                 """
@@ -398,6 +445,71 @@ async def replace_document(
             ("parsed", now, revision.id),
         )
         await conn.commit()
+
+
+def _unique_blocks_by_content_hash(blocks: list[DocumentBlock]) -> dict[str, DocumentBlock]:
+    blocks_by_hash: dict[str, DocumentBlock | None] = {}
+    for block in blocks:
+        existing = blocks_by_hash.get(block.content_hash)
+        if existing is None and block.content_hash in blocks_by_hash:
+            continue
+        if existing is not None:
+            blocks_by_hash[block.content_hash] = None
+        else:
+            blocks_by_hash[block.content_hash] = block
+    return {content_hash: block for content_hash, block in blocks_by_hash.items() if block}
+
+
+async def _reconcile_translation_variants_after_reparse(
+    conn: aiosqlite.Connection,
+    revision_id: str,
+    unique_blocks_by_hash: dict[str, DocumentBlock],
+    now: str,
+) -> None:
+    cursor = await conn.execute(
+        """
+        SELECT
+          tv.id, tv.block_id, tv.target_language, tv.metadata_json,
+          b.block_uid AS current_block_uid,
+          b.content_hash AS current_content_hash
+        FROM translation_variants tv
+        JOIN blocks b ON b.id = tv.block_id
+        WHERE b.article_revision_id = ?
+        """,
+        (revision_id,),
+    )
+    rows = await cursor.fetchall()
+    for row in rows:
+        metadata = _loads(row["metadata_json"], {})
+        cached_hash = metadata.get("content_hash")
+        if not isinstance(cached_hash, str) or not cached_hash:
+            continue
+        if cached_hash == row["current_content_hash"]:
+            if metadata.get("block_uid") == row["current_block_uid"]:
+                continue
+            metadata["block_uid"] = row["current_block_uid"]
+            await conn.execute(
+                """
+                UPDATE translation_variants
+                SET metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(metadata), now, row["id"]),
+            )
+            continue
+        target_block = unique_blocks_by_hash.get(cached_hash)
+        if target_block is None:
+            continue
+        metadata["block_uid"] = target_block.block_uid
+        metadata["content_hash"] = target_block.content_hash
+        await conn.execute(
+            """
+            UPDATE translation_variants
+            SET block_id = ?, metadata_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (target_block.id, json.dumps(metadata), now, row["id"]),
+        )
 
 
 async def mark_revision_status(
@@ -549,7 +661,10 @@ async def list_translation_variants(
     async with open_db(db_path) as conn:
         cursor = await conn.execute(
             f"""
-            SELECT tv.*
+            SELECT
+              tv.*,
+              b.block_uid AS current_block_uid,
+              b.content_hash AS current_content_hash
             FROM translation_variants tv
             JOIN blocks b ON b.id = tv.block_id
             WHERE {where}
@@ -558,7 +673,22 @@ async def list_translation_variants(
             params,
         )
         rows = await cursor.fetchall()
-    return [_translation_variant_from_row(row) for row in rows]
+    return [
+        _translation_variant_from_row(row)
+        for row in rows
+        if _translation_variant_matches_current_block(row)
+    ]
+
+
+def _translation_variant_matches_current_block(row: aiosqlite.Row) -> bool:
+    metadata = _loads(row["metadata_json"], {})
+    cached_hash = metadata.get("content_hash")
+    cached_block_uid = metadata.get("block_uid")
+    return (
+        not isinstance(cached_hash, str)
+        or cached_hash == row["current_content_hash"]
+        or cached_block_uid == row["current_block_uid"]
+    )
 
 
 async def find_cached_translation_variant(

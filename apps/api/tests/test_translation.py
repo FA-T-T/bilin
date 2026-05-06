@@ -514,6 +514,269 @@ async def test_translation_jobs_respect_provider_concurrency_limit(
     assert max_in_flight == 1
 
 
+@pytest.mark.asyncio
+async def test_replace_document_preserves_translation_variants_for_stable_block_uids(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library = await create_library(
+        LibraryCreate(name="Reparse", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00001", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00001",
+        version="v1",
+        title="Reparse fixture",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    old_block = make_block(
+        revision.id,
+        block_uid="p-0001",
+        structural_path="00001",
+        block_type="paragraph",
+        source_markdown="A paragraph with stale inline math.",
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [old_block],
+        [],
+        old_block.source_markdown,
+    )
+    stored_old_block = await get_block_by_uid(library, revision.id, "p-0001")
+    assert stored_old_block is not None
+    await create_translation_variant(
+        library,
+        stored_old_block,
+        target_language="zh-CN",
+        provider_profile_id=None,
+        model=None,
+        raw_markdown="已有译文",
+        validation_status="ok",
+        glossary_version=None,
+        is_default=True,
+    )
+
+    new_block = make_block(
+        revision.id,
+        block_uid="p-0001",
+        structural_path="00001",
+        block_type="paragraph",
+        source_markdown="A paragraph with fixed inline math $x_1$.",
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [new_block],
+        [],
+        new_block.source_markdown,
+    )
+
+    stored_new_block = await get_block_by_uid(library, revision.id, "p-0001")
+    assert stored_new_block is not None
+    assert stored_new_block.id == stored_old_block.id
+    assert stored_new_block.source_markdown == "A paragraph with fixed inline math $x_1$."
+    variants = await list_translation_variants(library, revision.id, "zh-CN")
+    assert len(variants) == 1
+    assert variants[0].block_id == stored_old_block.id
+    assert variants[0].raw_markdown == "已有译文"
+
+
+@pytest.mark.asyncio
+async def test_replace_document_rehomes_translation_variants_when_block_uid_shifts_by_hash(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library = await create_library(
+        LibraryCreate(name="Reparse shifted", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00001", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00001",
+        version="v1",
+        title="Reparse shifted fixture",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    old_blocks = [
+        make_block(
+            revision.id,
+            block_uid="p-0001",
+            structural_path="00001",
+            block_type="paragraph",
+            source_markdown="Intro.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0002",
+            structural_path="00002",
+            block_type="paragraph",
+            source_markdown="Abstract body.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0003",
+            structural_path="00003",
+            block_type="paragraph",
+            source_markdown="Next body.",
+        ),
+    ]
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        old_blocks,
+        [],
+        "\n\n".join(block.source_markdown for block in old_blocks),
+    )
+    stored_old_body = await get_block_by_uid(library, revision.id, "p-0002")
+    assert stored_old_body is not None
+    await create_translation_variant(
+        library,
+        stored_old_body,
+        target_language="zh-CN",
+        provider_profile_id=None,
+        model=None,
+        raw_markdown="摘要正文译文",
+        validation_status="ok",
+        glossary_version=None,
+        is_default=True,
+        metadata={
+            "block_uid": stored_old_body.block_uid,
+            "content_hash": stored_old_body.content_hash,
+            "context_hash": "ctx",
+        },
+    )
+
+    new_blocks = [
+        make_block(
+            revision.id,
+            block_uid="p-0001",
+            structural_path="00001",
+            block_type="paragraph",
+            source_markdown="Intro.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0002",
+            structural_path="00002",
+            block_type="paragraph",
+            source_markdown="**Abstract**",
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0003",
+            structural_path="00003",
+            block_type="paragraph",
+            source_markdown="Abstract body.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-0004",
+            structural_path="00004",
+            block_type="paragraph",
+            source_markdown="Next body.",
+        ),
+    ]
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        new_blocks,
+        [],
+        "\n\n".join(block.source_markdown for block in new_blocks),
+    )
+
+    stored_new_body = await get_block_by_uid(library, revision.id, "p-0003")
+    assert stored_new_body is not None
+    variants = await list_translation_variants(library, revision.id, "zh-CN")
+    assert len(variants) == 1
+    assert variants[0].block_id == stored_new_body.id
+    assert variants[0].raw_markdown == "摘要正文译文"
+    assert variants[0].metadata["block_uid"] == "p-0003"
+    assert variants[0].metadata["content_hash"] == stored_new_body.content_hash
+
+
+@pytest.mark.asyncio
+async def test_list_translation_variants_keeps_stable_block_uid_after_reparse(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library = await create_library(
+        LibraryCreate(name="Reparse stale", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00001", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00001",
+        version="v1",
+        title="Reparse stale fixture",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    old_block = make_block(
+        revision.id,
+        block_uid="p-0001",
+        structural_path="00001",
+        block_type="paragraph",
+        source_markdown="Old body.",
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [old_block],
+        [],
+        old_block.source_markdown,
+    )
+    stored_old_block = await get_block_by_uid(library, revision.id, "p-0001")
+    assert stored_old_block is not None
+    await create_translation_variant(
+        library,
+        stored_old_block,
+        target_language="zh-CN",
+        provider_profile_id=None,
+        model=None,
+        raw_markdown="旧译文",
+        validation_status="ok",
+        glossary_version=None,
+        is_default=True,
+        metadata={
+            "block_uid": stored_old_block.block_uid,
+            "content_hash": stored_old_block.content_hash,
+        },
+    )
+
+    new_block = make_block(
+        revision.id,
+        block_uid="p-0001",
+        structural_path="00001",
+        block_type="paragraph",
+        source_markdown="New body.",
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [new_block],
+        [],
+        new_block.source_markdown,
+    )
+
+    variants = await list_translation_variants(library, revision.id, "zh-CN")
+    assert len(variants) == 1
+    assert variants[0].block_id == stored_old_block.id
+    assert variants[0].raw_markdown == "旧译文"
+
+
 async def prepare_translation_fixture(
     tmp_path: Path,
     *,

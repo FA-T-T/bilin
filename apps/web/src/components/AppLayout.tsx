@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   AppShell,
+  Badge,
   Button,
   Group,
   Text,
@@ -12,6 +13,7 @@ import {
 import { BookOpen, Library, Moon, Settings, Sun, TerminalSquare } from "lucide-react";
 import { Link, Outlet } from "react-router-dom";
 
+import { useJobs } from "../api/hooks";
 import { useProductName, useT } from "../i18n";
 import { useUiStore } from "../state/ui";
 import { TaskDrawer } from "./TaskDrawer";
@@ -22,6 +24,10 @@ export function AppLayout() {
   const { setColorScheme } = useMantineColorScheme();
   const colorScheme = useComputedColorScheme("light", { getInitialValueInEffect: true });
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
+  const jobs = useJobs();
+  const activeJobCount = (jobs.data ?? []).filter((job) =>
+    ["queued", "running", "paused"].includes(job.status)
+  ).length;
 
   return (
     <AppShell header={{ height: 62 }} padding="md">
@@ -60,13 +66,20 @@ export function AppLayout() {
               {t("nav.settings")}
             </Button>
             <Tooltip label={t("nav.tasks")}>
-              <ActionIcon
-                variant="default"
-                onClick={openTaskDrawer}
-                aria-label={t("nav.openTasks")}
-              >
-                <TerminalSquare size={18} />
-              </ActionIcon>
+              <span className="task-trigger">
+                <ActionIcon
+                  variant="default"
+                  onClick={openTaskDrawer}
+                  aria-label={t("nav.openTasks")}
+                >
+                  <TerminalSquare size={18} />
+                </ActionIcon>
+                {activeJobCount > 0 ? (
+                  <Badge className="task-trigger-badge" size="xs" variant="filled">
+                    {activeJobCount}
+                  </Badge>
+                ) : null}
+              </span>
             </Tooltip>
             <Tooltip label={t("nav.toggleTheme")}>
               <ActionIcon
