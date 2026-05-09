@@ -25,6 +25,7 @@ from bilin_api.latexml_parser import (
     find_main_tex,
     normalize_latexml_html,
     parse_article_revision,
+    prepare_latexml_side_sources,
     prepare_latexml_source,
     render_source_markdown,
     run_command,
@@ -146,6 +147,31 @@ def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims()
     assert "\\def\\BilinCASTitleWith[#1]#2{\\BilinArticleTitle{#2}}" in prepared
     assert "\\def\\BilinCASAuthorWithMeta#1[#2]{\\BilinArticleAuthor{#1}}" in prepared
     assert "\\providecommand{\\address}" in prepared
+
+
+def test_prepare_latexml_side_sources_disables_incompatible_packages_in_inputs(
+    tmp_path: Path,
+) -> None:
+    unpack_dir = tmp_path / "unpacked"
+    preamble_dir = unpack_dir / "00_preamble"
+    preamble_dir.mkdir(parents=True)
+    main_tex = unpack_dir / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n\\input{00_preamble/preamble.tex}\n",
+        encoding="utf-8",
+    )
+    preamble = preamble_dir / "preamble.tex"
+    preamble.write_text(
+        "\\usepackage[english]{babel}\n\\usepackage{graphicx,polyglossia,amsmath}\n",
+        encoding="utf-8",
+    )
+
+    prepare_latexml_side_sources(unpack_dir, main_tex)
+
+    assert main_tex.read_text(encoding="utf-8").startswith("\\documentclass{article}")
+    prepared = preamble.read_text(encoding="utf-8")
+    assert "% Bilin disabled for LaTeXML: \\usepackage[english]{babel}" in prepared
+    assert "\\usepackage{graphicx,amsmath}% Bilin disabled for LaTeXML: polyglossia" in prepared
 
 
 def test_latexml_timeout_budget_scales_with_source_size(tmp_path: Path) -> None:

@@ -127,7 +127,10 @@ LATEXML_COMPATIBILITY_PREAMBLE = "\n".join(
     ]
 )
 LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
+\usepackage{amsmath,amsfonts,amssymb}
 \makeatletter
+\newenvironment{keywords}{\par}{\par}
+\newenvironment{highlights}{\par}{\par}
 \providecommand{\shorttitle}[1]{}
 \providecommand{\shortauthors}[1]{}
 \providecommand{\cortext}[2][]{}
@@ -194,6 +197,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         unpack_dir = bundle_path / "source" / "unpacked"
         safe_unpack(source_archive, unpack_dir)
         main_tex = find_main_tex(unpack_dir)
+        prepare_latexml_side_sources(unpack_dir, main_tex)
         manifest.main_tex_file = str(main_tex.relative_to(unpack_dir))
         latexml_entry = prepare_latexml_entry(main_tex)
 
@@ -460,6 +464,19 @@ def prepare_latexml_entry(main_tex: Path) -> Path:
     entry = main_tex.parent / LATEXML_ENTRY_FILE
     entry.write_text(prepared, encoding="utf-8")
     return entry
+
+
+def prepare_latexml_side_sources(unpack_dir: Path, main_tex: Path) -> None:
+    source_suffixes = TEX_MAIN_FILE_SUFFIXES | {".sty"}
+    for path in unpack_dir.rglob("*"):
+        if not path.is_file() or path == main_tex or path.name == LATEXML_ENTRY_FILE:
+            continue
+        if path.suffix.casefold() not in source_suffixes:
+            continue
+        original = path.read_text(encoding="utf-8", errors="ignore")
+        prepared = _disable_latexml_incompatible_packages(original)
+        if prepared != original:
+            path.write_text(prepared, encoding="utf-8")
 
 
 def prepare_latexml_source(source: str) -> str:
