@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  <em>把英文论文拆开，先读懂，再回到原文深读。</em>
+  <em>多语言论文阅读神器</em>
 </p>
 
 <p align="center">
@@ -27,11 +27,19 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 ## 衔牍是什么
 
-衔牍是一个本地优先的论文阅读工具，为非英语母语的研究者设计。它把英文论文整理成更容易进入的阅读对象：章节、段落、公式、图、表和 caption 都保留为可引用的结构化 block。读者可以先用母语理解论文，再回到英文原文校准术语和表达。
+衔牍是一个本地论文阅读工具，为非英语母语的研究者设计。
 
-衔牍从 arXiv source package 或本地 LaTeX 源码包开始工作。公式编号、交叉引用、图表 caption 和章节层级会进入结构化解析流程，减少截图识别和 OCR 带来的结构丢失。问答默认围绕当前论文证据展开，回答会保留引用到的 block id，方便回到原文验证。
+衔牍把英文论文整理成更容易理解的阅读对象：章节、段落、公式、图、表和 caption 都保留为可引用的结构化 block。
 
-所有论文、源码包、PDF、解析结果、翻译缓存、问答记录和笔记都保存在你指定的本地 library 文件夹里。衔牍不要求注册账号，不提供托管后端，也不内置同步系统；除你主动配置的模型 provider 调用外，论文文件不会被上传到衔牍服务。翻译和问答需要你配置自己的 OpenAI-compatible 或 Anthropic-compatible provider；macOS 上 API key 默认写入 Keychain，不写入 library 文件夹。
+可以通过 OpenAI 或者 Anthropic 形式的 API 和 Base URL 提供多语言翻译服务. (我们的测试中使用的是 Deepseek V4 Flash, 经测试10篇论文, 累计240页内容, 开销2元)
+
+读者可以先用母语理解论文，再回到英文原文校准术语和表达。
+
+衔牍从 arXiv source package 或本地 LaTeX 源码包开始工作，减少截图识别和 OCR 带来的结构丢失。
+
+也可以通过 LLM 问答文章中相关内容，回答会保留引用到的 block id，方便回到原文验证。
+
+所有论文、源码包、解析结果、翻译缓存、问答记录和笔记都保存在你指定的本地 library 文件夹里。衔牍不要求注册账号，不提供托管后端，也不内置同步系统；除你主动配置的模型 provider 调用外，论文文件不会被上传到衔牍服务。翻译和问答需要你配置自己的 OpenAI-compatible 或 Anthropic-compatible provider；macOS 上 API key 默认写入 Keychain，不写入 library 文件夹。
 
 ## 主要能力
 
@@ -48,11 +56,11 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 ## 应用截图
 
-以下截图使用本地文库中的论文 *Deep Residual Learning for Image Recognition* 作为示例。截图中的论文正文、图表和公式属于原论文作者或相应权利人，这里只用于展示衔牍的本地阅读、翻译、问答和结构化渲染能力。
+截图中的论文正文、图表和公式属于原论文作者或相应权利人，这里只用于展示衔牍的本地阅读、翻译、问答和结构化渲染能力。
 
 ### 阅读模式
 
-同一篇文章、同一个段落位置，只切换 Reader 模式。
+截图使用本地文库中的论文 *Deep Residual Learning for Image Recognition* 作为示例。
 
 <table>
   <tr>
@@ -115,6 +123,12 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 ## 快速开始
 
+### Agent 用户, codex/claude/opencode...
+
+如果你使用上述任何一种agent工具, 那么你只需要新开一个项目, 将本页面的链接甩给agent即可, 它会帮你完成所有依赖的安装,部署和应用启动.
+
+### 普通用户 
+
 衔牍需要 Node.js、pnpm、Python 3.13 和 uv。核心应用可以在没有 TeX 工具链的情况下启动，但真实 TeX 解析需要 `latexml` 和 `latexmlpost` 在 `PATH` 上。图像和资产转换建议安装 ImageMagick `magick`、Ghostscript `gs`，以及 `tectonic` 或 `pdflatex`。
 
 macOS + Homebrew 可以这样准备环境。
@@ -150,7 +164,9 @@ make dev
 
 ## 配置模型
 
-进入 Settings 的 Models 页签。简单模式下粘贴 API key，衔牍会从 OpenAI-compatible 或 Anthropic-compatible endpoint 请求可用模型列表，让你按显示名称选择模型。高级模式下可以设置 profile label、base URL、并发数和每分钟请求数。普通用户不需要猜 provider 内部 model name。
+进入 Settings 的 Models 页签。简单模式下粘贴 API key，衔牍会从 OpenAI-compatible 或 Anthropic-compatible endpoint 请求可用模型列表，让你按显示名称选择模型。高级模式下可以设置 profile label、base URL、并发数和每分钟请求数。
+
+**默认请使用高级模式. **
 
 Provider key 不会保存到 library 文件夹。macOS 上，衔牍默认把 key 存到 Keychain，全局数据库只保存 `keychain:` 引用。其他平台、CI，或显式设置 `BILIN_CREDENTIAL_STORE=app_settings` 时，会使用 SQLite 开发 fallback。如果你希望 Keychain 失败时直接阻止 provider 创建，可以设置：
 
@@ -192,9 +208,6 @@ Library 目录由用户选择，并且设计成自包含文件夹。这使它适
 
 导出的 Markdown 和生成的讲义会自动包含不可见 HTML 注释水印，说明该文件由衔牍生成、可能包含第三方论文内容或派生内容，并提醒只在原始许可或权利人允许时再分发。这个水印不会改变正常阅读排版。
 
-## 未来计划
-
-后续版本会把 PDF LLM fallback parsing、可选 neural embedding provider、Word/EPUB/精排 PDF 导出、桌面壳和更完整的安装形态作为扩展方向。PDF 当前已经能作为源文件进入 bundle；未来 PDF 能力会以可选解析链路接入，不改变 TeX 优先的主路径，也不会引入默认 OCR 或重型服务依赖。账号系统和内置同步不进入默认产品方向，衔牍会继续保持本地优先。
 
 ## 开发者检查
 
