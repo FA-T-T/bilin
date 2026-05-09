@@ -9,6 +9,7 @@ from bilin_api.article_store import (
     bundle_path_for_arxiv,
     create_translation_variant,
     get_block_by_uid,
+    list_article_items,
     list_translation_variants,
     make_block,
     replace_document,
@@ -27,6 +28,7 @@ from bilin_api.repositories import (
 )
 from bilin_api.schemas import (
     ArticleManifest,
+    ArticleTranslationState,
     Library,
     LibraryCreate,
     ProviderProfile,
@@ -37,10 +39,13 @@ from bilin_api.schemas import (
     TranslationMemoryReviewStatus,
 )
 from bilin_api.translation_service import (
+    clean_translation_markdown,
     queue_article_translation,
+    queue_library_missing_translations,
     reset_provider_throttles,
     run_translate_block_job,
     select_article_translation_variant,
+    validate_translation_markdown,
 )
 from bilin_api.worker import run_worker
 
@@ -174,6 +179,10 @@ async def test_translation_queue_runs_block_job_and_reuses_cache(
     result = await queue_article_translation(library, revision_id, request)
     assert result.jobs_created == 1
     assert result.skipped_blocks == 1
+    queued_item = (await list_article_items(library))[0]
+    assert queued_item.translation_status.status == ArticleTranslationState.translating
+    assert queued_item.translation_status.translatable_blocks == 1
+    assert queued_item.translation_status.queued_jobs == 1
     duplicate = await queue_article_translation(library, revision_id, request)
     assert duplicate.jobs_created == 0
     assert duplicate.existing_jobs == 1
@@ -186,10 +195,82 @@ async def test_translation_queue_runs_block_job_and_reuses_cache(
     assert len(variants) == 1
     assert variants[0].raw_markdown == "译文：A paragraph to translate."
     assert variants[0].metadata["block_uid"] == "p-0001"
+    translated_item = (await list_article_items(library))[0]
+    assert translated_item.translation_status.status == ArticleTranslationState.translated
+    assert translated_item.translation_status.translated_blocks == 1
 
     second = await queue_article_translation(library, revision_id, request)
     assert second.jobs_created == 0
     assert second.cached_blocks == 1
+
+
+@pytest.mark.asyncio
+async def test_library_missing_translation_queue_only_targets_untranslated_blocks(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library, provider, revision_id = await prepare_translation_fixture(
+        tmp_path,
+        extra_paragraph=True,
+    )
+    first_block = await get_block_by_uid(library, revision_id, "p-0001")
+    assert first_block is not None
+    await create_translation_variant(
+        library=library,
+        block=first_block,
+        target_language="zh-CN",
+        raw_markdown="已有人类审核译文。",
+        provider_profile_id=None,
+        model=None,
+        glossary_version=None,
+        validation_status="ok",
+        metadata={
+            "block_uid": first_block.block_uid,
+            "content_hash": first_block.content_hash,
+        },
+    )
+
+    result = await queue_library_missing_translations(
+        library,
+        TranslationBatchRequest(target_language="zh-CN", provider_profile_id=provider.id),
+    )
+
+    assert result.articles_considered == 1
+    assert result.articles_queued == 1
+    assert result.jobs_created == 1
+    assert result.existing_jobs == 0
+    assert len(result.article_results) == 1
+    job = await get_job(result.job_ids[0])
+    assert job is not None
+    assert job.payload["block_uid"] == "p-0002"
+
+    duplicate = await queue_library_missing_translations(
+        library,
+        TranslationBatchRequest(target_language="zh-CN", provider_profile_id=provider.id),
+    )
+    assert duplicate.jobs_created == 0
+    assert duplicate.existing_jobs == 1
+
+
+@pytest.mark.asyncio
+async def test_translation_queue_treats_list_as_one_translatable_block(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library, provider, revision_id = await prepare_translation_fixture(tmp_path, include_list=True)
+    result = await queue_article_translation(
+        library,
+        revision_id,
+        TranslationBatchRequest(target_language="zh-CN", provider_profile_id=provider.id),
+    )
+
+    jobs = [await get_job(job_id) for job_id in result.job_ids]
+
+    assert result.jobs_created == 2
+    assert result.skipped_blocks == 1
+    assert any(job and job.payload["block_uid"] == "lst-0001" for job in jobs)
 
 
 @pytest.mark.asyncio
@@ -233,6 +314,47 @@ async def test_translation_validation_status_preserves_bad_model_output(
     assert len(variants) == 1
     assert variants[0].raw_markdown == ""
     assert variants[0].validation_status == "empty"
+
+
+@pytest.mark.asyncio
+async def test_invalid_translation_variant_marks_article_failed_without_failed_job(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library, _provider, revision_id = await prepare_translation_fixture(tmp_path)
+    block = await get_block_by_uid(library, revision_id, "p-0001")
+    assert block is not None
+    await create_translation_variant(
+        library=library,
+        block=block,
+        target_language="zh-CN",
+        raw_markdown="",
+        provider_profile_id=None,
+        model=None,
+        glossary_version=None,
+        validation_status="empty",
+        metadata={"block_uid": block.block_uid, "content_hash": block.content_hash},
+    )
+
+    article = (await list_article_items(library, "zh-CN"))[0]
+    assert article.translation_status.status == ArticleTranslationState.failed
+    assert article.translation_status.translated_blocks == 0
+    assert article.translation_status.failed_jobs == 1
+
+
+def test_translation_validation_rejects_unchanged_source() -> None:
+    source = "Execution Model. GPUs load inputs from HBM."
+
+    assert validate_translation_markdown(source, source) == "unchanged_source"
+
+
+def test_translation_cleaner_removes_source_prefix() -> None:
+    source = "Execution Model. GPUs load inputs from HBM."
+    raw = f"{source}\n\n执行模型。GPU 会从 HBM 加载输入。"
+
+    assert clean_translation_markdown(source, raw) == "执行模型。GPU 会从 HBM 加载输入。"
+    assert validate_translation_markdown(source, clean_translation_markdown(source, raw)) == "ok"
 
 
 @pytest.mark.asyncio
@@ -466,6 +588,46 @@ async def test_worker_retries_transient_translation_errors(
     assert job.error is None
     variants = await list_translation_variants(library, revision_id, "zh-CN")
     assert len(variants) == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_invalid_translation_output_failed_not_translated(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ = bilin_home
+    library, provider, revision_id = await prepare_translation_fixture(tmp_path)
+    result = await queue_article_translation(
+        library,
+        revision_id,
+        TranslationBatchRequest(target_language="zh-CN", provider_profile_id=provider.id),
+    )
+
+    async def empty_translator(*args, **kwargs):  # type: ignore[no-untyped-def]
+        _ = (args, kwargs)
+        return LLMResponse(text="", usage={})
+
+    monkeypatch.setattr("bilin_api.translation_service.translate_markdown", empty_translator)
+    await run_worker(once=True)
+
+    job = await get_job(result.job_ids[0])
+    assert job is not None
+    assert job.status == "failed"
+    assert job.attempts == 3
+    assert job.error is not None
+    assert job.error["code"] == "translation_validation_failed"
+    assert job.error["validation_status"] == "empty"
+    assert job.error["block_uid"] == "p-0001"
+
+    variants = await list_translation_variants(library, revision_id, "zh-CN")
+    assert variants
+    assert all(variant.validation_status == "empty" for variant in variants)
+
+    article = (await list_article_items(library, "zh-CN"))[0]
+    assert article.translation_status.status == ArticleTranslationState.failed
+    assert article.translation_status.translated_blocks == 0
+    assert article.translation_status.failed_jobs == 1
 
 
 @pytest.mark.asyncio
@@ -781,6 +943,7 @@ async def prepare_translation_fixture(
     tmp_path: Path,
     *,
     extra_paragraph: bool = False,
+    include_list: bool = False,
     max_concurrent_requests: int = 1,
 ) -> tuple[Library, ProviderProfile, str]:
     library = await create_library(
@@ -819,6 +982,16 @@ async def prepare_translation_fixture(
                 structural_path="00003",
                 block_type="paragraph",
                 source_markdown="A second paragraph to translate.",
+            )
+        )
+    if include_list:
+        blocks.append(
+            make_block(
+                revision.id,
+                block_uid="lst-0001",
+                structural_path=f"{len(blocks) + 1:05d}",
+                block_type="list",
+                source_markdown="- First list item.\n- Second list item.",
             )
         )
     await replace_document(

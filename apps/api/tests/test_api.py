@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -38,8 +40,52 @@ def test_library_and_jobs_api(bilin_home: Path, tmp_path: Path) -> None:
         )
         assert library_response.status_code == 201
         jobs_response = client.get("/jobs")
+        summary_response = client.get("/jobs/summary")
     assert jobs_response.status_code == 200
     assert jobs_response.json() == []
+    assert summary_response.status_code == 200
+    assert summary_response.json()["total"] == 0
+
+
+def test_jobs_api_can_clear_background_tasks(bilin_home: Path) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Local", "path": str(Path(bilin_home) / "clear-jobs-library")},
+        )
+        library_id = library_response.json()["id"]
+        create_response = client.post(
+            f"/libraries/{library_id}/imports/arxiv",
+            json={"arxiv_id": "2401.00001", "parse_after_import": False},
+        )
+        clear_response = client.delete("/jobs")
+        jobs_response = client.get("/jobs")
+
+    assert create_response.status_code == 201
+    assert clear_response.status_code == 200
+    assert clear_response.json()["cleared"] == 1
+    assert jobs_response.json() == []
+
+
+def test_library_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path: Path) -> None:
+    library_path = tmp_path / "deletable-library"
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/libraries",
+            json={"name": "Deletable", "path": str(library_path)},
+        )
+        library_id = create_response.json()["id"]
+        archive_response = client.post(f"/libraries/{library_id}/archive")
+        delete_response = client.delete(f"/libraries/{library_id}")
+        missing_response = client.get(f"/libraries/{library_id}")
+
+    assert create_response.status_code == 201
+    assert archive_response.status_code == 200
+    assert archive_response.json()["status"] == "archived"
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted_cache"] is True
+    assert not library_path.exists()
+    assert missing_response.status_code == 404
 
 
 def test_arxiv_import_api_enqueues_background_job(bilin_home: Path, tmp_path: Path) -> None:
@@ -59,6 +105,44 @@ def test_arxiv_import_api_enqueues_background_job(bilin_home: Path, tmp_path: Pa
     assert payload["type"] == "import_arxiv"
     assert payload["payload"]["library_id"] == library_id
     assert payload["payload"]["arxiv_id"] == "2401.00001"
+
+
+def test_arxiv_import_api_rejects_ambiguous_old_style_bare_id(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Papers", "path": str(tmp_path / "library")},
+        )
+        response = client.post(
+            f"/libraries/{library_response.json()['id']}/imports/arxiv",
+            json={"arxiv_id": "9407022", "parse_after_import": False},
+        )
+
+    assert response.status_code == 400
+    assert "archive prefix" in response.json()["detail"]
+    assert "cond-mat/9407022" in response.json()["detail"]
+
+
+def test_arxiv_import_api_normalizes_old_style_archive_alias(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Papers", "path": str(tmp_path / "library")},
+        )
+        response = client.post(
+            f"/libraries/{library_response.json()['id']}/imports/arxiv",
+            json={"arxiv_id": "condmat/9407022", "parse_after_import": False},
+        )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["payload"]["arxiv_id"] == "cond-mat/9407022"
 
 
 def test_local_markdown_import_api_writes_article(bilin_home: Path, tmp_path: Path) -> None:
@@ -89,6 +173,33 @@ def test_local_markdown_import_api_writes_article(bilin_home: Path, tmp_path: Pa
     assert status_response.json()["embedded_blocks"] == 2
 
 
+def test_article_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path: Path) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Local", "path": str(tmp_path / "local-library")},
+        )
+        library_id = library_response.json()["id"]
+        import_response = client.post(
+            f"/libraries/{library_id}/imports/file"
+            "?kind=markdown&file_name=note.md&parse_after_import=true",
+            content=b"# Uploaded\n\nA local markdown article.",
+            headers={"Content-Type": "text/markdown"},
+        )
+        revision_id = import_response.json()["article_revision_id"]
+        bundle_path = Path(import_response.json()["bundle_path"])
+        archive_response = client.post(f"/libraries/{library_id}/articles/{revision_id}/archive")
+        delete_response = client.delete(f"/libraries/{library_id}/articles/{revision_id}")
+        articles_response = client.get(f"/libraries/{library_id}/articles")
+
+    assert archive_response.status_code == 200
+    assert archive_response.json()["article_revision"]["status"] == "archived"
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted_cache"] is True
+    assert not bundle_path.exists()
+    assert articles_response.json() == []
+
+
 def test_export_api_returns_metadata_and_queues_job(bilin_home: Path, tmp_path: Path) -> None:
     with TestClient(app) as client:
         library_response = client.post(
@@ -117,14 +228,16 @@ def test_export_api_returns_metadata_and_queues_job(bilin_home: Path, tmp_path: 
         )
 
     assert export_response.status_code == 200
-    assert export_payload["file_name"] == "source.md"
-    assert export_payload["metadata"]["relative_path"] == "export/source.md"
+    assert export_payload["file_name"] == "note-source.zip"
+    assert export_payload["metadata"]["relative_path"] == "export/note-source.zip"
     assert export_payload["metadata"]["bundle_path"]
     assert download_response.status_code == 200
     assert download_response.headers["content-disposition"].startswith("attachment")
-    assert "source.md" in download_response.headers["content-disposition"]
-    assert download_response.headers["content-type"].startswith("text/markdown")
-    assert b"# Uploaded" in download_response.content
+    assert "note-source.zip" in download_response.headers["content-disposition"]
+    assert download_response.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(io.BytesIO(download_response.content)) as archive:
+        markdown_name = next(name for name in archive.namelist() if name.endswith(".md"))
+        assert "# Uploaded" in archive.read(markdown_name).decode("utf-8")
     assert job_response.status_code == 201
     job_payload = job_response.json()
     assert job_payload["type"] == "export_article"

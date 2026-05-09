@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import io
 import tarfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import httpx
 import pytest
 
-from bilin_api.article_store import list_article_items, read_manifest
-from bilin_api.arxiv import parse_arxiv_identity
+from bilin_api.article_store import (
+    archive_article_revision,
+    delete_article_revision,
+    list_article_items,
+    read_manifest,
+)
+from bilin_api.arxiv import metadata_from_entry, parse_arxiv_identity
 from bilin_api.importer import import_arxiv, import_local_file
 from bilin_api.repositories import create_library, list_jobs
 from bilin_api.schemas import ImportArxivRequest, ImportLocalKind, JobType, LibraryCreate
@@ -33,6 +39,35 @@ def test_parse_arxiv_identity_accepts_urls_and_versions() -> None:
     assert identity.bare_id == "2401.00001"
     assert identity.version == "v2"
     assert parse_arxiv_identity("2401.00001", "3").concrete_id == "2401.00001v3"
+    assert parse_arxiv_identity("quant-ph/9705052").bare_id == "quant-ph/9705052"
+    assert parse_arxiv_identity("https://arxiv.org/abs/cond-mat/9407022v1").concrete_id == (
+        "cond-mat/9407022v1"
+    )
+    assert parse_arxiv_identity("condmat/9407022").bare_id == "cond-mat/9407022"
+
+
+def test_parse_arxiv_identity_rejects_ambiguous_old_style_bare_number() -> None:
+    with pytest.raises(ValueError, match="archive prefix"):
+        parse_arxiv_identity("9407022")
+
+
+def test_metadata_from_entry_preserves_old_style_archive_prefix() -> None:
+    entry = httpx.Response(
+        200,
+        text="""<entry xmlns="http://www.w3.org/2005/Atom">
+          <id>https://arxiv.org/abs/quant-ph/9705052v1</id>
+          <title>Old Style Quantum Paper</title>
+          <summary>Abstract.</summary>
+          <author><name>A. Researcher</name></author>
+        </entry>""",
+    )
+    root = ET.fromstring(entry.text)
+
+    metadata = metadata_from_entry(root)
+
+    assert metadata.bare_id == "quant-ph/9705052"
+    assert metadata.concrete_id == "quant-ph/9705052v1"
+    assert metadata.source_url == "https://arxiv.org/e-print/quant-ph/9705052v1"
 
 
 @pytest.mark.asyncio
@@ -141,6 +176,38 @@ async def test_import_local_markdown_creates_weak_document(
     articles = await list_article_items(library)
     assert articles[0].article_revision.status == "parsed"
     assert articles[0].block_count == 4
+
+
+@pytest.mark.asyncio
+async def test_archive_and_delete_article_revision_keep_or_remove_cache(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Actions", path=str(tmp_path / "library")),
+    )
+    result = await import_local_file(
+        library,
+        file_name="note.md",
+        content=b"# Title\n\nFirst paragraph.",
+        kind=ImportLocalKind.markdown,
+        parse_after_import=True,
+    )
+    bundle_path = Path(result.bundle_path)
+    assert bundle_path.exists()
+
+    archived = await archive_article_revision(library, result.article_revision_id)
+    assert archived is not None
+    assert archived.article_revision.status == "archived"
+    assert bundle_path.exists()
+
+    deleted = await delete_article_revision(library, result.article_revision_id)
+    assert deleted is not None
+    assert deleted.article_revision_id == result.article_revision_id
+    assert deleted.deleted_cache is True
+    assert deleted.removed_family is True
+    assert not bundle_path.exists()
+    assert await list_article_items(library) == []
 
 
 @pytest.mark.asyncio

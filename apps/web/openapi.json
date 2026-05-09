@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "paths": {
     "/health": {
@@ -137,6 +137,140 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "libraries"
+        ],
+        "summary": "Delete Library By Id",
+        "operationId": "delete_library_by_id_libraries__library_id__delete",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryDeleteResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/archive": {
+      "post": {
+        "tags": [
+          "libraries"
+        ],
+        "summary": "Archive Library By Id",
+        "operationId": "archive_library_by_id_libraries__library_id__archive_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/translations/missing": {
+      "post": {
+        "tags": [
+          "libraries"
+        ],
+        "summary": "Translate Missing Library Blocks",
+        "operationId": "translate_missing_library_blocks_libraries__library_id__translations_missing_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslationBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryTranslationBatchResult"
                 }
               }
             }
@@ -634,6 +768,18 @@
               "type": "string",
               "title": "Library Id"
             }
+          },
+          {
+            "name": "target_language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 40,
+              "default": "zh-CN",
+              "title": "Target Language"
+            }
           }
         ],
         "responses": {
@@ -671,6 +817,118 @@
         ],
         "summary": "Get Article",
         "operationId": "get_article_libraries__library_id__articles__revision_id__get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "target_language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 40,
+              "default": "zh-CN",
+              "title": "Target Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleListItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Delete Article",
+        "operationId": "delete_article_libraries__library_id__articles__revision_id__delete",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleDeleteResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/archive": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Archive Article",
+        "operationId": "archive_article_libraries__library_id__articles__revision_id__archive_post",
         "parameters": [
           {
             "name": "library_id",
@@ -1517,6 +1775,559 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GlossaryTerm"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards": {
+      "get": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Get Reader Cards",
+        "operationId": "get_reader_cards_libraries__library_id__articles__revision_id__cards_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "target_language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "zh-CN",
+              "title": "Target Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCards"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card",
+        "operationId": "post_reader_card_libraries__library_id__articles__revision_id__cards_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCard"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/{card_id}": {
+      "put": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Put Reader Card",
+        "operationId": "put_reader_card_libraries__library_id__articles__revision_id__cards__card_id__put",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Card Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCard"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Delete Reader Card",
+        "operationId": "delete_reader_card_libraries__library_id__articles__revision_id__cards__card_id__delete",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          },
+          {
+            "name": "card_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Card Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCard"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/extract": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card Extraction",
+        "operationId": "post_reader_card_extraction_libraries__library_id__articles__revision_id__cards_extract_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardExtractionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCardExtractionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/extract/jobs": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card Extraction Job",
+        "operationId": "post_reader_card_extraction_job_libraries__library_id__articles__revision_id__cards_extract_jobs_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardExtractionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/generate": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card Generation",
+        "operationId": "post_reader_card_generation_libraries__library_id__articles__revision_id__cards_generate_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardGenerationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCardGenerationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/generate/jobs": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card Generation Job",
+        "operationId": "post_reader_card_generation_job_libraries__library_id__articles__revision_id__cards_generate_jobs_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardGenerationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/cards/export/obsidian": {
+      "post": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Post Reader Card Obsidian Export",
+        "operationId": "post_reader_card_obsidian_export_libraries__library_id__articles__revision_id__cards_export_obsidian_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderCardObsidianExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderCardObsidianExportResult"
                 }
               }
             }
@@ -2878,17 +3689,87 @@
         ],
         "summary": "Get Jobs",
         "operationId": "get_jobs_jobs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 500,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/Job"
                   },
-                  "type": "array",
                   "title": "Response Get Jobs Jobs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Clear All Jobs",
+        "operationId": "clear_all_jobs_jobs_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobClearResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/summary": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get Jobs Summary",
+        "operationId": "get_jobs_summary_jobs_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
                 }
               }
             }
@@ -3125,6 +4006,44 @@
           "article_revision_id"
         ],
         "title": "ArticleCitations"
+      },
+      "ArticleDeleteResult": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "article_family_id": {
+            "type": "string",
+            "title": "Article Family Id"
+          },
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "bundle_path": {
+            "type": "string",
+            "title": "Bundle Path"
+          },
+          "deleted_cache": {
+            "type": "boolean",
+            "title": "Deleted Cache"
+          },
+          "removed_family": {
+            "type": "boolean",
+            "title": "Removed Family",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id",
+          "article_family_id",
+          "article_revision_id",
+          "bundle_path",
+          "deleted_cache"
+        ],
+        "title": "ArticleDeleteResult"
       },
       "ArticleDocument": {
         "properties": {
@@ -3421,6 +4340,9 @@
             "type": "integer",
             "title": "Asset Count",
             "default": 0
+          },
+          "translation_status": {
+            "$ref": "#/components/schemas/ArticleTranslationStatus"
           }
         },
         "type": "object",
@@ -3610,6 +4532,63 @@
           "updated_at"
         ],
         "title": "ArticleRevision"
+      },
+      "ArticleTranslationState": {
+        "type": "string",
+        "enum": [
+          "not_required",
+          "not_started",
+          "translating",
+          "partial",
+          "translated",
+          "failed"
+        ],
+        "title": "ArticleTranslationState"
+      },
+      "ArticleTranslationStatus": {
+        "properties": {
+          "target_language": {
+            "type": "string",
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ArticleTranslationState",
+            "default": "not_started"
+          },
+          "translatable_blocks": {
+            "type": "integer",
+            "title": "Translatable Blocks",
+            "default": 0
+          },
+          "translated_blocks": {
+            "type": "integer",
+            "title": "Translated Blocks",
+            "default": 0
+          },
+          "queued_jobs": {
+            "type": "integer",
+            "title": "Queued Jobs",
+            "default": 0
+          },
+          "running_jobs": {
+            "type": "integer",
+            "title": "Running Jobs",
+            "default": 0
+          },
+          "paused_jobs": {
+            "type": "integer",
+            "title": "Paused Jobs",
+            "default": 0
+          },
+          "failed_jobs": {
+            "type": "integer",
+            "title": "Failed Jobs",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ArticleTranslationStatus"
       },
       "ArticleTranslations": {
         "properties": {
@@ -4884,6 +5863,19 @@
         ],
         "title": "Job"
       },
+      "JobClearResult": {
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "title": "Cleared"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cleared"
+        ],
+        "title": "JobClearResult"
+      },
       "JobStatus": {
         "type": "string",
         "enum": [
@@ -4896,6 +5888,64 @@
         ],
         "title": "JobStatus"
       },
+      "JobSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued",
+            "default": 0
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running",
+            "default": 0
+          },
+          "paused": {
+            "type": "integer",
+            "title": "Paused",
+            "default": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "title": "Cancelled",
+            "default": 0
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "JobSummary"
+      },
       "JobType": {
         "type": "string",
         "enum": [
@@ -4903,7 +5953,9 @@
           "parse_article",
           "translate_block",
           "embed_article",
-          "export_article"
+          "export_article",
+          "extract_reader_cards",
+          "generate_reader_card"
         ],
         "title": "JobType"
       },
@@ -4972,6 +6024,29 @@
         ],
         "title": "LibraryCreate"
       },
+      "LibraryDeleteResult": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "deleted_cache": {
+            "type": "boolean",
+            "title": "Deleted Cache"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id",
+          "path",
+          "deleted_cache"
+        ],
+        "title": "LibraryDeleteResult"
+      },
       "LibraryStatus": {
         "type": "string",
         "enum": [
@@ -4980,6 +6055,68 @@
           "archived"
         ],
         "title": "LibraryStatus"
+      },
+      "LibraryTranslationBatchResult": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language"
+          },
+          "articles_considered": {
+            "type": "integer",
+            "title": "Articles Considered",
+            "default": 0
+          },
+          "articles_queued": {
+            "type": "integer",
+            "title": "Articles Queued",
+            "default": 0
+          },
+          "jobs_created": {
+            "type": "integer",
+            "title": "Jobs Created",
+            "default": 0
+          },
+          "existing_jobs": {
+            "type": "integer",
+            "title": "Existing Jobs",
+            "default": 0
+          },
+          "cached_blocks": {
+            "type": "integer",
+            "title": "Cached Blocks",
+            "default": 0
+          },
+          "skipped_blocks": {
+            "type": "integer",
+            "title": "Skipped Blocks",
+            "default": 0
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids"
+          },
+          "article_results": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationBatchResult"
+            },
+            "type": "array",
+            "title": "Article Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id",
+          "target_language"
+        ],
+        "title": "LibraryTranslationBatchResult"
       },
       "NotePatch": {
         "properties": {
@@ -5763,6 +6900,640 @@
           "anthropic-compatible"
         ],
         "title": "ProviderProtocol"
+      },
+      "ReaderCard": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "card_type": {
+            "$ref": "#/components/schemas/ReaderCardType"
+          },
+          "anchor_block_uid": {
+            "type": "string",
+            "title": "Anchor Block Uid"
+          },
+          "anchor_text": {
+            "type": "string",
+            "title": "Anchor Text"
+          },
+          "canonical_key": {
+            "type": "string",
+            "title": "Canonical Key"
+          },
+          "abbreviation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abbreviation"
+          },
+          "full_form": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Form"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body_markdown": {
+            "type": "string",
+            "title": "Body Markdown",
+            "default": ""
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/ReaderCardSourceType"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "position": {
+            "$ref": "#/components/schemas/ReaderCardPosition",
+            "default": "right"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReaderCardStatus",
+            "default": "candidate"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "article_revision_id",
+          "card_type",
+          "anchor_block_uid",
+          "anchor_text",
+          "canonical_key",
+          "title",
+          "target_language",
+          "source_type",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReaderCard"
+      },
+      "ReaderCardCreate": {
+        "properties": {
+          "card_type": {
+            "$ref": "#/components/schemas/ReaderCardType",
+            "default": "note"
+          },
+          "anchor_block_uid": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Anchor Block Uid"
+          },
+          "anchor_text": {
+            "type": "string",
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Anchor Text"
+          },
+          "abbreviation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abbreviation"
+          },
+          "full_form": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Form"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "body_markdown": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Body Markdown",
+            "default": ""
+          },
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/ReaderCardSourceType",
+            "default": "user_note"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 800
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "position": {
+            "$ref": "#/components/schemas/ReaderCardPosition",
+            "default": "right"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReaderCardStatus",
+            "default": "pinned"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "anchor_block_uid",
+          "anchor_text",
+          "title"
+        ],
+        "title": "ReaderCardCreate"
+      },
+      "ReaderCardExtractionRequest": {
+        "properties": {
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 30
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ReaderCardExtractionRequest"
+      },
+      "ReaderCardExtractionResult": {
+        "properties": {
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language"
+          },
+          "candidates_created": {
+            "type": "integer",
+            "title": "Candidates Created"
+          },
+          "existing_candidates": {
+            "type": "integer",
+            "title": "Existing Candidates"
+          },
+          "wiki_cards_created": {
+            "type": "integer",
+            "title": "Wiki Cards Created"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/ReaderCard"
+            },
+            "type": "array",
+            "title": "Cards"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_revision_id",
+          "target_language",
+          "candidates_created",
+          "existing_candidates",
+          "wiki_cards_created"
+        ],
+        "title": "ReaderCardExtractionResult"
+      },
+      "ReaderCardGenerationRequest": {
+        "properties": {
+          "anchor_block_uid": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Anchor Block Uid"
+          },
+          "anchor_text": {
+            "type": "string",
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Anchor Text"
+          },
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "provider_profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Profile Id"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "native_search": {
+            "type": "boolean",
+            "title": "Native Search",
+            "default": true
+          },
+          "card_type": {
+            "$ref": "#/components/schemas/ReaderCardType",
+            "default": "term"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "abbreviation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abbreviation"
+          },
+          "full_form": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Form"
+          }
+        },
+        "type": "object",
+        "required": [
+          "anchor_block_uid",
+          "anchor_text"
+        ],
+        "title": "ReaderCardGenerationRequest"
+      },
+      "ReaderCardGenerationResult": {
+        "properties": {
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "card": {
+            "$ref": "#/components/schemas/ReaderCard"
+          },
+          "native_search_used": {
+            "type": "boolean",
+            "title": "Native Search Used",
+            "default": false
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/ReaderCardSourceType"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_revision_id",
+          "card",
+          "source_type"
+        ],
+        "title": "ReaderCardGenerationResult"
+      },
+      "ReaderCardObsidianExportRequest": {
+        "properties": {
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "card_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Ids"
+          }
+        },
+        "type": "object",
+        "title": "ReaderCardObsidianExportRequest"
+      },
+      "ReaderCardObsidianExportResult": {
+        "properties": {
+          "vault_path": {
+            "type": "string",
+            "title": "Vault Path"
+          },
+          "note_path": {
+            "type": "string",
+            "title": "Note Path"
+          },
+          "cards_exported": {
+            "type": "integer",
+            "title": "Cards Exported"
+          },
+          "updated_existing": {
+            "type": "boolean",
+            "title": "Updated Existing",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "vault_path",
+          "note_path",
+          "cards_exported"
+        ],
+        "title": "ReaderCardObsidianExportResult"
+      },
+      "ReaderCardPosition": {
+        "type": "string",
+        "enum": [
+          "left",
+          "right",
+          "floating"
+        ],
+        "title": "ReaderCardPosition"
+      },
+      "ReaderCardSourceType": {
+        "type": "string",
+        "enum": [
+          "wikipedia",
+          "wikidata",
+          "ai_search",
+          "paper_local",
+          "user_note"
+        ],
+        "title": "ReaderCardSourceType"
+      },
+      "ReaderCardStatus": {
+        "type": "string",
+        "enum": [
+          "candidate",
+          "pinned",
+          "exported",
+          "archived"
+        ],
+        "title": "ReaderCardStatus"
+      },
+      "ReaderCardType": {
+        "type": "string",
+        "enum": [
+          "term",
+          "note",
+          "formula",
+          "figure",
+          "question"
+        ],
+        "title": "ReaderCardType"
+      },
+      "ReaderCardUpdate": {
+        "properties": {
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Text"
+          },
+          "abbreviation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abbreviation"
+          },
+          "full_form": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Form"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "body_markdown": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Markdown"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 800
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReaderCardPosition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReaderCardStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "title": "ReaderCardUpdate"
+      },
+      "ReaderCards": {
+        "properties": {
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/ReaderCard"
+            },
+            "type": "array",
+            "title": "Cards"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_revision_id",
+          "target_language"
+        ],
+        "title": "ReaderCards"
       },
       "RetrievalMode": {
         "type": "string",

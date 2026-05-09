@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from bilin_api.article_store import resolve_library
+from bilin_api.arxiv import parse_arxiv_identity
 from bilin_api.importer import import_local_file
 from bilin_api.repositories import create_job
 from bilin_api.schemas import ImportArxivRequest, ImportLocalKind, ImportLocalResult, Job, JobType
@@ -19,12 +20,16 @@ async def import_arxiv(library_id: str, payload: ImportArxivRequest) -> Job:
         library = await resolve_library(library_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    try:
+        identity = parse_arxiv_identity(payload.arxiv_id, payload.version)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return await create_job(
         JobType.import_arxiv,
         payload={
             "library_id": library.id,
-            "arxiv_id": payload.arxiv_id,
-            "version": payload.version,
+            "arxiv_id": identity.bare_id,
+            "version": identity.version,
             "download_pdf": payload.download_pdf,
             "parse_after_import": payload.parse_after_import,
         },

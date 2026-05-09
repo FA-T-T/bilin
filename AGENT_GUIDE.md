@@ -8,6 +8,10 @@ Ilios is a local-first paper reading and study application. The main path is TeX
 
 Do not introduce Docker, Redis, Celery, accounts, hosted backend requirements, or built-in sync as default dependencies. Do not treat PDF parsing, OCR, Word export, EPUB export, polished PDF export, or neural embedding downloads as currently required startup features. Those are future or optional paths.
 
+Before changing product behavior, reader layout, batch operations, feature toggles, or user-facing interaction logic, read `DESIGN.md`. It is the canonical contract for defaults, deprecated modes, batch-operation expectations, and what must stay configurable.
+
+For UI copy and community translation work, read `apps/web/src/locales/README.md` and use `apps/web/src/locales/example.locale.json` as the contribution shape. Runtime dictionaries currently live in `apps/web/src/i18n.ts`, so reviewed locale updates must still be promoted there.
+
 ## Repository Facts
 
 Use this block as the first-pass mental model before running commands.
@@ -229,9 +233,9 @@ Create source archives with the release script.
 Verify checksums and inspect that forbidden local artifacts were excluded.
 
 ```sh
-shasum -a 256 -c release/bilin-v0.2.0-source.tar.gz.sha256
-shasum -a 256 -c release/bilin-v0.2.0-source.zip.sha256
-tar -tzf release/bilin-v0.2.0-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
+shasum -a 256 -c release/bilin-v0.2.1-source.tar.gz.sha256
+shasum -a 256 -c release/bilin-v0.2.1-source.zip.sha256
+tar -tzf release/bilin-v0.2.1-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
 ```
 
 The final archive should include `README.md`, `README.en.md`, localized README files such as `README.ja.md`, `README.ko.md`, `README.es.md`, `README.fr.md`, and `README.de.md`, `AGENT_GUIDE.md`, `LICENSE`, `NOTICE`, `RELEASE_NOTES.md`, `docs/`, `fixtures/`, `apps/`, root package files, and release scripts.

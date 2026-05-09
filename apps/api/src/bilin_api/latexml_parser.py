@@ -3,17 +3,23 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import asdict, dataclass
 from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from urllib.parse import unquote, urlparse
+
+from html_to_markdown import ConversionOptions, convert
 
 from bilin_api.article_store import (
     empty_manifest,
@@ -30,6 +36,7 @@ from bilin_api.schemas import AssetRecord, DocumentBlock, Library, ParseErrorInf
 
 WEB_ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 CONVERTIBLE_ASSET_SUFFIXES = {".pdf", ".eps"}
+LATEX_GRAPHIC_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg", ".webp", ".gif")
 HTML_VOID_TAGS = {
     "area",
     "base",
@@ -46,6 +53,107 @@ HTML_VOID_TAGS = {
     "track",
     "wbr",
 }
+MARKDOWN_CONVERSION_OPTIONS = ConversionOptions(
+    heading_style="atx",
+    list_indent_type="spaces",
+    list_indent_width=2,
+    bullets="-",
+    escape_asterisks=False,
+    escape_underscores=False,
+    escape_misc=False,
+    wrap=False,
+    strip_newlines=False,
+    extract_metadata=False,
+    convert_as_inline=False,
+)
+LATEXML_ENTRY_FILE = "__bilin_latexml_entry.tex"
+LATEXML_DISABLED_PACKAGES = {
+    "babel",
+    "polyglossia",
+    "glossaries",
+    "glossaries-extra",
+    "mfirstuc",
+}
+LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
+    "cas-dc",
+    "cas-sc",
+}
+TEX_MAIN_FILE_SUFFIXES = {".tex", ".ltx", ".latex"}
+TEX_SIDE_FILE_SUFFIXES = {".bbl", ".bib", ".sty", ".cls"}
+TEX_MAIN_FILE_NAME_HINTS = {
+    "main",
+    "paper",
+    "article",
+    "ms",
+    "manuscript",
+    "source",
+    "submission",
+    "arxiv",
+}
+TEX_CANDIDATE_READ_LIMIT_BYTES = 8_000_000
+LATEXML_BASE_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "BILIN_LATEXML_BASE_TIMEOUT_SECONDS", os.getenv("BILIN_LATEXML_TIMEOUT_SECONDS", "200")
+    )
+)
+LATEXML_IDLE_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_IDLE_TIMEOUT_SECONDS", "180"))
+LATEXML_MAX_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_MAX_TIMEOUT_SECONDS", "2400"))
+LATEX_COMPATIBILITY_TABLE = json.loads(
+    (Path(__file__).resolve().parents[4] / "shared" / "latex-compatibility.json").read_text(
+        encoding="utf-8"
+    )
+)
+LATEX_COMPATIBILITY_COMMAND_GROUP_RULES = LATEX_COMPATIBILITY_TABLE["command_group_rules"]
+LATEX_COMPATIBILITY_SINGLE_TOKEN_COMMANDS = tuple(
+    command
+    for rule in LATEX_COMPATIBILITY_COMMAND_GROUP_RULES
+    if rule.get("allow_single_token")
+    for command in rule["commands"]
+)
+LEGACY_TEXT_FONT_COMMANDS = {
+    entry["command"]: (entry["text_replacement"], entry["math_replacement"])
+    for entry in LATEX_COMPATIBILITY_TABLE["legacy_text_font_commands"]
+}
+LATEXML_COMPATIBILITY_PREAMBLE = "\n".join(
+    [
+        r"\AtBeginDocument{%",
+        *[
+            rf"\providecommand{{\{entry['command']}}}"
+            f"{'[' + str(int(entry['args'])) + ']' if int(entry['args']) else ''}"
+            rf"{{{entry['replacement']}}}%"
+            for entry in LATEX_COMPATIBILITY_TABLE["latexml_preamble_commands"]
+        ],
+        r"}%",
+    ]
+)
+LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
+\makeatletter
+\providecommand{\shorttitle}[1]{}
+\providecommand{\shortauthors}[1]{}
+\providecommand{\cortext}[2][]{}
+\providecommand{\ead}[1]{}
+\providecommand{\credit}[1]{}
+\providecommand{\fntext}[2][]{}
+\providecommand{\tnotetext}[2][]{}
+\providecommand{\tnotemark}[1][]{}
+\providecommand{\fnmark}[1][]{}
+\providecommand{\cormark}[1][]{}
+\providecommand{\sep}{; }
+\providecommand{\affiliation}[2][]{}
+\providecommand{\address}{\@ifnextchar[{\BilinCASAddressWith}{\BilinCASAddressWithout}}
+\def\BilinCASAddressWith[#1]#2{}
+\def\BilinCASAddressWithout#1{}
+\let\BilinArticleTitle\title
+\renewcommand{\title}{\@ifnextchar[{\BilinCASTitleWith}{\BilinCASTitleWithout}}
+\def\BilinCASTitleWith[#1]#2{\BilinArticleTitle{#2}}
+\def\BilinCASTitleWithout#1{\BilinArticleTitle{#1}}
+\let\BilinArticleAuthor\author
+\renewcommand{\author}{\@ifnextchar[{\BilinCASAuthorWithAffil}{\BilinCASAuthorWithoutAffil}}
+\def\BilinCASAuthorWithAffil[#1]#2{\@ifnextchar[{\BilinCASAuthorWithMeta{#2}}{\BilinArticleAuthor{#2}}}
+\def\BilinCASAuthorWithoutAffil#1{\@ifnextchar[{\BilinCASAuthorWithMeta{#1}}{\BilinArticleAuthor{#1}}}
+\def\BilinCASAuthorWithMeta#1[#2]{\BilinArticleAuthor{#1}}
+\makeatother
+"""
 
 
 class ParseFailure(Exception):
@@ -57,6 +165,16 @@ class ParseFailure(Exception):
 
     def to_error_info(self) -> ParseErrorInfo:
         return ParseErrorInfo(code=self.code, message=self.message, details=self.details)
+
+
+@dataclass(frozen=True)
+class CommandTimeoutBudget:
+    soft_seconds: float
+    idle_seconds: float
+    hard_seconds: float
+    source_bytes: int = 0
+    tex_file_count: int = 0
+    graphic_file_count: int = 0
 
 
 async def parse_article_revision(library: Library, revision_id: str) -> dict[str, Any]:
@@ -77,6 +195,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         safe_unpack(source_archive, unpack_dir)
         main_tex = find_main_tex(unpack_dir)
         manifest.main_tex_file = str(main_tex.relative_to(unpack_dir))
+        latexml_entry = prepare_latexml_entry(main_tex)
 
         latexml = shutil.which("latexml")
         latexmlpost = shutil.which("latexmlpost")
@@ -102,19 +221,45 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         logs_dir.mkdir(parents=True, exist_ok=True)
         xml_path = document_dir / "latexml.xml"
         html_path = document_dir / "latexml.html"
-        latexml_command = [latexml, "--destination", str(xml_path), main_tex.name]
-        latexmlpost_command = [latexmlpost, "--destination", str(html_path), str(xml_path)]
+        latexml_command = [latexml, "--includestyles"]
+        for search_path in _latexml_search_paths(unpack_dir, main_tex.parent):
+            latexml_command.extend(["--path", str(search_path)])
+        latexml_command.extend(["--destination", str(xml_path), latexml_entry.name])
+        latexmlpost_command = [
+            latexmlpost,
+            "--format=html5",
+            "--xsltparameter=SIMPLIFY_HTML:true",
+            "--destination",
+            str(html_path),
+            str(xml_path),
+        ]
         manifest.latexml_command = latexml_command + ["&&"] + latexmlpost_command
+        manifest.metadata["latexml_entry_file"] = str(latexml_entry.relative_to(unpack_dir))
+        manifest.metadata["latexml_disabled_packages"] = sorted(LATEXML_DISABLED_PACKAGES)
         manifest.tool_versions = {
             "latexml": detect_version(latexml),
             "latexmlpost": detect_version(latexmlpost),
         }
+        latexml_timeout = estimate_latexml_timeout_budget(unpack_dir, main_tex, "latexml")
+        latexmlpost_timeout = estimate_latexml_timeout_budget(unpack_dir, main_tex, "latexmlpost")
+        manifest.metadata["latexml_timeout_seconds"] = {
+            "latexml": asdict(latexml_timeout),
+            "latexmlpost": asdict(latexmlpost_timeout),
+        }
 
-        await run_command(latexml_command, cwd=main_tex.parent, log_path=logs_dir / "latexml.log")
+        await run_command(
+            latexml_command,
+            cwd=latexml_entry.parent,
+            log_path=logs_dir / "latexml.log",
+            timeout_budget=latexml_timeout,
+            activity_paths=[xml_path],
+        )
         await run_command(
             latexmlpost_command,
             cwd=main_tex.parent,
             log_path=logs_dir / "latexmlpost.log",
+            timeout_budget=latexmlpost_timeout,
+            activity_paths=[html_path],
         )
         blocks, assets = normalize_latexml_html(
             html_path,
@@ -230,44 +375,397 @@ def safe_unpack(source_archive: Path, destination: Path, max_bytes: int = 200_00
 
 
 def find_main_tex(unpack_dir: Path) -> Path:
-    candidates = sorted(unpack_dir.rglob("*.tex"))
+    candidates = sorted(path for path in unpack_dir.rglob("*") if _is_tex_main_candidate(path))
     if not candidates:
-        raise ParseFailure("missing_main_tex", "No .tex file found in source package.")
+        raise ParseFailure("missing_main_tex", "No TeX-like main file found in source package.")
     scored: list[tuple[int, Path]] = []
     for candidate in candidates:
         text = candidate.read_text(encoding="utf-8", errors="ignore")
-        score = 0
-        if "\\documentclass" in text:
-            score += 10
-        if "\\begin{document}" in text:
-            score += 10
-        if candidate.name.lower() in {"main.tex", "paper.tex", "article.tex", "ms.tex"}:
-            score += 2
+        score = score_main_tex_candidate(candidate, text)
         scored.append((score, candidate))
     scored.sort(key=lambda item: (-item[0], len(str(item[1]))))
     if scored[0][0] < 20:
         raise ParseFailure(
             "missing_main_tex",
-            "Could not identify a main TeX file with documentclass and begin{document}.",
+            "Could not identify a main TeX file with documentclass/documentstyle "
+            "and begin{document}.",
         )
     return scored[0][1]
 
 
-async def run_command(command: list[str], cwd: Path, log_path: Path) -> None:
+def _is_tex_main_candidate(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.name == LATEXML_ENTRY_FILE:
+        return False
+    suffix = path.suffix.casefold()
+    if suffix in TEX_MAIN_FILE_SUFFIXES:
+        return True
+    if suffix in TEX_SIDE_FILE_SUFFIXES or suffix in LATEX_GRAPHIC_SUFFIXES:
+        return False
+    if suffix:
+        return False
+    return _safe_file_size(path) <= TEX_CANDIDATE_READ_LIMIT_BYTES and _looks_like_tex_file(path)
+
+
+def _looks_like_tex_file(path: Path) -> bool:
+    try:
+        sample = path.read_text(encoding="utf-8", errors="ignore")[:12_000]
+    except OSError:
+        return False
+    return any(
+        marker in sample
+        for marker in (
+            "\\documentclass",
+            "\\documentstyle",
+            "\\begin{document}",
+            "\\input{",
+            "\\include{",
+        )
+    )
+
+
+def score_main_tex_candidate(path: Path, text: str) -> int:
+    score = 0
+    has_document_command = bool(re.search(r"\\(?:documentclass|documentstyle)\b", text))
+    has_begin_document = "\\begin{document}" in text
+    if "\\documentclass" in text:
+        score += 12
+    if "\\documentstyle" in text:
+        score += 12
+    if has_begin_document:
+        score += 12
+    lower_stem = path.stem.casefold()
+    lower_name = path.name.casefold()
+    if lower_stem in TEX_MAIN_FILE_NAME_HINTS:
+        score += 4
+    if re.fullmatch(r"\d{7}(?:v\d+)?", lower_name):
+        score += 4
+    suffix = path.suffix.casefold()
+    if suffix == ".tex":
+        score += 2
+    elif suffix in {".ltx", ".latex"} or not suffix:
+        score += 1
+    for marker in ("\\title", "\\author", "\\maketitle", "\\abstract", "\\bibliography"):
+        if marker in text:
+            score += 1
+    if not (has_document_command and has_begin_document):
+        score -= 20
+    return score
+
+
+def prepare_latexml_entry(main_tex: Path) -> Path:
+    source = main_tex.read_text(encoding="utf-8", errors="ignore")
+    prepared = prepare_latexml_source(source)
+    entry = main_tex.parent / LATEXML_ENTRY_FILE
+    entry.write_text(prepared, encoding="utf-8")
+    return entry
+
+
+def prepare_latexml_source(source: str) -> str:
+    source = _disable_latexml_incompatible_packages(source)
+    source = _replace_latexml_layout_document_classes(source)
+    if source.startswith("% Bilin LaTeXML parser entry"):
+        return source
+    source = _inject_latexml_compatibility_preamble(source)
+    return "% Bilin LaTeXML parser entry. Original source is left untouched.\n" + source
+
+
+def _inject_latexml_compatibility_preamble(source: str) -> str:
+    if "Bilin LaTeXML compatibility shims" in source:
+        return source
+    preamble_parts = [LATEXML_COMPATIBILITY_PREAMBLE.strip()]
+    if "Bilin replaced layout document class for LaTeXML" in source:
+        preamble_parts.append(LATEXML_LAYOUT_CLASS_PREAMBLE.strip())
+    preamble = "% Bilin LaTeXML compatibility shims.\n" + "\n".join(preamble_parts)
+    document_command = re.search(
+        r"\\(?:documentclass|documentstyle)(?:\s*\[[^\]]*\])?\s*\{[^{}]+\}",
+        source,
+    )
+    if document_command is None:
+        return preamble + "\n" + source
+    insert_at = document_command.end()
+    return source[:insert_at] + "\n" + preamble + source[insert_at:]
+
+
+def _replace_latexml_layout_document_classes(source: str) -> str:
+    document_class_pattern = re.compile(
+        r"(?P<command>\\documentclass)"
+        r"(?P<options>\s*\[[^\]]*\])?"
+        r"\s*\{(?P<class_name>[^{}]+)\}",
+        re.MULTILINE,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        class_name = match.group("class_name").strip()
+        if class_name not in LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES:
+            return match.group(0)
+        options = match.group("options") or ""
+        option_note = f" {options.strip()}" if options else ""
+        return (
+            "\\documentclass{article}"
+            f"% Bilin replaced layout document class for LaTeXML: {class_name}{option_note}"
+        )
+
+    return document_class_pattern.sub(replace, source, count=1)
+
+
+def _latexml_search_paths(unpack_dir: Path, main_tex_parent: Path) -> list[Path]:
+    paths: list[Path] = []
+    for candidate in (unpack_dir, main_tex_parent):
+        if candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def _disable_latexml_incompatible_packages(source: str) -> str:
+    package_pattern = re.compile(
+        r"(?P<command>\\(?:usepackage|RequirePackage))"
+        r"(?P<options>(?:\s*\[[^\]]*\])*)"
+        r"\s*\{(?P<packages>[^{}]+)\}",
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        packages = [package.strip() for package in match.group("packages").split(",")]
+        disabled = [package for package in packages if package in LATEXML_DISABLED_PACKAGES]
+        if not disabled:
+            return match.group(0)
+        kept = [package for package in packages if package not in LATEXML_DISABLED_PACKAGES]
+        disabled_note = ", ".join(disabled)
+        if kept:
+            return (
+                f"{match.group('command')}{match.group('options')}"
+                f"{{{','.join(kept)}}}% Bilin disabled for LaTeXML: {disabled_note}"
+            )
+        return f"% Bilin disabled for LaTeXML: {match.group(0)}"
+
+    return package_pattern.sub(replace, source)
+
+
+def estimate_latexml_timeout_budget(
+    unpack_dir: Path,
+    main_tex: Path,
+    command_name: str,
+) -> CommandTimeoutBudget:
+    source_bytes = 0
+    tex_file_count = 0
+    graphic_file_count = 0
+    for path in unpack_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        suffix = path.suffix.casefold()
+        if suffix in TEX_MAIN_FILE_SUFFIXES | TEX_SIDE_FILE_SUFFIXES:
+            tex_file_count += 1
+            source_bytes += _safe_file_size(path)
+        elif suffix in LATEX_GRAPHIC_SUFFIXES:
+            graphic_file_count += 1
+
+    source_bytes = max(source_bytes, _safe_file_size(main_tex))
+    source_mib = source_bytes / 1_048_576
+    if command_name == "latexmlpost":
+        estimated = (
+            max(90.0, LATEXML_BASE_TIMEOUT_SECONDS * 0.55)
+            + source_mib * 45.0
+            + min(240.0, tex_file_count * 1.5 + graphic_file_count * 4.0)
+        )
+    else:
+        estimated = (
+            LATEXML_BASE_TIMEOUT_SECONDS
+            + source_mib * 120.0
+            + min(720.0, tex_file_count * 3.0 + graphic_file_count * 8.0)
+        )
+    soft_seconds = max(60.0, min(estimated, LATEXML_MAX_TIMEOUT_SECONDS))
+    hard_seconds = max(
+        soft_seconds + LATEXML_IDLE_TIMEOUT_SECONDS,
+        min(soft_seconds * 2.5, LATEXML_MAX_TIMEOUT_SECONDS),
+    )
+    hard_seconds = min(max(hard_seconds, soft_seconds), LATEXML_MAX_TIMEOUT_SECONDS)
+    return CommandTimeoutBudget(
+        soft_seconds=soft_seconds,
+        idle_seconds=LATEXML_IDLE_TIMEOUT_SECONDS,
+        hard_seconds=hard_seconds,
+        source_bytes=source_bytes,
+        tex_file_count=tex_file_count,
+        graphic_file_count=graphic_file_count,
+    )
+
+
+def _safe_file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+async def run_command(
+    command: list[str],
+    cwd: Path,
+    log_path: Path,
+    timeout_budget: CommandTimeoutBudget | None = None,
+    activity_paths: list[Path] | None = None,
+) -> None:
+    budget = timeout_budget or CommandTimeoutBudget(
+        soft_seconds=LATEXML_BASE_TIMEOUT_SECONDS,
+        idle_seconds=LATEXML_IDLE_TIMEOUT_SECONDS,
+        hard_seconds=LATEXML_MAX_TIMEOUT_SECONDS,
+    )
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
-    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-    log_path.write_bytes(stdout + b"\n--- STDERR ---\n" + stderr)
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    last_activity = monotonic()
+    started_at = last_activity
+    file_activity = _activity_file_state(activity_paths or [])
+
+    def mark_activity() -> None:
+        nonlocal last_activity
+        last_activity = monotonic()
+
+    async def read_stream(stream: asyncio.StreamReader | None, chunks: list[bytes]) -> None:
+        if stream is None:
+            return
+        while chunk := await stream.read(8192):
+            chunks.append(chunk)
+            mark_activity()
+
+    stdout_task = asyncio.create_task(read_stream(process.stdout, stdout_chunks))
+    stderr_task = asyncio.create_task(read_stream(process.stderr, stderr_chunks))
+    wait_task = asyncio.create_task(process.wait())
+    timeout_failure: ParseFailure | None = None
+    check_interval = min(1.0, max(0.05, budget.idle_seconds / 4))
+    try:
+        while not wait_task.done():
+            await asyncio.sleep(check_interval)
+            if wait_task.done():
+                break
+            current_file_activity = _activity_file_state(activity_paths or [])
+            if current_file_activity != file_activity:
+                file_activity = current_file_activity
+                mark_activity()
+            now = monotonic()
+            elapsed = now - started_at
+            idle_for = now - last_activity
+            if elapsed > budget.hard_seconds:
+                timeout_failure = _timeout_failure(
+                    command,
+                    log_path,
+                    "hard",
+                    elapsed,
+                    idle_for,
+                    budget,
+                )
+                await _terminate_process_tree(process)
+                break
+            if elapsed > budget.soft_seconds and idle_for > budget.idle_seconds:
+                timeout_failure = _timeout_failure(
+                    command,
+                    log_path,
+                    "idle",
+                    elapsed,
+                    idle_for,
+                    budget,
+                )
+                await _terminate_process_tree(process)
+                break
+        await asyncio.gather(wait_task, return_exceptions=True)
+    finally:
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+
+    stdout = b"".join(stdout_chunks)
+    stderr = b"".join(stderr_chunks)
+    _write_command_log(log_path, command, budget, timeout_failure, stdout, stderr)
+    if timeout_failure is not None:
+        raise timeout_failure
     if process.returncode != 0:
         raise ParseFailure(
             "latexml_failed",
             f"Command failed with exit code {process.returncode}: {' '.join(command)}",
             {"log_path": str(log_path), "returncode": process.returncode},
         )
+
+
+def _activity_file_state(paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
+    state: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        state.append((str(path), stat.st_size, stat.st_mtime_ns))
+    return tuple(state)
+
+
+def _timeout_failure(
+    command: list[str],
+    log_path: Path,
+    reason: str,
+    elapsed_seconds: float,
+    idle_seconds: float,
+    budget: CommandTimeoutBudget,
+) -> ParseFailure:
+    return ParseFailure(
+        "latexml_timeout",
+        (
+            f"Command timed out by {reason} limit after {elapsed_seconds:.1f}s "
+            f"(idle {idle_seconds:.1f}s): {' '.join(command)}"
+        ),
+        {
+            "log_path": str(log_path),
+            "timeout_reason": reason,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "idle_seconds": round(idle_seconds, 3),
+            "timeout_budget": asdict(budget),
+        },
+    )
+
+
+async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except OSError:
+        process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+        return
+    except TimeoutError:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError:
+        process.kill()
+    await process.wait()
+
+
+def _write_command_log(
+    log_path: Path,
+    command: list[str],
+    budget: CommandTimeoutBudget,
+    timeout_failure: ParseFailure | None,
+    stdout: bytes,
+    stderr: bytes,
+) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    header = {
+        "command": command,
+        "timeout_budget": asdict(budget),
+        "timeout_error": timeout_failure.details if timeout_failure else None,
+    }
+    log_path.write_bytes(
+        json.dumps(header, indent=2, sort_keys=True).encode("utf-8")
+        + b"\n--- STDOUT ---\n"
+        + stdout
+        + b"\n--- STDERR ---\n"
+        + stderr
+    )
 
 
 def normalize_latexml_html(
@@ -532,9 +1030,19 @@ class _DocumentBuilder:
         self.equation_count = 0
         self.figure_count = 0
         self.table_count = 0
+        self.algorithm_count = 0
+        self.list_count = 0
 
     def walk(self, element: ET.Element) -> None:
         tag = _local_name(element.tag)
+        if _is_latexml_generated_navigation(element):
+            return
+        if _is_algorithm_container(element):
+            self.add_environment(element, "algorithm")
+            return
+        if _is_latexml_list_container(element):
+            self.add_list(element)
+            return
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             self.add_section(element, tag)
             return
@@ -586,17 +1094,22 @@ class _DocumentBuilder:
         if not tex:
             return
         self.equation_count += 1
+        equation_numbers = _equation_numbers(element)
+        metadata: dict[str, Any] = {
+            "label": _label(element),
+            "display": "block",
+            "tex": tex,
+            "html_fragment": _html_fragment(element),
+        }
+        if equation_numbers:
+            metadata["equation_number"] = equation_numbers[0]
+            metadata["equation_numbers"] = equation_numbers
         self.add_block(
             "equation",
             f"eq-{self.equation_count:04d}",
             tex,
             source_latex=tex,
-            metadata={
-                "label": _label(element),
-                "display": "block",
-                "tex": tex,
-                "html_fragment": _html_fragment(element),
-            },
+            metadata=metadata,
         )
 
     def add_environment(self, element: ET.Element, kind: str) -> None:
@@ -604,6 +1117,10 @@ class _DocumentBuilder:
             self.figure_count += 1
             index = self.figure_count
             prefix = "fig"
+        elif kind == "algorithm":
+            self.algorithm_count += 1
+            index = self.algorithm_count
+            prefix = "alg"
         else:
             self.table_count += 1
             index = self.table_count
@@ -636,6 +1153,23 @@ class _DocumentBuilder:
                 "asset_id": asset_id,
                 "html_fragment": html_fragment,
                 "asset_source": source_path,
+            },
+        )
+
+    def add_list(self, element: ET.Element) -> None:
+        markdown, item_count = _list_markdown(element)
+        if not markdown:
+            return
+        self.list_count += 1
+        references = _references(element)
+        self.add_block(
+            "list",
+            f"lst-{self.list_count:04d}",
+            markdown,
+            metadata={
+                "list_kind": _list_kind(element),
+                "item_count": item_count,
+                **({"references": references} if references else {}),
             },
         )
 
@@ -776,8 +1310,17 @@ def _clean_text(element: Any) -> str:
     return " ".join("".join(element.itertext()).split())
 
 
-def _markdown_text(element: Any) -> str:
-    return _collapse_markdown_whitespace(_markdown_text_inner(element))
+def _markdown_text(element: Any, *, preserve_blocks: bool = False) -> str:
+    html = _prepare_latexml_html_for_markdown(
+        _clean_latexml_html_fragment(_element_to_html(element))
+    )
+    markdown = convert(html, options=MARKDOWN_CONVERSION_OPTIONS)
+    if preserve_blocks:
+        return _clean_latexml_markdown_artifacts(
+            _compact_markdown_block(markdown),
+            preserve_blocks=True,
+        )
+    return _clean_latexml_markdown_artifacts(_collapse_markdown_whitespace(markdown))
 
 
 def _markdown_text_inner(element: Any) -> str:
@@ -812,6 +1355,8 @@ def _markdown_link_text(element: Any, child_text: str) -> str:
     label = _collapse_markdown_whitespace(child_text)
     if label.startswith("[") and label.endswith("]"):
         label = label[1:-1]
+    if href.startswith("#bib."):
+        label = _compact_citation_label(label)
     return f"[{label}]({href})"
 
 
@@ -832,7 +1377,7 @@ def _citation_markdown_text(element: Any) -> str:
         else:
             parts.append(child_text)
         parts.append(_citation_wrapper_text(child.tail or ""))
-    return "".join(parts)
+    return _clean_latexml_markdown_artifacts("".join(parts))
 
 
 def _citation_wrapper_text(value: str) -> str:
@@ -842,6 +1387,290 @@ def _citation_wrapper_text(value: str) -> str:
 def _inline_math_markdown(value: str) -> str:
     escaped = value.replace("$", r"\$")
     return f"${escaped}$"
+
+
+def _clean_latexml_markdown_artifacts(value: str, *, preserve_blocks: bool = False) -> str:
+    cleaned = _strip_undefined_citeauthor(value)
+    cleaned = _expand_markdown_autolinks(cleaned)
+    cleaned = _link_bare_urls(cleaned)
+    cleaned = re.sub(
+        r"\[([^\]]*?\(\d{4}[a-z]?\)[^\]]*?)\]\((#bib\.[^)]+)\)",
+        lambda match: f"[{_compact_citation_label(match.group(1))}]({match.group(2)})",
+        cleaned,
+    )
+    if preserve_blocks:
+        cleaned = re.sub(r"[ \t]+([,.;:])", r"\1", cleaned)
+        cleaned = "\n".join(
+            re.sub(r"(?<=\S)[ \t]{2,}", " ", line).rstrip() for line in cleaned.splitlines()
+        )
+        return cleaned.strip()
+    cleaned = re.sub(r"\s+([,.;:])", r"\1", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _strip_undefined_citeauthor(value: str) -> str:
+    return re.sub(
+        r"\\citeauthor\*?(?:\s*\[[^\]]*\])*\s*\{?[\w:./-]+\}?\s*",
+        "",
+        value,
+    )
+
+
+def _expand_markdown_autolinks(value: str) -> str:
+    return re.sub(
+        r"<(https?://[^<>\s]+)>",
+        lambda match: f"[{match.group(1)}]({match.group(1)})",
+        value,
+    )
+
+
+def _link_bare_urls(value: str) -> str:
+    protected_links: list[str] = []
+
+    def stash_link(match: re.Match[str]) -> str:
+        protected_links.append(match.group(0))
+        return f"\u0000BILIN_LINK_{len(protected_links) - 1}\u0000"
+
+    protected = re.sub(r"\[[^\]]+\]\(https?://[^)\s]+\)", stash_link, value)
+
+    def replace(match: re.Match[str]) -> str:
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in ".,;:":
+            trailing = url[-1] + trailing
+            url = url[:-1]
+        return f"[{url}]({url}){trailing}" if url else match.group(0)
+
+    linked = re.sub(r"(?<!\]\()https?://[^\s<>)\]]+", replace, protected)
+    for index, link in enumerate(protected_links):
+        linked = linked.replace(f"\u0000BILIN_LINK_{index}\u0000", link)
+    return linked
+
+
+def _compact_citation_label(label: str) -> str:
+    normalized = _collapse_markdown_whitespace(label.replace("\xa0", " "))
+    if re.fullmatch(r"\d+[a-z]?", normalized):
+        return normalized
+    match = re.match(r"(.+?\(\d{4}[a-z]?\))", normalized)
+    if match:
+        normalized = match.group(1)
+    normalized = re.sub(r"\s*\((\d{4}[a-z]?)\)", r" (\1)", normalized)
+    return normalized
+
+
+def _compact_markdown_block(markdown: str) -> str:
+    lines = [line.rstrip() for line in markdown.replace("\r\n", "\n").split("\n")]
+    compacted: list[str] = []
+    previous_blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank:
+            previous_blank = True
+            continue
+        if previous_blank and compacted and not _is_markdown_list_line(line):
+            compacted.append("")
+        compacted.append(line)
+        previous_blank = False
+    return "\n".join(compacted).strip()
+
+
+def _is_markdown_list_line(line: str) -> bool:
+    return bool(re.match(r"^\s*(?:[-+*]|\d+[.)])\s+", line))
+
+
+def _prepare_latexml_html_for_markdown(html: str) -> str:
+    without_markers = re.sub(
+        r"<span\b(?=[^>]*\bclass=(?P<quote>['\"])[^'\"]*"
+        r"(?:ltx_tag_item|ltx_itemmarker|ltx_tag_note)[^'\"]*(?P=quote))[^>]*>.*?</span>",
+        "",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    without_note_marks = re.sub(
+        r"<(?P<tag>span|sup)\b(?=[^>]*\bclass=(?P<quote>['\"])[^'\"]*"
+        r"ltx_note_mark[^'\"]*(?P=quote))[^>]*>.*?</(?P=tag)>",
+        "",
+        without_markers,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    without_footnote_wrappers = _inline_latexml_footnotes(without_note_marks)
+    without_cite_brackets = re.sub(
+        r"(<cite\b[^>]*>)\s*\[",
+        r"\1",
+        without_footnote_wrappers,
+        flags=re.IGNORECASE,
+    )
+    without_cite_brackets = re.sub(
+        r"\]\s*(</cite>)",
+        r"\1",
+        without_cite_brackets,
+        flags=re.IGNORECASE,
+    )
+    without_link_brackets = re.sub(
+        r"(<a\b[^>]*>)\s*\[([^\]]+)\]\s*(</a>)",
+        r"\1\2\3",
+        without_cite_brackets,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return re.sub(
+        r"<math\b(?P<attrs>[^>]*)>(?P<body>.*?)</math>",
+        _math_html_to_markdown,
+        without_link_brackets,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _inline_latexml_footnotes(html: str) -> str:
+    footnote_pattern = re.compile(
+        r"<span\b(?=[^>]*\bclass=(?P<quote1>['\"])[^'\"]*"
+        r"ltx_note[^'\"]*ltx_role_footnote[^'\"]*(?P=quote1))[^>]*>\s*"
+        r"<span\b(?=[^>]*\bclass=(?P<quote2>['\"])[^'\"]*"
+        r"ltx_note_outer[^'\"]*(?P=quote2))[^>]*>\s*"
+        r"<span\b(?=[^>]*\bclass=(?P<quote3>['\"])[^'\"]*"
+        r"ltx_note_content[^'\"]*(?P=quote3))[^>]*>"
+        r"(?P<content>.*?)</span>\s*</span>\s*</span>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        content = re.sub(r"\s+", " ", match.group("content")).strip()
+        content = content.removesuffix(".").strip()
+        return f" ({content})" if content else ""
+
+    return footnote_pattern.sub(replace, html)
+
+
+def _math_html_to_markdown(match: re.Match[str]) -> str:
+    attrs = match.group("attrs")
+    display = _html_attr(attrs, "display") == "block"
+    alttext = _html_attr(attrs, "alttext") or _html_attr(attrs, "tex")
+    tex = _normalize_math_tex(unescape(alttext)) if alttext else ""
+    if not tex:
+        body = match.group("body")
+        annotation = re.search(
+            r"<annotation\b[^>]*\bencoding=(?P<quote>['\"])[^'\"]*tex[^'\"]*(?P=quote)[^>]*>"
+            r"(?P<tex>.*?)</annotation>",
+            body,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        tex = _normalize_math_tex(unescape(annotation.group("tex"))) if annotation else ""
+    if not tex:
+        return ""
+    markdown_tex = _escape_math_tex_for_markdown_html(tex)
+    return f"\n\n$$\n{markdown_tex}\n$$\n\n" if display else f"${markdown_tex}$"
+
+
+def _escape_math_tex_for_markdown_html(tex: str) -> str:
+    escaped = escape(tex.replace("$", r"\$"), quote=False)
+    return escaped
+
+
+def _html_attr(attrs: str, name: str) -> str | None:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*=\s*(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
+        attrs,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return match.group("value") if match else None
+
+
+def _is_latexml_list_container(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    if "ltx_biblist" in class_name:
+        return False
+    if tag in {"ul", "ol", "dl"}:
+        return True
+    return any(token in class_name for token in ("ltx_itemize", "ltx_enumerate", "ltx_description"))
+
+
+def _is_latexml_generated_navigation(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    if tag not in {"nav", "div", "section", "ol", "ul"}:
+        return False
+    return any(
+        token in class_name
+        for token in (
+            "ltx_toc",
+            "ltx_toclist",
+            "ltx_list_toc",
+            "ltx_list_lot",
+            "ltx_list_lof",
+        )
+    )
+
+
+def _is_latexml_list_item(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    if "ltx_bibitem" in class_name:
+        return False
+    return tag in {"li", "dt", "dd"} or "ltx_item" in class_name.split()
+
+
+def _is_latexml_list_marker(element: Any) -> bool:
+    class_name = element.attrib.get("class", "").lower()
+    return "ltx_tag_item" in class_name or "ltx_itemmarker" in class_name
+
+
+def _list_kind(element: Any) -> str:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    if tag == "ol" or "ltx_enumerate" in class_name:
+        return "ordered"
+    if tag == "dl" or "ltx_description" in class_name:
+        return "description"
+    return "unordered"
+
+
+def _list_markdown(element: Any) -> tuple[str, int]:
+    item_count = len(_direct_list_items(element))
+    return _markdown_text(element, preserve_blocks=True), item_count
+
+
+def _list_markdown_lines(element: Any, depth: int = 0) -> list[str]:
+    lines: list[str] = []
+    kind = _list_kind(element)
+    for index, item in enumerate(_direct_list_items(element), start=1):
+        content = _list_item_content_markdown(item)
+        indent = "  " * depth
+        prefix = f"{index}. " if kind == "ordered" else "- "
+        if kind == "description":
+            prefix = "- "
+        if content:
+            lines.append(f"{indent}{prefix}{content}")
+        else:
+            lines.append(f"{indent}{prefix}".rstrip())
+        for nested in _direct_child_lists(item):
+            lines.extend(_list_markdown_lines(nested, depth + 1))
+    return lines
+
+
+def _direct_list_items(element: Any) -> list[Any]:
+    return [child for child in list(element) if _is_latexml_list_item(child)]
+
+
+def _direct_child_lists(element: Any) -> list[Any]:
+    return [child for child in list(element) if _is_latexml_list_container(child)]
+
+
+def _list_item_content_markdown(element: Any) -> str:
+    parts: list[str] = []
+    if element.text and element.text.strip():
+        parts.append(element.text)
+    for child in list(element):
+        if _is_latexml_list_container(child) or _is_latexml_list_marker(child):
+            if child.tail and child.tail.strip():
+                parts.append(child.tail)
+            continue
+        text = _markdown_text(child)
+        if text:
+            parts.append(text)
+        if child.tail and child.tail.strip():
+            parts.append(child.tail)
+    return _clean_latexml_markdown_artifacts(_collapse_markdown_whitespace(" ".join(parts)))
 
 
 def _first_descendant(element: Any, tags: set[str]) -> Any | None:
@@ -858,13 +1687,17 @@ def _caption_text(element: Any) -> str | None:
         if tag in {"figcaption", "caption"} or "caption" in class_name.lower():
             text = _markdown_text(candidate)
             if text:
-                return _strip_latexml_caption_tag(text)
+                return _strip_caption_markdown_decorations(_strip_latexml_caption_tag(text))
     return None
 
 
 def _latexml_environment_kind(element: Any) -> str:
+    if _is_algorithm_container(element):
+        return "algorithm"
+    if _is_table_figure(element):
+        return "table"
     caption_kind = _caption_tag_kind(element)
-    if caption_kind in {"figure", "table"}:
+    if caption_kind in {"figure", "table", "algorithm"}:
         return caption_kind
     return "table" if _is_table_figure(element) else "figure"
 
@@ -872,6 +1705,8 @@ def _latexml_environment_kind(element: Any) -> str:
 def _caption_tag_kind(element: Any) -> str | None:
     for candidate in element.iter():
         class_name = candidate.attrib.get("class", "").lower()
+        if "ltx_tag_algorithm" in class_name:
+            return "algorithm"
         if "ltx_tag_table" in class_name:
             return "table"
         if "ltx_tag_figure" in class_name:
@@ -879,6 +1714,8 @@ def _caption_tag_kind(element: Any) -> str | None:
     text = _caption_text_without_tag_stripping(element)
     if text and re.match(r"^\s*table\s+\d+", text, flags=re.IGNORECASE):
         return "table"
+    if text and re.match(r"^\s*algorithm\s+\d+", text, flags=re.IGNORECASE):
+        return "algorithm"
     if text and re.match(r"^\s*figure\s+\d+", text, flags=re.IGNORECASE):
         return "figure"
     return None
@@ -896,12 +1733,44 @@ def _caption_text_without_tag_stripping(element: Any) -> str | None:
 
 
 def _strip_latexml_caption_tag(text: str) -> str:
-    return re.sub(r"^\s*(?:figure|fig\.|table)\s+\d+[.:]\s*", "", text, flags=re.IGNORECASE)
+    return re.sub(
+        r"^\s*(?:figure|fig\.|table|algorithm|alg\.)\s+\d+[.:]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _strip_caption_markdown_decorations(text: str) -> str:
+    stripped = text.strip()
+    for marker in ("**", "*", "__", "_"):
+        if (
+            stripped.startswith(marker)
+            and stripped.endswith(marker)
+            and len(stripped) > len(marker) * 2
+        ):
+            return stripped[len(marker) : -len(marker)].strip()
+    return stripped
 
 
 def _is_table_figure(element: Any) -> bool:
     class_name = element.attrib.get("class", "").lower()
     return "ltx_table" in class_name
+
+
+def _is_algorithm_container(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    if tag not in {"figure", "table", "div"}:
+        return False
+    class_name = element.attrib.get("class", "").lower()
+    if (
+        "ltx_algorithm" in class_name
+        or "ltx_float_algorithm" in class_name
+        or "algorithm" in class_name.split()
+    ):
+        return True
+    caption = _direct_caption_text_without_tag_stripping(element)
+    return bool(caption and re.match(r"^\s*algorithm\s+\d+", caption, flags=re.IGNORECASE))
 
 
 def _is_equation_container(element: Any) -> bool:
@@ -921,6 +1790,17 @@ def _is_equation_container(element: Any) -> bool:
         if any(token in child_class for token in equation_classes):
             return True
     return False
+
+
+def _direct_caption_text_without_tag_stripping(element: Any) -> str | None:
+    for child in list(element):
+        tag = _local_name(child.tag)
+        class_name = child.attrib.get("class", "")
+        if tag in {"figcaption", "caption"} or "caption" in class_name.lower():
+            text = _markdown_text(child)
+            if text:
+                return text
+    return None
 
 
 def _extract_math_tex(element: Any) -> str | None:
@@ -972,7 +1852,285 @@ def _extract_single_math_tex(element: Any) -> str | None:
 
 
 def _normalize_math_tex(value: str) -> str:
-    return value.replace("%\r\n", "").replace("%\n", "").replace("\\displaystyle", "").strip()
+    normalized = value.replace("%\r\n", "").replace("%\n", "").replace("\\displaystyle", "")
+    normalized = _normalize_legacy_text_font_commands(normalized)
+    normalized = _apply_latex_command_group_rules(normalized)
+    normalized = _replace_latex_command_group(
+        normalized,
+        "pmatrix",
+        lambda body: rf"\begin{{pmatrix}}{body}\end{{pmatrix}}",
+    )
+    normalized = _replace_latex_command_group(
+        normalized,
+        "textsc",
+        lambda body: rf"\text{{{body.upper()}}}",
+    )
+    normalized = _replace_latex_command_group(normalized, "mbox", _normalize_mbox_command)
+    normalized = _strip_raisebox_wrappers(normalized)
+    normalized = re.sub(r"\\coloneqq\b", ":=", normalized)
+    normalized = re.sub(r"\\eqqcolon\b", r"\\mathrel{=:}", normalized)
+    normalized = re.sub(
+        r"\\buildrel\s*\{([^{}]+)\}\s*\\over\s*\{([^{}]+)\}",
+        r"\\overset{\1}{\2}",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\\expectationvalue\s*\{((?:[^{}]|\{[^{}]*\})+)\}",
+        r"\\left\\langle \1 \\right\\rangle",
+        normalized,
+    )
+    normalized = re.sub(
+        r"(\\begin\{(?:[pbvVB]?matrix|smallmatrix|matrix)\})\s*\[[^\]]+\]",
+        r"\1",
+        normalized,
+    )
+    normalized = re.sub(r"(\\begin\{array\})\s*\[\]\s*(\{[^}]+\})", r"\1\2", normalized)
+    normalized = re.sub(
+        r"\\begin\{(?:split|eqnarray\*?|IEEEeqnarray\*?)\}", r"\\begin{aligned}", normalized
+    )
+    normalized = re.sub(
+        r"\\end\{(?:split|eqnarray\*?|IEEEeqnarray\*?)\}", r"\\end{aligned}", normalized
+    )
+    normalized = re.sub(r"\\begin\{(?:equation|equation\*)\}", "", normalized)
+    normalized = re.sub(r"\\end\{(?:equation|equation\*)\}", "", normalized)
+    normalized = re.sub(
+        r"\\(big|Big|bigg|Bigg)([lrm]?)\s*\{\s*(\\?[{}()[\]|.])\s*\}",
+        r"\\\1\2\3",
+        normalized,
+    )
+    normalized = re.sub(r"\{\\rm\s+([^{}]+)\}", r"\\mathrm{\1}", normalized)
+    normalized = re.sub(r"\\mspace\s*\{[^{}]*\}", "", normalized)
+    normalized = re.sub(r"\\strut\b", "", normalized)
+    normalized = re.sub(r"\\xspace\b|\\protect\b", "", normalized)
+    normalized = re.sub(r"\\(?:label|vref|pageref|autoref|cref|Cref)\s*\{[^{}]*\}", "", normalized)
+    normalized = re.sub(r"\\eqref\s*\{[^{}]*\}", r"(\text{?})", normalized)
+    normalized = re.sub(r"\\ref\s*\{[^{}]*\}", r"\text{?}", normalized)
+    normalized = re.sub(r"\\iddots\b", r"\\ddots", normalized)
+    normalized = re.sub(r"\\hline\s*\\cr\s*(?:\\\\\s*(?:\[[^\]]+\])?)?", r"\\\\", normalized)
+    normalized = re.sub(r"\\(?:cline|cmidrule)\s*(?:\[[^\]]+\])?\s*\{[^{}]*\}", "", normalized)
+    normalized = re.sub(r"\\vline\b", "|", normalized)
+    normalized = re.sub(r"\\hfill\b|\\dotfill\b|\\hrulefill\b", "", normalized)
+    normalized = re.sub(r"\\\\\s*\[[^\]]+\]", r"\\\\", normalized)
+    normalized = normalized.replace("\\cr", r"\\")
+    normalized = re.sub(r"\\(?:no)?pagebreak\s*(?:\[[^\]]+\])?", "", normalized)
+    normalized = re.sub(r"\\(?:linebreak|break)\s*(?:\[[^\]]+\])?", "", normalized)
+    normalized = re.sub(r"\\\\\s*\\\\", r"\\\\", normalized)
+    return normalized.strip()
+
+
+def _apply_latex_command_group_rules(value: str) -> str:
+    normalized = value
+    for rule in LATEX_COMPATIBILITY_COMMAND_GROUP_RULES:
+        group_count = int(rule["group_count"])
+        for command in rule["commands"]:
+            normalized = _replace_latex_command_groups(
+                normalized,
+                command,
+                group_count,
+                lambda groups, rule=rule: _render_latex_command_rule(rule, groups),
+            )
+    if LATEX_COMPATIBILITY_SINGLE_TOKEN_COMMANDS:
+        commands = "|".join(
+            re.escape(command) for command in LATEX_COMPATIBILITY_SINGLE_TOKEN_COMMANDS
+        )
+        normalized = re.sub(
+            rf"\\(?:{commands})\s+([A-Za-z0-9])",
+            r"\\mathbb{\1}",
+            normalized,
+        )
+    return normalized
+
+
+def _render_latex_command_rule(rule: dict[str, Any], groups: list[str]) -> str:
+    strategy = rule["strategy"]
+    if strategy == "template":
+        return _render_latex_template(rule["replacement"], groups)
+    if strategy == "unwrap":
+        return groups[0]
+    if strategy == "keep_arg":
+        return groups[int(rule["keep_arg_index"])]
+    return "\\" + str(rule["commands"][0]) + "".join(f"{{{group}}}" for group in groups)
+
+
+def _render_latex_template(template: str, groups: list[str]) -> str:
+    rendered = template
+    for index, group in enumerate(groups, start=1):
+        rendered = rendered.replace(f"#{index}", group)
+    return rendered
+
+
+def _normalize_legacy_text_font_commands(value: str) -> str:
+    def replace_text(match: re.Match[str]) -> str:
+        text_command = LEGACY_TEXT_FONT_COMMANDS[match.group("command")][0]
+        return rf"\{text_command}{{{match.group('body').strip()}}}"
+
+    def replace_group(match: re.Match[str]) -> str:
+        math_command = LEGACY_TEXT_FONT_COMMANDS[match.group("command")][1]
+        return rf"\{math_command}{{{match.group('body').strip()}}}"
+
+    normalized = re.sub(
+        r"\\text\{\s*\\(?P<command>bf|it|rm|sf|sl|tt)\s+(?P<body>[^{}]+)\}",
+        replace_text,
+        value,
+    )
+    return re.sub(
+        r"\{\\(?P<command>bf|it|rm|sf|sl|tt)\s+(?P<body>[^{}]+)\}",
+        replace_group,
+        normalized,
+    )
+
+
+def _replace_latex_command_group(
+    value: str,
+    command: str,
+    replace: Any,
+) -> str:
+    marker = f"\\{command}"
+    parts: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith(marker, index) and not _is_latex_command_char(
+            value[index + len(marker) : index + len(marker) + 1]
+        ):
+            group_start = _skip_spaces(value, index + len(marker))
+            parsed = _read_latex_braced_group(value, group_start)
+            if parsed is not None:
+                body, end = parsed
+                parts.append(replace(body))
+                index = end
+                continue
+        parts.append(value[index])
+        index += 1
+    return "".join(parts)
+
+
+def _replace_latex_command_groups(
+    value: str,
+    command: str,
+    group_count: int,
+    replace: Any,
+) -> str:
+    marker = f"\\{command}"
+    parts: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith(marker, index) and not _is_latex_command_char(
+            value[index + len(marker) : index + len(marker) + 1]
+        ):
+            cursor = _skip_spaces(value, index + len(marker))
+            groups: list[str] = []
+            for _ in range(group_count):
+                parsed = _read_latex_braced_group(value, cursor)
+                if parsed is None:
+                    break
+                groups.append(parsed[0])
+                cursor = _skip_spaces(value, parsed[1])
+            if len(groups) == group_count:
+                parts.append(replace(groups))
+                index = cursor
+                continue
+        parts.append(value[index])
+        index += 1
+    return "".join(parts)
+
+
+def _strip_raisebox_wrappers(value: str) -> str:
+    marker = "\\raisebox"
+    parts: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith(marker, index) and not _is_latex_command_char(
+            value[index + len(marker) : index + len(marker) + 1]
+        ):
+            cursor = _skip_spaces(value, index + len(marker))
+            height = _read_latex_braced_group(value, cursor)
+            if height is not None:
+                cursor = _skip_optional_latex_groups(value, height[1])
+                body = _read_latex_braced_group(value, cursor)
+                if body is not None:
+                    parts.append(_strip_math_delimiters(body[0]))
+                    index = body[1]
+                    continue
+        parts.append(value[index])
+        index += 1
+    return "".join(parts)
+
+
+def _normalize_mbox_command(body: str) -> str:
+    if not body:
+        return ""
+    segments = _split_latex_dollar_segments(body)
+    rendered: list[str] = []
+    for text, is_math in segments:
+        if not text:
+            continue
+        if is_math:
+            rendered.append(text)
+        else:
+            rendered.append(rf"\text{{{text}}}")
+    return "".join(rendered)
+
+
+def _split_latex_dollar_segments(value: str) -> list[tuple[str, bool]]:
+    segments: list[tuple[str, bool]] = []
+    start = 0
+    in_math = False
+    index = 0
+    while index < len(value):
+        if value[index] == "$" and (index == 0 or value[index - 1] != "\\"):
+            segments.append((value[start:index], in_math))
+            in_math = not in_math
+            start = index + 1
+        index += 1
+    segments.append((value[start:], in_math))
+    return segments
+
+
+def _strip_math_delimiters(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("$") and stripped.endswith("$") and len(stripped) >= 2:
+        return stripped[1:-1]
+    return stripped
+
+
+def _read_latex_braced_group(value: str, open_index: int) -> tuple[str, int] | None:
+    if open_index >= len(value) or value[open_index] != "{":
+        return None
+    depth = 0
+    index = open_index
+    while index < len(value):
+        char = value[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return value[open_index + 1 : index], index + 1
+        index += 1
+    return None
+
+
+def _skip_optional_latex_groups(value: str, index: int) -> int:
+    cursor = _skip_spaces(value, index)
+    while cursor < len(value) and value[cursor] == "[":
+        end = value.find("]", cursor + 1)
+        if end < 0:
+            return cursor
+        cursor = _skip_spaces(value, end + 1)
+    return cursor
+
+
+def _skip_spaces(value: str, index: int) -> int:
+    while index < len(value) and value[index].isspace():
+        index += 1
+    return index
+
+
+def _is_latex_command_char(value: str) -> bool:
+    return bool(value) and (value[0].isalpha() or value[0] == "@")
 
 
 def _asset_references(element: Any) -> list[str]:
@@ -1212,15 +2370,26 @@ def _resolve_local_asset_reference(
     if source_root is not None:
         roots.append(source_root.resolve())
     if relative.is_absolute():
-        candidates = [relative.resolve()]
+        candidates = _asset_reference_candidates(relative)
     elif ".." in relative.parts:
         return None
     else:
-        candidates = [(root / relative).resolve() for root in roots]
+        candidates = []
+        for root in roots:
+            candidates.extend(_asset_reference_candidates(root / relative))
     for candidate in candidates:
         if candidate.is_file() and any(candidate.is_relative_to(root) for root in roots):
             return candidate
     return None
+
+
+def _asset_reference_candidates(path: Path) -> list[Path]:
+    candidates = [path.resolve()]
+    if path.suffix:
+        return candidates
+    for suffix in LATEX_GRAPHIC_SUFFIXES:
+        candidates.append(path.with_suffix(suffix).resolve())
+    return candidates
 
 
 def prepare_web_asset(
@@ -1303,9 +2472,33 @@ def _references(element: ET.Element) -> list[dict[str, str]]:
 
 
 def _html_fragment(element: Any) -> str:
+    html = _element_to_html(element)
+    return _clean_latexml_html_fragment(html)
+
+
+def _element_to_html(element: Any) -> str:
     if isinstance(element, HtmlElement):
         return element.to_html()
     return ET.tostring(element, encoding="unicode", method="html")
+
+
+def _clean_latexml_html_fragment(html: str) -> str:
+    cleaned = re.sub(
+        r"<tr\b[^>]*>\s*(?:<t[dh]\b[^>]*>\s*(?:<span\b[^>]*>\s*)?"
+        r"\\(?:toprule|midrule|bottomrule|cmidrule)(?:\s*\{[^}]*\}|\s*\([^)]*\)|\s*\[[^\]]*\])?"
+        r"\s*(?:</span>)?\s*</t[dh]>\s*)+</tr>",
+        "",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
+        r"(?:<span\b[^>]*>\s*)?\\(?:toprule|midrule|bottomrule|cmidrule)"
+        r"(?:\s*\{[^}]*\}|\s*\([^)]*\)|\s*\[[^\]]*\])?\s*(?:</span>)?",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned
 
 
 def _label(element: ET.Element) -> str | None:
@@ -1314,6 +2507,19 @@ def _label(element: ET.Element) -> str | None:
         if value:
             return value
     return None
+
+
+def _equation_numbers(element: ET.Element) -> list[str]:
+    numbers: list[str] = []
+    for candidate in element.iter():
+        class_name = candidate.attrib.get("class", "").lower()
+        classes = class_name.split()
+        if "ltx_eqn_eqno" not in classes and "ltx_tag_equation" not in classes:
+            continue
+        text = _clean_text(candidate)
+        if text and text not in numbers:
+            numbers.append(text)
+    return numbers
 
 
 def _find_source_archive(bundle_path: Path) -> Path:

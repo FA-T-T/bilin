@@ -121,10 +121,10 @@ def test_acceptance_cli_exports_golden_fixture(bilin_home: Path, tmp_path: Path)
     assert '"parse_mode": "fixture-html"' in result.output
     library_path = output_dir / "library"
     assert list(library_path.rglob("document/document.json"))
-    assert list(library_path.rglob("export/source.md"))
-    assert list(library_path.rglob("export/translation.zh-CN.md"))
-    assert list(library_path.rglob("export/bilingual.zh-CN.md"))
-    assert list(library_path.rglob("export/lecture-notes.md"))
+    assert list(library_path.rglob("export/*-source.zip"))
+    assert list(library_path.rglob("export/*-translation-zh-CN.zip"))
+    assert list(library_path.rglob("export/*-bilingual-zh-CN.zip"))
+    assert list(library_path.rglob("export/*-lecture-notes.zip"))
     assert list(library_path.rglob("export/article-bundle.zip"))
 
 

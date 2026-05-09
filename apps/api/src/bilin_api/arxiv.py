@@ -9,6 +9,27 @@ import httpx
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_SOURCE_URL = "https://arxiv.org/e-print/{idv}"
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{idv}.pdf"
+OLD_STYLE_ARCHIVE_ALIASES = {
+    "condmat": "cond-mat",
+    "adaporg": "adap-org",
+    "alggeom": "alg-geom",
+    "cmplg": "cmp-lg",
+    "functan": "funct-an",
+    "grqc": "gr-qc",
+    "hepex": "hep-ex",
+    "heplat": "hep-lat",
+    "hepph": "hep-ph",
+    "hepth": "hep-th",
+    "mathph": "math-ph",
+    "nuchex": "nucl-ex",
+    "nucth": "nucl-th",
+    "patt-sol": "patt-sol",
+    "qalg": "q-alg",
+    "qbio": "q-bio",
+    "qfin": "q-fin",
+    "quantph": "quant-ph",
+    "solvint": "solv-int",
+}
 
 
 @dataclass(frozen=True)
@@ -57,14 +78,33 @@ def parse_arxiv_identity(value: str, version: str | None = None) -> ArxivIdentit
     cleaned = cleaned.rstrip("/")
     if "/" in cleaned and ("arxiv.org" in cleaned or cleaned.startswith("abs/")):
         cleaned = cleaned.split("/abs/")[-1]
+    if re.fullmatch(r"\d{7}", cleaned):
+        msg = (
+            f"Invalid arXiv id: {value}. Old-style arXiv ids before 2007 require an archive "
+            "prefix, for example cond-mat/9407022, hep-th/9407022, gr-qc/9407022, or "
+            "quant-ph/9705052. The bare number is ambiguous."
+        )
+        raise ValueError(msg)
+    cleaned = normalize_old_style_archive_alias(cleaned)
     match = re.fullmatch(r"(?P<bare>(?:[a-z-]+/\d{7})|(?:\d{4}\.\d{4,5}))(?P<v>v\d+)?", cleaned)
     if not match:
-        msg = f"Invalid arXiv id: {value}"
+        msg = (
+            f"Invalid arXiv id: {value}. Use a modern id like 1706.03762, or a complete "
+            "old-style id with archive prefix such as cond-mat/9407022."
+        )
         raise ValueError(msg)
     parsed_version = version or match.group("v")
     if parsed_version and not parsed_version.startswith("v"):
         parsed_version = f"v{parsed_version}"
     return ArxivIdentity(bare_id=match.group("bare"), version=parsed_version)
+
+
+def normalize_old_style_archive_alias(value: str) -> str:
+    if "/" not in value:
+        return value
+    archive, suffix = value.split("/", 1)
+    normalized_archive = OLD_STYLE_ARCHIVE_ALIASES.get(archive.casefold(), archive)
+    return f"{normalized_archive}/{suffix}"
 
 
 async def resolve_arxiv_metadata(
@@ -147,7 +187,7 @@ def metadata_from_entry(
 ) -> ArxivMetadata:
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     raw_entry_id = _text(entry.find("atom:id", ns))
-    concrete_id = raw_entry_id.rstrip("/").split("/")[-1]
+    concrete_id = _arxiv_id_from_entry_url(raw_entry_id)
     parsed = parse_arxiv_identity(concrete_id)
     version = parsed.version or (requested.version if requested else None) or "v1"
     source_id = f"{parsed.bare_id}{version}"
@@ -170,6 +210,13 @@ def metadata_from_entry(
         source_url=ARXIV_SOURCE_URL.format(idv=source_id),
         pdf_url=ARXIV_PDF_URL.format(idv=source_id),
     )
+
+
+def _arxiv_id_from_entry_url(value: str) -> str:
+    cleaned = value.strip().rstrip("/")
+    if "/abs/" in cleaned:
+        return cleaned.split("/abs/", 1)[1]
+    return cleaned.rsplit("/", 1)[-1]
 
 
 def normalize_title(title: str) -> str:

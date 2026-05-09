@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from bilin_api.article_store import (
+    archive_article_revision,
+    delete_article_revision,
     get_article_item,
     get_article_revision,
     list_article_items,
@@ -47,9 +49,21 @@ from bilin_api.qa_service import (
     prepare_question_context,
     stream_question_answer_events,
 )
+from bilin_api.reader_card_service import (
+    archive_article_reader_card,
+    create_manual_reader_card,
+    export_reader_cards_to_obsidian,
+    extract_article_reader_cards,
+    generate_article_reader_card,
+    get_article_reader_cards,
+    queue_reader_card_extraction,
+    queue_reader_card_generation,
+    update_article_reader_card,
+)
 from bilin_api.schemas import (
     ArticleChatHistory,
     ArticleCitations,
+    ArticleDeleteResult,
     ArticleDocument,
     ArticleEmbeddingStatus,
     ArticleExportRequest,
@@ -81,6 +95,16 @@ from bilin_api.schemas import (
     NoteTemplateUpdate,
     ObsidianClipRequest,
     ObsidianClipResult,
+    ReaderCard,
+    ReaderCardCreate,
+    ReaderCardExtractionRequest,
+    ReaderCardExtractionResult,
+    ReaderCardGenerationRequest,
+    ReaderCardGenerationResult,
+    ReaderCardObsidianExportRequest,
+    ReaderCardObsidianExportResult,
+    ReaderCards,
+    ReaderCardUpdate,
     TranslationBatchRequest,
     TranslationBatchResult,
     TranslationMemoryLookupResult,
@@ -102,18 +126,43 @@ _EXPORT_MEDIA_TYPES = {
 
 
 @router.get("", response_model=list[ArticleListItem])
-async def list_articles(library_id: str) -> list[ArticleListItem]:
+async def list_articles(
+    library_id: str,
+    target_language: str = Query(default="zh-CN", min_length=2, max_length=40),
+) -> list[ArticleListItem]:
     library = await _library_or_404(library_id)
-    return await list_article_items(library)
+    return await list_article_items(library, target_language)
 
 
 @router.get("/{revision_id}", response_model=ArticleListItem)
-async def get_article(library_id: str, revision_id: str) -> ArticleListItem:
+async def get_article(
+    library_id: str,
+    revision_id: str,
+    target_language: str = Query(default="zh-CN", min_length=2, max_length=40),
+) -> ArticleListItem:
     library = await _library_or_404(library_id)
-    item = await get_article_item(library, revision_id)
+    item = await get_article_item(library, revision_id, target_language)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
     return item
+
+
+@router.post("/{revision_id}/archive", response_model=ArticleListItem)
+async def archive_article(library_id: str, revision_id: str) -> ArticleListItem:
+    library = await _library_or_404(library_id)
+    item = await archive_article_revision(library, revision_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
+    return item
+
+
+@router.delete("/{revision_id}", response_model=ArticleDeleteResult)
+async def delete_article(library_id: str, revision_id: str) -> ArticleDeleteResult:
+    library = await _library_or_404(library_id)
+    result = await delete_article_revision(library, revision_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
+    return result
 
 
 @router.get("/{revision_id}/document", response_model=ArticleDocument)
@@ -285,6 +334,126 @@ async def put_glossary_term(
     if term is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Glossary term not found")
     return term
+
+
+@router.get("/{revision_id}/cards", response_model=ReaderCards)
+async def get_reader_cards(
+    library_id: str,
+    revision_id: str,
+    target_language: str = "zh-CN",
+) -> ReaderCards:
+    library = await _library_or_404(library_id)
+    return await get_article_reader_cards(library, revision_id, target_language)
+
+
+@router.post("/{revision_id}/cards", response_model=ReaderCard, status_code=status.HTTP_201_CREATED)
+async def post_reader_card(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardCreate,
+) -> ReaderCard:
+    library = await _library_or_404(library_id)
+    try:
+        return await create_manual_reader_card(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.put("/{revision_id}/cards/{card_id}", response_model=ReaderCard)
+async def put_reader_card(
+    library_id: str,
+    revision_id: str,
+    card_id: str,
+    payload: ReaderCardUpdate,
+) -> ReaderCard:
+    library = await _library_or_404(library_id)
+    card = await update_article_reader_card(library, revision_id, card_id, payload)
+    if card is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reader card not found")
+    return card
+
+
+@router.delete("/{revision_id}/cards/{card_id}", response_model=ReaderCard)
+async def delete_reader_card(
+    library_id: str,
+    revision_id: str,
+    card_id: str,
+) -> ReaderCard:
+    library = await _library_or_404(library_id)
+    card = await archive_article_reader_card(library, revision_id, card_id)
+    if card is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reader card not found")
+    return card
+
+
+@router.post("/{revision_id}/cards/extract", response_model=ReaderCardExtractionResult)
+async def post_reader_card_extraction(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardExtractionRequest,
+) -> ReaderCardExtractionResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await extract_article_reader_cards(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{revision_id}/cards/extract/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_reader_card_extraction_job(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardExtractionRequest,
+) -> Job:
+    library = await _library_or_404(library_id)
+    return await queue_reader_card_extraction(library, revision_id, payload)
+
+
+@router.post("/{revision_id}/cards/generate", response_model=ReaderCardGenerationResult)
+async def post_reader_card_generation(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardGenerationRequest,
+) -> ReaderCardGenerationResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await generate_article_reader_card(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{revision_id}/cards/generate/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_reader_card_generation_job(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardGenerationRequest,
+) -> Job:
+    library = await _library_or_404(library_id)
+    return await queue_reader_card_generation(library, revision_id, payload)
+
+
+@router.post(
+    "/{revision_id}/cards/export/obsidian",
+    response_model=ReaderCardObsidianExportResult,
+)
+async def post_reader_card_obsidian_export(
+    library_id: str,
+    revision_id: str,
+    payload: ReaderCardObsidianExportRequest,
+) -> ReaderCardObsidianExportResult:
+    library = await _library_or_404(library_id)
+    try:
+        return await export_reader_cards_to_obsidian(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{revision_id}/chat", response_model=ArticleChatHistory)

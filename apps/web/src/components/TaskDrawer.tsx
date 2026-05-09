@@ -1,33 +1,73 @@
-import { ActionIcon, Badge, Drawer, Group, Progress, Stack, Text, Tooltip } from "@mantine/core";
-import { Pause, Play, Square } from "lucide-react";
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Drawer,
+  Group,
+  Progress,
+  Stack,
+  Text,
+  Tooltip
+} from "@mantine/core";
+import { Pause, Play, Square, Trash2 } from "lucide-react";
+import { memo } from "react";
 
-import { useJobAction, useJobEvents, useJobs } from "../api/hooks";
+import { useClearJobs, useJobAction, useJobEvents, useJobs, useJobSummary } from "../api/hooks";
 import type { Job } from "../api/types";
 import { useT } from "../i18n";
 import { useUiStore } from "../state/ui";
 
+const TASK_DRAWER_LIMIT = 120;
+
 export function TaskDrawer() {
   const t = useT();
-  useJobEvents();
   const opened = useUiStore((state) => state.taskDrawerOpen);
+  useJobEvents(opened);
   const close = useUiStore((state) => state.closeTaskDrawer);
-  const jobs = useJobs();
+  const jobs = useJobs({ limit: TASK_DRAWER_LIMIT, enabled: opened });
+  const summary = useJobSummary();
+  const clearJobs = useClearJobs();
+  const jobCount = summary.data?.total ?? jobs.data?.length ?? 0;
+  const shownJobCount = jobs.data?.length ?? 0;
 
   return (
     <Drawer opened={opened} onClose={close} position="right" title={t("task.title")} size="lg">
       <Stack gap="md">
-        <Group justify="space-between">
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Text size="sm" c="dimmed">
             {t("task.description")}
           </Text>
+          <Button
+            size="compact-sm"
+            variant="light"
+            color="red"
+            leftSection={<Trash2 size={14} aria-hidden="true" />}
+            loading={clearJobs.isPending}
+            disabled={jobCount === 0}
+            onClick={() => clearJobs.mutate()}
+          >
+            {t("task.clearAll")}
+          </Button>
         </Group>
+        <JobSummaryStrip
+          queued={summary.data?.queued ?? 0}
+          running={summary.data?.running ?? 0}
+          paused={summary.data?.paused ?? 0}
+          succeeded={summary.data?.succeeded ?? 0}
+          failed={summary.data?.failed ?? 0}
+        />
+        {jobCount > shownJobCount ? (
+          <Text size="xs" c="dimmed">
+            {t("task.showingRecent", { shown: shownJobCount, total: jobCount })}
+          </Text>
+        ) : null}
         {jobs.isError ? (
           <Text c="red" size="sm">
             {t("task.apiUnavailable")}
           </Text>
         ) : null}
         <Stack gap="sm">
-          {(jobs.data ?? []).length === 0 ? (
+          {jobCount === 0 ? (
             <Text c="dimmed" size="sm">
               {t("task.empty")}
             </Text>
@@ -40,7 +80,40 @@ export function TaskDrawer() {
   );
 }
 
-function TaskRow({ job }: { job: Job }) {
+function JobSummaryStrip({
+  queued,
+  running,
+  paused,
+  succeeded,
+  failed
+}: {
+  queued: number;
+  running: number;
+  paused: number;
+  succeeded: number;
+  failed: number;
+}) {
+  const t = useT();
+  return (
+    <Group gap={6} className="task-summary-strip">
+      <Badge variant="light">{t("task.statusQueued", { count: queued })}</Badge>
+      <Badge variant="light" color="blue">
+        {t("task.statusRunning", { count: running })}
+      </Badge>
+      <Badge variant="light" color="yellow">
+        {t("task.statusPaused", { count: paused })}
+      </Badge>
+      <Badge variant="light" color="green">
+        {t("task.statusSucceeded", { count: succeeded })}
+      </Badge>
+      <Badge variant="light" color="red">
+        {t("task.statusFailed", { count: failed })}
+      </Badge>
+    </Group>
+  );
+}
+
+const TaskRow = memo(function TaskRow({ job }: { job: Job }) {
   const t = useT();
   const pause = useJobAction("pause");
   const resume = useJobAction("resume");
@@ -106,7 +179,7 @@ function TaskRow({ job }: { job: Job }) {
       ) : null}
     </div>
   );
-}
+});
 
 function jobErrorText(job: Job): string {
   const error = job.error ?? {};

@@ -33,7 +33,7 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 ## 現在の MVP
 
-v0.2.0 MVP は local library の作成、arXiv source package import、local TeX archive import、Markdown の弱構造 document import、PDF の source artifact 保存、LaTeXML による TeX parsing、structured document blocks と assets の保存、real figure/table rendering、OpenAI-compatible または Anthropic-compatible provider による paragraph/caption translation、parser update 後の translation variant preservation、translation memory review、article glossary、macOS Keychain provider key storage、article-grounded streaming Q&A、Obsidian への bilingual excerpt 保存、editable lecture-note patches、custom note templates、browser download による Markdown/bundle export を備えています。
+v0.2.1 MVP は local library の作成、arXiv source package import、local TeX archive import、Markdown の弱構造 document import、PDF の source artifact 保存、LaTeXML による TeX parsing、structured document blocks と assets の保存、real figure/table rendering、OpenAI-compatible または Anthropic-compatible provider による paragraph/caption translation、parser update 後の translation variant preservation、translation memory review、article glossary、macOS Keychain provider key storage、article-grounded streaming Q&A、Obsidian への bilingual excerpt 保存、editable lecture-note patches、custom note templates、lightweight reader cards、browser download による Markdown/bundle export を備えています。
 
 理紐は local-first かつ lightweight です。Docker、Redis、Celery、account system、hosted backend、built-in cloud sync は使いません。PDF は import と保存ができますが、この MVP では parse、open、OCR、translate、reader embed は行いません。
 

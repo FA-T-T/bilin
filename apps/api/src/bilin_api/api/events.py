@@ -6,7 +6,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from bilin_api.repositories import list_jobs
+from bilin_api.repositories import get_job_summary
 
 router = APIRouter(tags=["events"])
 
@@ -16,8 +16,8 @@ async def events(request: Request) -> StreamingResponse:
     async def stream():
         last_payload = ""
         while not await request.is_disconnected():
-            jobs = await list_jobs()
-            payload = json.dumps([job.model_dump(mode="json") for job in jobs])
+            summary = await get_job_summary()
+            payload = json.dumps(summary.model_dump(mode="json"))
             if payload != last_payload:
                 yield f"event: jobs\ndata: {payload}\n\n"
                 last_payload = payload

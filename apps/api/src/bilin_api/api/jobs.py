@@ -1,22 +1,34 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from bilin_api.repositories import (
     cancel_job,
+    clear_jobs,
     get_job,
+    get_job_summary,
     list_jobs,
     pause_job,
     resume_job,
 )
-from bilin_api.schemas import Job
+from bilin_api.schemas import Job, JobClearResult, JobSummary
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.get("", response_model=list[Job])
-async def get_jobs() -> list[Job]:
-    return await list_jobs()
+async def get_jobs(limit: int | None = Query(default=None, ge=1, le=500)) -> list[Job]:
+    return await list_jobs(limit=limit)
+
+
+@router.get("/summary", response_model=JobSummary)
+async def get_jobs_summary() -> JobSummary:
+    return await get_job_summary()
+
+
+@router.delete("", response_model=JobClearResult)
+async def clear_all_jobs() -> JobClearResult:
+    return JobClearResult(cleared=await clear_jobs())
 
 
 @router.get("/{job_id}", response_model=Job)

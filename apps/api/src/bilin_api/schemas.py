@@ -64,6 +64,12 @@ class Library(BaseModel):
     updated_at: datetime
 
 
+class LibraryDeleteResult(BaseModel):
+    library_id: str
+    path: str
+    deleted_cache: bool
+
+
 class ProviderProtocol(StrEnum):
     openai_compatible = "openai-compatible"
     anthropic_compatible = "anthropic-compatible"
@@ -143,6 +149,8 @@ class JobType(StrEnum):
     translate_block = "translate_block"
     embed_article = "embed_article"
     export_article = "export_article"
+    extract_reader_cards = "extract_reader_cards"
+    generate_reader_card = "generate_reader_card"
 
 
 class RetrievalMode(StrEnum):
@@ -172,6 +180,22 @@ class Job(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     lease_owner: str | None = None
+
+
+class JobClearResult(BaseModel):
+    cleared: int
+
+
+class JobSummary(BaseModel):
+    total: int = 0
+    queued: int = 0
+    running: int = 0
+    paused: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    active: int = 0
+    updated_at: datetime | None = None
 
 
 class ArticleFamily(BaseModel):
@@ -208,6 +232,26 @@ class AssetRecord(BaseModel):
     metadata: JsonDict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+
+
+class ArticleTranslationState(StrEnum):
+    not_required = "not_required"
+    not_started = "not_started"
+    translating = "translating"
+    partial = "partial"
+    translated = "translated"
+    failed = "failed"
+
+
+class ArticleTranslationStatus(BaseModel):
+    target_language: str = "zh-CN"
+    status: ArticleTranslationState = ArticleTranslationState.not_started
+    translatable_blocks: int = 0
+    translated_blocks: int = 0
+    queued_jobs: int = 0
+    running_jobs: int = 0
+    paused_jobs: int = 0
+    failed_jobs: int = 0
 
 
 class DocumentBlock(BaseModel):
@@ -261,6 +305,19 @@ class TranslationBatchResult(BaseModel):
     cached_blocks: int
     skipped_blocks: int
     job_ids: list[str] = Field(default_factory=list)
+
+
+class LibraryTranslationBatchResult(BaseModel):
+    library_id: str
+    target_language: str
+    articles_considered: int = 0
+    articles_queued: int = 0
+    jobs_created: int = 0
+    existing_jobs: int = 0
+    cached_blocks: int = 0
+    skipped_blocks: int = 0
+    job_ids: list[str] = Field(default_factory=list)
+    article_results: list[TranslationBatchResult] = Field(default_factory=list)
 
 
 class ArticleTranslations(BaseModel):
@@ -356,6 +413,137 @@ class ArticleGlossary(BaseModel):
     active_version: str
     terms: list[GlossaryTerm] = Field(default_factory=list)
     affected_block_uids: list[str] = Field(default_factory=list)
+
+
+class ReaderCardType(StrEnum):
+    term = "term"
+    note = "note"
+    formula = "formula"
+    figure = "figure"
+    question = "question"
+
+
+class ReaderCardSourceType(StrEnum):
+    wikipedia = "wikipedia"
+    wikidata = "wikidata"
+    ai_search = "ai_search"
+    paper_local = "paper_local"
+    user_note = "user_note"
+
+
+class ReaderCardStatus(StrEnum):
+    candidate = "candidate"
+    pinned = "pinned"
+    exported = "exported"
+    archived = "archived"
+
+
+class ReaderCardPosition(StrEnum):
+    left = "left"
+    right = "right"
+    floating = "floating"
+
+
+class ReaderCard(BaseModel):
+    id: str
+    article_revision_id: str
+    card_type: ReaderCardType
+    anchor_block_uid: str
+    anchor_text: str
+    canonical_key: str
+    abbreviation: str | None = None
+    full_form: str | None = None
+    title: str
+    body_markdown: str = ""
+    target_language: str
+    source_type: ReaderCardSourceType
+    source_url: str | None = None
+    position: ReaderCardPosition = ReaderCardPosition.right
+    status: ReaderCardStatus = ReaderCardStatus.candidate
+    metadata: JsonDict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReaderCardCreate(BaseModel):
+    card_type: ReaderCardType = ReaderCardType.note
+    anchor_block_uid: str = Field(min_length=1, max_length=120)
+    anchor_text: str = Field(min_length=1, max_length=240)
+    abbreviation: str | None = Field(default=None, max_length=80)
+    full_form: str | None = Field(default=None, max_length=240)
+    title: str = Field(min_length=1, max_length=240)
+    body_markdown: str = Field(default="", max_length=4000)
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    source_type: ReaderCardSourceType = ReaderCardSourceType.user_note
+    source_url: str | None = Field(default=None, max_length=800)
+    position: ReaderCardPosition = ReaderCardPosition.right
+    status: ReaderCardStatus = ReaderCardStatus.pinned
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ReaderCardUpdate(BaseModel):
+    anchor_text: str | None = Field(default=None, min_length=1, max_length=240)
+    abbreviation: str | None = Field(default=None, max_length=80)
+    full_form: str | None = Field(default=None, max_length=240)
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    body_markdown: str | None = Field(default=None, max_length=4000)
+    source_url: str | None = Field(default=None, max_length=800)
+    position: ReaderCardPosition | None = None
+    status: ReaderCardStatus | None = None
+    metadata: JsonDict | None = None
+
+
+class ReaderCards(BaseModel):
+    article_revision_id: str
+    target_language: str
+    cards: list[ReaderCard] = Field(default_factory=list)
+
+
+class ReaderCardExtractionRequest(BaseModel):
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    limit: int = Field(default=30, ge=1, le=120)
+    force: bool = False
+
+
+class ReaderCardExtractionResult(BaseModel):
+    article_revision_id: str
+    target_language: str
+    candidates_created: int
+    existing_candidates: int
+    wiki_cards_created: int
+    cards: list[ReaderCard] = Field(default_factory=list)
+
+
+class ReaderCardGenerationRequest(BaseModel):
+    anchor_block_uid: str = Field(min_length=1, max_length=120)
+    anchor_text: str = Field(min_length=1, max_length=240)
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    provider_profile_id: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+    native_search: bool = True
+    card_type: ReaderCardType = ReaderCardType.term
+    title: str | None = Field(default=None, max_length=240)
+    abbreviation: str | None = Field(default=None, max_length=80)
+    full_form: str | None = Field(default=None, max_length=240)
+
+
+class ReaderCardGenerationResult(BaseModel):
+    article_revision_id: str
+    card: ReaderCard
+    native_search_used: bool = False
+    source_type: ReaderCardSourceType
+
+
+class ReaderCardObsidianExportRequest(BaseModel):
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    card_ids: list[str] | None = None
+
+
+class ReaderCardObsidianExportResult(BaseModel):
+    vault_path: str
+    note_path: str
+    cards_exported: int
+    updated_existing: bool = False
 
 
 class ChatMessage(BaseModel):
@@ -659,6 +847,16 @@ class ArticleListItem(BaseModel):
     manifest: ArticleManifest | None = None
     block_count: int = 0
     asset_count: int = 0
+    translation_status: ArticleTranslationStatus = Field(default_factory=ArticleTranslationStatus)
+
+
+class ArticleDeleteResult(BaseModel):
+    library_id: str
+    article_family_id: str
+    article_revision_id: str
+    bundle_path: str
+    deleted_cache: bool
+    removed_family: bool = False
 
 
 class ArticleDocument(BaseModel):

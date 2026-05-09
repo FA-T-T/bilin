@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "policy": "Only add semantic-preserving or display-preserving fallbacks. Do not guess paper-specific macros here.",
+  "sources": [
+    {
+      "name": "KaTeX supported functions",
+      "url": "https://katex.org/docs/support_table.html",
+      "used_for": "Confirm which LaTeX commands KaTeX supports natively."
+    },
+    {
+      "name": "KaTeX options and macros",
+      "url": "https://katex.org/docs/options",
+      "used_for": "Confirm the supported macro-extension model and error behavior."
+    },
+    {
+      "name": "KaTeX unsupported command wiki",
+      "url": "https://github.com/KaTeX/KaTeX/wiki/Things-that-KaTeX-does-not-%28yet%29-support",
+      "used_for": "Seed common unsupported commands reported by the community."
+    },
+    {
+      "name": "LaTeXML customization manual",
+      "url": "https://math.nist.gov/~BMiller/LaTeXML/manual/customization/customization.latexml.html",
+      "used_for": "Guide lightweight preamble shims before LaTeXML conversion."
+    }
+  ],
+  "command_group_rules": [
+    {
+      "id": "blackboard-bold-variants",
+      "commands": [
+        "vvmathbb",
+        "varmathbb",
+        "vmathbb",
+        "mathbbmss",
+        "mathbbmtt",
+        "mathbbm",
+        "mathds",
+        "mathbbold"
+      ],
+      "group_count": 1,
+      "strategy": "template",
+      "replacement": "\\mathbb{#1}",
+      "allow_single_token": true,
+      "risk": "low",
+      "reason": "Font-package aliases for blackboard bold; KaTeX can render the standard mathbb form."
+    },
+    {
+      "id": "wideparen",
+      "commands": ["wideparen"],
+      "group_count": 1,
+      "strategy": "template",
+      "replacement": "\\overset{\\frown}{#1}",
+      "risk": "medium",
+      "reason": "KaTeX lacks wideparen; frown overset preserves the intended arc marker."
+    },
+    {
+      "id": "cancelto",
+      "commands": ["cancelto"],
+      "group_count": 2,
+      "strategy": "template",
+      "replacement": "\\overset{#1}{#2}",
+      "risk": "medium",
+      "reason": "The cancel stroke is lost, but the target annotation remains visible."
+    },
+    {
+      "id": "content-wrappers",
+      "commands": ["ensuremath", "mathlarger", "mathsmaller"],
+      "group_count": 1,
+      "strategy": "unwrap",
+      "risk": "low",
+      "reason": "These wrappers control TeX mode or visual size and do not change formula content."
+    },
+    {
+      "id": "two-argument-visual-wrappers",
+      "commands": ["rotatebox", "scalebox"],
+      "group_count": 2,
+      "strategy": "keep_arg",
+      "keep_arg_index": 1,
+      "risk": "medium",
+      "reason": "Browser math rendering drops the transform but preserves the wrapped content."
+    },
+    {
+      "id": "resizebox",
+      "commands": ["resizebox"],
+      "group_count": 3,
+      "strategy": "keep_arg",
+      "keep_arg_index": 2,
+      "risk": "medium",
+      "reason": "Browser layout controls size; preserving the content is better than rendering an unknown command."
+    },
+    {
+      "id": "multicolumn",
+      "commands": ["multicolumn"],
+      "group_count": 3,
+      "strategy": "keep_arg",
+      "keep_arg_index": 2,
+      "risk": "medium",
+      "reason": "In table fallbacks, the spanning instruction is layout-only; the cell content should remain."
+    }
+  ],
+  "legacy_text_font_commands": [
+    { "command": "bf", "text_replacement": "textbf", "math_replacement": "mathbf" },
+    { "command": "it", "text_replacement": "textit", "math_replacement": "mathit" },
+    { "command": "rm", "text_replacement": "textrm", "math_replacement": "mathrm" },
+    { "command": "sf", "text_replacement": "textsf", "math_replacement": "mathsf" },
+    { "command": "sl", "text_replacement": "textit", "math_replacement": "mathit" },
+    { "command": "tt", "text_replacement": "texttt", "math_replacement": "mathtt" }
+  ],
+  "latexml_preamble_commands": [
+    { "command": "vvmathbb", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "varmathbb", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "vmathbb", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "mathbbmss", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "mathbbmtt", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "mathbbm", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "mathds", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "mathbbold", "args": 1, "replacement": "\\mathbb{#1}" },
+    { "command": "wideparen", "args": 1, "replacement": "\\overset{\\frown}{#1}" },
+    { "command": "iddots", "args": 0, "replacement": "\\ddots" },
+    { "command": "cancelto", "args": 2, "replacement": "\\overset{#1}{#2}" },
+    { "command": "ensuremath", "args": 1, "replacement": "#1" },
+    { "command": "xspace", "args": 0, "replacement": "" },
+    { "command": "mspace", "args": 1, "replacement": "" },
+    { "command": "strut", "args": 0, "replacement": "" },
+    { "command": "rotatebox", "args": 2, "replacement": "#2" },
+    { "command": "scalebox", "args": 2, "replacement": "#2" },
+    { "command": "resizebox", "args": 3, "replacement": "#3" },
+    { "command": "makeglossaries", "args": 0, "replacement": "" },
+    { "command": "printglossary", "args": 0, "replacement": "" },
+    { "command": "newglossaryentry", "args": 2, "replacement": "" },
+    { "command": "newacronym", "args": 3, "replacement": "" },
+    { "command": "gls", "args": 1, "replacement": "#1" },
+    { "command": "Gls", "args": 1, "replacement": "#1" },
+    { "command": "glspl", "args": 1, "replacement": "#1" },
+    { "command": "Glspl", "args": 1, "replacement": "#1" },
+    { "command": "acrshort", "args": 1, "replacement": "#1" },
+    { "command": "Acrshort", "args": 1, "replacement": "#1" },
+    { "command": "acrfull", "args": 1, "replacement": "#1" },
+    { "command": "Acrfull", "args": 1, "replacement": "#1" },
+    { "command": "acrlong", "args": 1, "replacement": "#1" },
+    { "command": "Acrlong", "args": 1, "replacement": "#1" }
+  ],
+  "regex_rule_notes": [
+    {
+      "id": "buildrel-over",
+      "replacement": "\\overset{#1}{#2}",
+      "risk": "low",
+      "reason": "Classic TeX relation construction has a direct KaTeX equivalent."
+    },
+    {
+      "id": "line-and-page-break-commands",
+      "replacement": "",
+      "risk": "low",
+      "reason": "Pagination commands are irrelevant in browser math rendering."
+    },
+    {
+      "id": "label-and-reference-commands",
+      "replacement": "empty or visible question-mark fallback",
+      "risk": "medium",
+      "reason": "Cross-reference resolution belongs to the document model, not KaTeX rendering."
+    },
+    {
+      "id": "array-and-table-rule-commands",
+      "replacement": "remove layout rule or keep visible separator",
+      "risk": "medium",
+      "reason": "Rule commands are layout instructions; content should remain readable."
+    }
+  ]
+}

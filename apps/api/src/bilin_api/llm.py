@@ -13,6 +13,12 @@ class LLMClientError(Exception):
     pass
 
 
+class OpenAIEmptyContentError(LLMClientError):
+    def __init__(self, message: str, payload: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.payload = payload
+
+
 @dataclass(frozen=True)
 class LLMResponse:
     text: str
@@ -164,16 +170,47 @@ async def generate_note_patch_markdown(
     return await complete_openai(provider, api_key, model, system_prompt, user_prompt, client)
 
 
+async def generate_reader_card_markdown(
+    provider: ProviderProfile,
+    api_key: str,
+    model: str,
+    term: str,
+    target_language: str,
+    evidence_markdown: str,
+    native_search: bool = False,
+    client: httpx.AsyncClient | None = None,
+) -> LLMResponse:
+    system_prompt, user_prompt = build_reader_card_prompt(
+        term=term,
+        target_language=target_language,
+        evidence_markdown=evidence_markdown,
+        native_search=native_search,
+    )
+    if provider.protocol == ProviderProtocol.anthropic_compatible:
+        return await complete_anthropic(
+            provider,
+            api_key,
+            model,
+            system_prompt,
+            user_prompt,
+            client,
+        )
+    return await complete_openai(provider, api_key, model, system_prompt, user_prompt, client)
+
+
 def build_translation_prompt(
     source_markdown: str,
     target_language: str,
     context_markdown: str = "",
     custom_prompt: str | None = None,
 ) -> tuple[str, str]:
+    target_language_label = target_language_display_name(target_language)
     system_prompt = (
         "You are translating academic paper blocks. Translate only the current block into "
-        f"{target_language}. Preserve Markdown, citations, variable names, formulas, and code. "
-        "Do not add explanations or translate surrounding context."
+        f"{target_language_label}. Preserve Markdown, citations, URLs, labels, variable names, "
+        "formulas, and code exactly. Translate every natural-language English sentence around "
+        "those technical elements. Return the final translation in the message content; never "
+        "leave the response blank. Do not add explanations or translate surrounding context."
     )
     if custom_prompt:
         system_prompt = f"{system_prompt}\nAdditional user instruction: {custom_prompt.strip()}"
@@ -185,6 +222,27 @@ def build_translation_prompt(
         "Return only the translated Markdown for the current block."
     )
     return system_prompt, user_prompt
+
+
+def target_language_display_name(target_language: str) -> str:
+    normalized = target_language.strip()
+    labels = {
+        "zh-CN": "Simplified Chinese (zh-CN)",
+        "zh-Hans": "Simplified Chinese (zh-Hans)",
+        "zh-Hant": "Traditional Chinese (zh-Hant)",
+        "zh-TW": "Traditional Chinese (zh-TW)",
+        "en": "English (en)",
+        "ja": "Japanese (ja)",
+        "ko": "Korean (ko)",
+        "es": "Spanish (es)",
+        "fr": "French (fr)",
+        "de": "German (de)",
+        "pt": "Portuguese (pt)",
+        "pt-BR": "Brazilian Portuguese (pt-BR)",
+        "it": "Italian (it)",
+        "ru": "Russian (ru)",
+    }
+    return labels.get(normalized, normalized or "the target language")
 
 
 def build_note_patch_prompt(
@@ -223,6 +281,9 @@ def build_question_answer_prompt(
     system_prompt = (
         "You answer questions about one academic paper. Ground every substantive claim in the "
         "provided paper blocks and cite block identifiers in square brackets, such as [p-0001]. "
+        "Write like a compact knowledge card for a researcher: precise, technical, and brief. "
+        "Use at most three short bullets or three short lines. Do not write a long paragraph, "
+        "do not add preamble, and do not summarize unrelated context. "
         f"{external_policy}"
     )
     user_prompt = (
@@ -230,7 +291,36 @@ def build_question_answer_prompt(
         f"{evidence_markdown.strip() or '(none)'}\n\n"
         "Question:\n"
         f"{question.strip()}\n\n"
-        "Return a concise answer with block citations."
+        "Return only the compact answer. Prefer 1-3 bullets, each bullet containing one precise "
+        "claim with block citations."
+    )
+    return system_prompt, user_prompt
+
+
+def build_reader_card_prompt(
+    term: str,
+    target_language: str,
+    evidence_markdown: str,
+    native_search: bool = False,
+) -> tuple[str, str]:
+    search_policy = (
+        "If your model supports native web search, use it only to verify the term. "
+        "Do not include links unless they are explicitly supported by the search context."
+        if native_search
+        else "Do not use external knowledge beyond the supplied paper context."
+    )
+    system_prompt = (
+        "You write concise concept cards for beginning researchers reading academic papers. "
+        f"Write in {target_language}. Be faithful, precise, and declarative. "
+        "Return one short paragraph only. Do not use bullets, numbering, markdown headings, "
+        "citations, or source block identifiers. "
+        f"{search_policy}"
+    )
+    user_prompt = (
+        f"Term: {term.strip()}\n\n"
+        "Paper context:\n"
+        f"{evidence_markdown.strip() or '(none)'}\n\n"
+        "Return the card body only."
     )
     return system_prompt, user_prompt
 
@@ -359,17 +449,16 @@ async def complete_openai(
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=120)
     try:
+        request_payload = build_openai_chat_payload(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         response = await active_client.post(
             f"{base_url}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.1,
-            },
+            json=request_payload,
         )
         response.raise_for_status()
         payload = response.json()
@@ -380,6 +469,42 @@ async def complete_openai(
     finally:
         if owns_client:
             await active_client.aclose()
+
+
+def build_openai_chat_payload(
+    provider: ProviderProfile,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "stream": False,
+    }
+    if should_disable_deepseek_thinking(provider, model):
+        payload["thinking"] = {"type": "disabled"}
+    return payload
+
+
+def should_disable_deepseek_thinking(provider: ProviderProfile, model: str) -> bool:
+    capabilities = provider.capabilities
+    if capabilities.get("deepseek_thinking") is True:
+        return False
+    if capabilities.get("disable_thinking") is False:
+        return False
+    normalized_base_url = (provider.base_url or "").casefold()
+    normalized_model = model.casefold()
+    return (
+        "api.deepseek.com" in normalized_base_url
+        or normalized_model.startswith("deepseek-v4-")
+        or normalized_model in {"deepseek-chat", "deepseek-reasoner"}
+    )
 
 
 async def complete_anthropic(
@@ -426,15 +551,51 @@ def extract_openai_text(payload: dict[str, Any]) -> str:
     message = choices[0].get("message") if isinstance(choices[0], dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
-        return content.strip()
+        text = content.strip()
+        if text:
+            return text
+        raise OpenAIEmptyContentError(empty_openai_content_message(payload), payload)
     if isinstance(content, list):
         parts = [
             part.get("text", "")
             for part in content
             if isinstance(part, dict) and isinstance(part.get("text"), str)
         ]
-        return "\n".join(parts).strip()
+        text = "\n".join(parts).strip()
+        if text:
+            return text
+        raise OpenAIEmptyContentError(empty_openai_content_message(payload), payload)
     raise LLMClientError("OpenAI-compatible response did not contain text content.")
+
+
+def empty_openai_content_message(payload: dict[str, Any]) -> str:
+    message = "OpenAI-compatible response contained empty text content."
+    choice = payload.get("choices")
+    first_choice = choice[0] if isinstance(choice, list) and choice else None
+    finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+    usage = payload.get("usage")
+    reasoning_tokens = reasoning_token_count(usage)
+    details: list[str] = []
+    if isinstance(finish_reason, str) and finish_reason:
+        details.append(f"finish_reason={finish_reason}")
+    if reasoning_tokens:
+        details.append(f"reasoning_tokens={reasoning_tokens}")
+        details.append("DeepSeek translation requests should run with thinking disabled")
+    return f"{message} {'; '.join(details)}." if details else message
+
+
+def reasoning_token_count(usage: Any) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict):
+        value = details.get("reasoning_tokens")
+        if isinstance(value, int) and value > 0:
+            return value
+    value = usage.get("reasoning_tokens")
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
 
 
 def extract_anthropic_text(payload: dict[str, Any]) -> str:

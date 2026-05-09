@@ -26,6 +26,8 @@ export const SUPPORTED_LOCALES: LocaleInfo[] = [
   { value: "de", label: "Deutsch", nativeLabel: "Deutsch", tier: "community" }
 ];
 
+export const TRANSLATION_TARGET_LOCALES = SUPPORTED_LOCALES;
+
 export function productNameForLocale(locale: AppLocale): string {
   if (locale === "zh-CN") return PRODUCT_NAMES.zh;
   if (locale === "ja") return PRODUCT_NAMES.ja;

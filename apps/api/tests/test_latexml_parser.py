@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sys
 import tarfile
 from pathlib import Path
 
@@ -18,11 +19,15 @@ from bilin_api.article_store import (
 )
 from bilin_api.cli import app
 from bilin_api.latexml_parser import (
+    CommandTimeoutBudget,
     ParseFailure,
+    estimate_latexml_timeout_budget,
     find_main_tex,
     normalize_latexml_html,
     parse_article_revision,
+    prepare_latexml_source,
     render_source_markdown,
+    run_command,
     safe_unpack,
 )
 from bilin_api.repositories import create_library
@@ -48,12 +53,173 @@ def test_safe_unpack_detects_main_tex(tmp_path: Path) -> None:
     assert find_main_tex(unpack_dir).name == "main.tex"
 
 
+def test_find_main_tex_accepts_old_style_documentstyle_ltx(tmp_path: Path) -> None:
+    source_dir = tmp_path / "old-style"
+    source_dir.mkdir()
+    (source_dir / "notes.tex").write_text(
+        "\\section{Notes only}\nNo document wrapper.",
+        encoding="utf-8",
+    )
+    (source_dir / "paper_v1.ltx").write_text(
+        "\\documentstyle[aps]{revtex}\n"
+        "\\title{Old paper}\n"
+        "\\begin{document}\n"
+        "Hello old arXiv.\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    assert find_main_tex(source_dir).name == "paper_v1.ltx"
+
+
+def test_find_main_tex_accepts_extensionless_old_arxiv_source(tmp_path: Path) -> None:
+    source_dir = tmp_path / "extensionless"
+    source_dir.mkdir()
+    (source_dir / "9407022").write_text(
+        "\\documentstyle{article}\n"
+        "\\author{A. Author}\n"
+        "\\begin{document}\n"
+        "Old style source without a file extension.\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    assert find_main_tex(source_dir).name == "9407022"
+
+
 def test_safe_unpack_rejects_path_traversal(tmp_path: Path) -> None:
     archive_path = tmp_path / "unsafe.tar"
     write_tar(archive_path, {"../evil.tex": b"bad"})
     with pytest.raises(ParseFailure) as exc_info:
         safe_unpack(archive_path, tmp_path / "unpacked")
     assert exc_info.value.code == "unsafe_archive:path_traversal"
+
+
+def test_prepare_latexml_source_disables_babel_without_touching_other_packages() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx,babel,amsmath}\n"
+        "\\RequirePackage[main=english]{polyglossia}\n"
+        "\\usepackage[acronym]{glossaries}\n"
+        "\\usepackage[bookmarks=false]{hyperref}\n"
+        "\\begin{document}x\\end{document}\n"
+    )
+
+    assert prepared.startswith("% Bilin LaTeXML parser entry.")
+    assert "\\usepackage{graphicx,amsmath}" in prepared
+    assert "% Bilin disabled for LaTeXML: babel" in prepared
+    assert "% Bilin disabled for LaTeXML: \\RequirePackage[main=english]{polyglossia}" in prepared
+    assert "% Bilin disabled for LaTeXML: \\usepackage[acronym]{glossaries}" in prepared
+    assert "\\usepackage[bookmarks=false]{hyperref}" in prepared
+    assert "% Bilin LaTeXML compatibility shims." in prepared
+    assert "\\providecommand{\\vmathbb}[1]{\\mathbb{#1}}" in prepared
+    assert "\\providecommand{\\gls}[1]{#1}" in prepared
+    assert "\\providecommand{\\newacronym}[3]{}" in prepared
+    assert "\\providecommand{\\resizebox}[3]{#3}" in prepared
+
+
+def test_prepare_latexml_source_injects_after_documentstyle() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentstyle[aps]{revtex}\n\\begin{document}x\\end{document}\n"
+    )
+
+    assert "\\documentstyle[aps]{revtex}\n% Bilin LaTeXML compatibility shims." in prepared
+
+
+def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass[a4paper,fleqn]{cas-sc}\n"
+        "\\begin{document}\n"
+        "\\title[mode=title]{A CAS Paper}\n"
+        "\\author[1]{Ada Lovelace}[orcid=0000-0000]\n"
+        "\\address[1]{Analytical Engine Lab}\n"
+        "\\begin{abstract}x\\end{abstract}\n"
+        "\\maketitle\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\documentclass{article}" in prepared
+    assert "\\documentclass[a4paper,fleqn]{cas-sc}" not in prepared
+    assert "% Bilin replaced layout document class for LaTeXML: cas-sc" in prepared
+    assert "\\RequirePackage{expl3,xparse}" not in prepared
+    assert "\\providecommand{\\shorttitle}[1]{}" in prepared
+    assert "\\def\\BilinCASTitleWith[#1]#2{\\BilinArticleTitle{#2}}" in prepared
+    assert "\\def\\BilinCASAuthorWithMeta#1[#2]{\\BilinArticleAuthor{#1}}" in prepared
+    assert "\\providecommand{\\address}" in prepared
+
+
+def test_latexml_timeout_budget_scales_with_source_size(tmp_path: Path) -> None:
+    small = tmp_path / "small"
+    large = tmp_path / "large"
+    small.mkdir()
+    large.mkdir()
+    small_main = small / "main.tex"
+    large_main = large / "main.tex"
+    small_main.write_text(
+        "\\documentclass{article}\\begin{document}Small.\\end{document}",
+        encoding="utf-8",
+    )
+    large_main.write_text(
+        "\\documentclass{article}\\begin{document}"
+        + ("Long paragraph.\n" * 50_000)
+        + "\\end{document}",
+        encoding="utf-8",
+    )
+    for index in range(12):
+        (large / f"figure-{index}.pdf").write_bytes(b"%PDF-1.7\n")
+
+    small_budget = estimate_latexml_timeout_budget(small, small_main, "latexml")
+    large_budget = estimate_latexml_timeout_budget(large, large_main, "latexml")
+
+    assert small_budget.soft_seconds >= 60
+    assert large_budget.soft_seconds > small_budget.soft_seconds
+    assert large_budget.hard_seconds > large_budget.soft_seconds
+
+
+@pytest.mark.asyncio
+async def test_run_command_keeps_running_while_output_shows_activity(tmp_path: Path) -> None:
+    log_path = tmp_path / "active.log"
+    await run_command(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import time\n"
+                "for index in range(4):\n"
+                "    print(f'latexml progress {index}', flush=True)\n"
+                "    time.sleep(0.15)\n"
+            ),
+        ],
+        cwd=tmp_path,
+        log_path=log_path,
+        timeout_budget=CommandTimeoutBudget(
+            soft_seconds=0.05,
+            idle_seconds=0.25,
+            hard_seconds=2,
+        ),
+    )
+
+    assert "latexml progress 3" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_command_times_out_after_idle_soft_limit(tmp_path: Path) -> None:
+    log_path = tmp_path / "idle.log"
+    with pytest.raises(ParseFailure) as exc_info:
+        await run_command(
+            [sys.executable, "-c", "import time; time.sleep(1)"],
+            cwd=tmp_path,
+            log_path=log_path,
+            timeout_budget=CommandTimeoutBudget(
+                soft_seconds=0.05,
+                idle_seconds=0.1,
+                hard_seconds=2,
+            ),
+        )
+
+    assert exc_info.value.code == "latexml_timeout"
+    assert exc_info.value.details["timeout_reason"] == "idle"
+    assert "timeout_error" in log_path.read_text(encoding="utf-8")
 
 
 def test_normalize_latexml_html_outputs_blocks_assets_and_markdown() -> None:
@@ -103,6 +269,343 @@ def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path:
     )
     assert "[[5]" not in blocks[0].source_markdown
     assert "$(x_1,\\ldots,x_n)$" in render_source_markdown(blocks)
+
+
+def test_normalize_latexml_html_inlines_footnote_urls_as_links(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <p class="ltx_p">Deep residual nets are foundations of our submissions
+            to ILSVRC &amp; COCO 2015 competitions<span id="footnote1"
+            class="ltx_note ltx_role_footnote"><sup class="ltx_note_mark">1</sup>
+            <span class="ltx_note_outer"><span class="ltx_note_content">
+            <sup class="ltx_note_mark">1</sup>
+            <span class="ltx_tag ltx_tag_note">1</span>
+            <a href="http://image-net.org/challenges/LSVRC/2015/"
+            class="ltx_ref ltx_url ltx_font_typewriter">
+            http://image-net.org/challenges/LSVRC/2015/</a> and
+            <a href="http://mscoco.org/dataset/#detections-challenge2015"
+            class="ltx_ref ltx_url ltx_font_typewriter">
+            http://mscoco.org/dataset/#detections-challenge2015</a>.
+            </span></span></span>, where we also won the first places.</p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert blocks[0].source_markdown == (
+        "Deep residual nets are foundations of our submissions to ILSVRC & COCO 2015 "
+        "competitions "
+        "([http://image-net.org/challenges/LSVRC/2015/]"
+        "(http://image-net.org/challenges/LSVRC/2015/) and "
+        "[http://mscoco.org/dataset/#detections-challenge2015]"
+        "(http://mscoco.org/dataset/#detections-challenge2015)), "
+        "where we also won the first places."
+    )
+    assert "11 1" not in blocks[0].source_markdown
+    assert ">., where" not in blocks[0].source_markdown
+
+
+def test_normalize_latexml_html_links_bare_urls_without_nested_markdown(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <p>Code is available at https://github.com/example/project.</p>
+            <p>Already linked <a href="https://github.com/example/project">
+            https://github.com/example/project</a>.</p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert blocks[0].source_markdown == (
+        "Code is available at [https://github.com/example/project]"
+        "(https://github.com/example/project)."
+    )
+    assert blocks[1].source_markdown == (
+        "Already linked [https://github.com/example/project](https://github.com/example/project)."
+    )
+    assert "[[https://github.com/example/project]" not in blocks[1].source_markdown
+
+
+def test_normalize_latexml_html_preserves_latexml_lists_as_single_blocks(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>The construction has three stages.</p>
+            <ul class="ltx_itemize">
+              <li class="ltx_item">
+                <span class="ltx_tag ltx_tag_item">•</span>
+                <div class="ltx_para"><p>Prepare the stabilizer generators.</p></div>
+              </li>
+              <li class="ltx_item">
+                <span class="ltx_tag ltx_tag_item">•</span>
+                <div class="ltx_para"><p>Group commuting operators.</p></div>
+                <ol class="ltx_enumerate">
+                  <li class="ltx_item">
+                    <span class="ltx_tag ltx_tag_item">(1)</span>
+                    <p>Measure each group once.</p>
+                  </li>
+                  <li class="ltx_item">
+                    <span class="ltx_tag ltx_tag_item">(2)</span>
+                    <p>Reuse the outcomes.</p>
+                  </li>
+                </ol>
+              </li>
+            </ul>
+            <ol class="ltx_enumerate">
+              <li class="ltx_item">
+                <span class="ltx_tag ltx_tag_item">1.</span>
+                <p>Run the decoder.</p>
+              </li>
+              <li class="ltx_item">
+                <span class="ltx_tag ltx_tag_item">2.</span>
+                <p>Return the correction.</p>
+              </li>
+            </ol>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["paragraph", "list", "list"]
+    assert blocks[1].block_uid == "lst-0001"
+    assert blocks[1].source_markdown == (
+        "- Prepare the stabilizer generators.\n"
+        "- Group commuting operators.\n"
+        "  1. Measure each group once.\n"
+        "  2. Reuse the outcomes."
+    )
+    assert blocks[1].metadata["list_kind"] == "unordered"
+    assert blocks[1].metadata["item_count"] == 2
+    assert blocks[2].source_markdown == "1. Run the decoder.\n2. Return the correction."
+
+
+def test_normalize_latexml_html_skips_generated_toc_navigation(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <nav class="ltx_TOC ltx_list_toc ltx_toc_toc">
+              <h6 class="ltx_title ltx_title_contents">Contents</h6>
+              <ol class="ltx_toclist">
+                <li><a href="#Ch1">Chapter 1 Introduction</a></li>
+                <li><a href="#Ch1.S1">1.1 Quantum Computers</a></li>
+              </ol>
+            </nav>
+            <nav class="ltx_TOC ltx_list_lot ltx_toc_lot">
+              <h6 class="ltx_title ltx_title_contents">List of Tables</h6>
+              <ol class="ltx_toclist">
+                <li><a href="#tbl-1">Table 1 Decoder outcomes</a></li>
+              </ol>
+            </nav>
+            <nav class="ltx_TOC ltx_list_lof ltx_toc_lof">
+              <h6 class="ltx_title ltx_title_contents">List of Figures</h6>
+              <ol class="ltx_toclist">
+                <li><a href="#fig-1">Figure 1 Code geometry</a></li>
+              </ol>
+            </nav>
+            <section id="Ch1" class="ltx_chapter">
+              <h2 class="ltx_title ltx_title_chapter">Chapter 1 Introduction</h2>
+              <p>Stabilizer codes encode quantum information.</p>
+            </section>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["section", "paragraph"]
+    assert [block.source_markdown for block in blocks] == [
+        "Chapter 1 Introduction",
+        "Stabilizer codes encode quantum information.",
+    ]
+    assert not any(block.source_markdown in {"Contents", "List of Tables"} for block in blocks)
+
+
+def test_normalize_latexml_html_cleans_author_year_citation_artifacts(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>
+              Stabilizer codes follow \citeauthor*qec_binary_orthogonal_geometry
+              <cite class="ltx_cite">
+                <a href="#bib.bib7">
+                  Calderbank et al.(1997)Calderbank, Rains, Shor, and Sloane
+                </a>
+              </cite>.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert "\\citeauthor" not in blocks[0].source_markdown
+    assert "qec_binary_orthogonal_geometry" not in blocks[0].source_markdown
+    assert "Calderbank, Rains" not in blocks[0].source_markdown
+    assert blocks[0].source_markdown == (
+        "Stabilizer codes follow [Calderbank et al. (1997)](#bib.bib7)."
+    )
+
+
+def test_normalize_latexml_html_normalizes_custom_math_macros_and_matrix_options(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <math display="block"
+              alttext="\mathcal{G}_{1}\coloneqq\Big{\{}\{4\,X_{1},\ Z_{2}\}\Big{\}},
+                \mathrm{Var}[P_{i}]\coloneqq 1-\expectationvalue{P_{i}}^{2}."></math>
+            <math display="block"
+              alttext="Q_{1}\coloneqq\begin{pmatrix}[cccc|cccc]\\[1.0pt]
+                1&amp;0\\[1.0pt]\hline\cr\\[1.0pt]0&amp;1\\[1.0pt]\end{pmatrix}."></math>
+            <math display="block"
+              alttext="\left[\begin{array}[]{c}\text{3$\times$3, 64}\\[-1.00006pt]
+                \text{3$\times$3, 64}\end{array}\right]\times2"></math>
+            <math display="block"
+              alttext="\sigma_{x}=\pmatrix{0&amp;1\cr 1&amp;0},\ {\rm and}\
+                \ \sigma_{z}=\pmatrix{1&amp;0\cr 0&amp;-1}."></math>
+            <math display="block"
+              alttext="f_{M}(E)=\left\{\begin{array}[]{ll}0&amp;\mbox{if $[M,E]=0$}\\
+                1&amp;\mbox{if $\{M,E\}=0$}\end{array}\right."></math>
+            <math display="block"
+              alttext="\begin{array}[]{r}r\{\\ n-k-r\{\end{array}\left(\begin{array}[]{cc|cc}
+                \raisebox{0.0pt}[6.45831pt]{$\overbrace{I}^{r}$}&amp;\raisebox{0.0pt}[6.45831pt]{$\overbrace{A}^{n-r}$}&amp;B&amp;C\\
+                0&amp;0&amp;D&amp;E\end{array}\right)."></math>
+            <math display="block"
+              alttext="L\eqqcolon \textsc{mask}"></math>
+            <math display="block"
+              alttext="\vmathbb{1}+\varmathbb{N}+\vvmathbb{C}+\mathds{R}
+                +\mathbbm{Z}+\mathbbold{Q}+\text{\sl N}_{\mathrm{BN}}\nopagebreak"></math>
+            <math display="block"
+              alttext="\wideparen{AB}+\buildrel{d}\over{=}+\cancelto{0}{x}
+                +\mspace{2mu}y+\strut z+\rotatebox{90}{r}+\scalebox{2}{s}
+                +\resizebox{1cm}{!}{t}+\multicolumn{2}{c}{u}
+                +\ensuremath{v}+w\xspace+\label{eq:w}+\iddots
+                +\begin{split}a&amp;=b\end{split}"></math>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == [
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+        "equation",
+    ]
+    assert r"\coloneqq" not in blocks[0].source_markdown
+    assert r"\expectationvalue" not in blocks[0].source_markdown
+    assert ":=" in blocks[0].source_markdown
+    assert r"\Big\{" in blocks[0].source_markdown
+    assert r"\left\langle P_{i} \right\rangle" in blocks[0].source_markdown
+    assert "[cccc|cccc]" not in blocks[1].source_markdown
+    assert r"\hline" not in blocks[1].source_markdown
+    assert r"\cr" not in blocks[1].source_markdown
+    assert "[1.0pt]" not in blocks[1].source_markdown
+    assert r"\begin{array}[]" not in blocks[2].source_markdown
+    assert r"\begin{array}{c}" in blocks[2].source_markdown
+    assert r"\pmatrix" not in blocks[3].source_markdown
+    assert r"\begin{pmatrix}0&1\\ 1&0\end{pmatrix}" in blocks[3].source_markdown
+    assert r"\mbox" not in blocks[4].source_markdown
+    assert r"\text{if }[M,E]=0" in blocks[4].source_markdown
+    assert r"\raisebox" not in blocks[5].source_markdown
+    assert r"$\overbrace" not in blocks[5].source_markdown
+    assert r"\overbrace{I}^{r}" in blocks[5].source_markdown
+    assert r"\eqqcolon" not in blocks[6].source_markdown
+    assert r"\mathrel{=:}" in blocks[6].source_markdown
+    assert r"\text{MASK}" in blocks[6].source_markdown
+    assert r"\vmathbb" not in blocks[7].source_markdown
+    assert r"\mathds" not in blocks[7].source_markdown
+    assert r"\mathbbm" not in blocks[7].source_markdown
+    assert r"\sl" not in blocks[7].source_markdown
+    assert r"\nopagebreak" not in blocks[7].source_markdown
+    assert r"\mathbb{1}+\mathbb{N}+\mathbb{C}+\mathbb{R}" in blocks[7].source_markdown
+    assert r"\textit{N}_{\mathrm{BN}}" in blocks[7].source_markdown
+    assert r"\wideparen" not in blocks[8].source_markdown
+    assert r"\buildrel" not in blocks[8].source_markdown
+    assert r"\cancelto" not in blocks[8].source_markdown
+    assert r"\mspace" not in blocks[8].source_markdown
+    assert r"\strut" not in blocks[8].source_markdown
+    assert r"\rotatebox" not in blocks[8].source_markdown
+    assert r"\scalebox" not in blocks[8].source_markdown
+    assert r"\resizebox" not in blocks[8].source_markdown
+    assert r"\multicolumn" not in blocks[8].source_markdown
+    assert r"\xspace" not in blocks[8].source_markdown
+    assert r"\label" not in blocks[8].source_markdown
+    assert r"\iddots" not in blocks[8].source_markdown
+    assert r"\overset{\frown}{AB}" in blocks[8].source_markdown
+    assert r"\overset{d}{=}" in blocks[8].source_markdown
+    assert r"\overset{0}{x}" in blocks[8].source_markdown
+    assert r"\ddots" in blocks[8].source_markdown
+    assert r"\begin{aligned}a&=b\end{aligned}" in blocks[8].source_markdown
+
+
+def test_normalize_latexml_html_escapes_inline_math_less_than_before_markdown(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p class="ltx_p">For a nondegenerate code,
+              <math display="inline" alttext="A_{d^{\prime}}=B_{d^{\prime}}=0"></math>
+              for <math display="inline" alttext="d^{\prime}&lt;d"></math>.
+              These constraints along with equation
+              (<a href="#Ch7.E14" class="ltx_ref"><span>7.14</span></a>)
+              restrict the allowed values of <math display="inline" alttext="A_{d}"></math>.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert len(blocks) == 1
+    assert "$d^{\\prime}<d$" in blocks[0].source_markdown
+    assert "These constraints along with equation ([7.14](#Ch7.E14))" in (blocks[0].source_markdown)
+    assert "$d^{\\prime}7.14)" not in blocks[0].source_markdown
 
 
 def test_normalize_latexml_html_keeps_paragraph_headings_as_sections(tmp_path: Path) -> None:
@@ -343,6 +846,8 @@ def test_normalize_latexml_html_treats_equation_tables_as_equations(tmp_path: Pa
     assert [block.block_type for block in blocks] == ["equation", "equation", "table"]
     assert blocks[0].block_uid == "eq-0001"
     assert blocks[0].metadata["label"] == "S3.E1"
+    assert blocks[0].metadata["equation_number"] == "(1)"
+    assert blocks[0].metadata["equation_numbers"] == ["(1)"]
     assert blocks[0].source_markdown == r"\mathrm{Attention}(Q,K,V)=V"
     assert blocks[1].source_markdown == "\\begin{aligned}\na =b \\\\\nc =d\n\\end{aligned}"
     assert len(assets) == 1
@@ -408,6 +913,146 @@ def test_normalize_latexml_html_tracks_latexml_table_figures_and_multiple_images
     table_asset = next(asset for asset in assets if asset.kind == "table")
     assert table_asset.web_path is None
     assert "<table>" in table_asset.metadata["html_fragment"]
+
+
+def test_normalize_latexml_html_prefers_table_root_over_nested_figure_tags(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure class="ltx_table" id="S7.T4">
+              <div class="ltx_flex_figure ltx_flex_table">
+                <div class="ltx_flex_cell">
+                  <figure class="ltx_figure ltx_figure_panel" id="S7.T4.fig1">
+                    <table><tr><td>Model</td><td>Score</td></tr></table>
+                    <figcaption>
+                      <span class="ltx_tag ltx_tag_figure">Table 3: </span>
+                      Percent accuracy by group.
+                    </figcaption>
+                  </figure>
+                </div>
+              </div>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["table"]
+    assert blocks[0].block_uid == "tbl-0001"
+    assert blocks[0].source_markdown == "**Table 1.** Percent accuracy by group."
+    assert assets[0].kind == "table"
+    assert assets[0].web_path is None
+    assert "<table>" in assets[0].metadata["html_fragment"]
+
+
+def test_normalize_latexml_html_strips_booktabs_rule_rows_from_table_fragments(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <figure class="ltx_table" id="tab:rules">
+              <figcaption><span class="ltx_tag ltx_tag_table">Table 1: </span>Results.</figcaption>
+              <table>
+                <tr><td><span class="ltx_ERROR undefined">\toprule</span></td></tr>
+                <tr><td>Method</td><td>Score</td></tr>
+                <tr><td><span class="ltx_ERROR undefined">\bottomrule</span></td></tr>
+              </table>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    _blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    html_fragment = assets[0].metadata["html_fragment"]
+    assert r"\toprule" not in html_fragment
+    assert r"\bottomrule" not in html_fragment
+    assert "Method" in html_fragment
+    assert "Score" in html_fragment
+
+
+def test_normalize_latexml_html_preserves_algorithms_as_environment_blocks(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure class="ltx_float_algorithm" id="alg:decode">
+              <figcaption>
+                <span class="ltx_tag ltx_tag_algorithm">Algorithm 1: </span>
+                Syndrome decoding.
+              </figcaption>
+              <div class="ltx_listingline">Input: syndrome s</div>
+              <div class="ltx_listingline">Output: correction c</div>
+            </figure>
+            <p>After the algorithm, the proof continues.</p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["algorithm", "paragraph"]
+    assert blocks[0].block_uid == "alg-0001"
+    assert blocks[0].source_markdown == "**Algorithm 1.** Syndrome decoding."
+    assert assets[0].kind == "algorithm"
+    assert assets[0].caption == "Syndrome decoding."
+
+
+def test_normalize_latexml_html_does_not_promote_page_wrapper_to_algorithm(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <div class="ltx_page_main">
+              <article class="ltx_document">
+                <h1>Batch Normalization</h1>
+                <p>The paper starts with ordinary text.</p>
+                <figure class="ltx_float_algorithm" id="alg:bn">
+                  <figcaption>
+                    <span class="ltx_tag ltx_tag_algorithm">Algorithm 1: </span>
+                    Batch normalizing transform.
+                  </figcaption>
+                  <div class="ltx_listingline">Input: activations x</div>
+                </figure>
+                <p>The paper continues after the algorithm.</p>
+              </article>
+            </div>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == [
+        "section",
+        "paragraph",
+        "algorithm",
+        "paragraph",
+    ]
+    assert blocks[2].source_markdown == "**Algorithm 1.** Batch normalizing transform."
+    assert assets[0].kind == "algorithm"
 
 
 def test_normalize_latexml_html_keeps_layout_tables_inside_figures_as_figures(
@@ -574,6 +1219,70 @@ def test_normalize_latexml_html_converts_pdf_asset_when_tools_exist(
     assert assets[0].metadata["web_asset_kind"] == "png"
     assert assets[0].web_path is not None
     assert Path(assets[0].web_path).read_bytes() == b"png"
+
+
+def test_normalize_latexml_html_resolves_extensionless_latex_graphics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html_path = tmp_path / "document" / "latexml.html"
+    source_root = tmp_path / "source" / "unpacked"
+    pdf_path = source_root / "eps" / "arch.pdf"
+    html_path.parent.mkdir()
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.7\n")
+    html_path.write_text(
+        """
+        <html>
+          <body>
+            <figure id="fig:arch">
+              <img src="eps/arch" />
+              <figcaption>A ResNet architecture figure.</figcaption>
+            </figure>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    def fake_which(name: str) -> str | None:
+        if name in {"magick", "gs"}:
+            return f"/usr/bin/{name}"
+        return None
+
+    def fake_run(
+        command: list[str],
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ):
+        void_values = (check, capture_output, text, timeout)
+        assert void_values == (False, True, True, 60)
+        assert command[3] == f"{pdf_path}[0]"
+        Path(command[-1]).write_bytes(b"png")
+
+        class Completed:
+            returncode = 0
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr(parser_module.shutil, "which", fake_which)
+    monkeypatch.setattr(parser_module.subprocess, "run", fake_run)
+
+    blocks, assets = normalize_latexml_html(
+        html_path,
+        "revision-1",
+        bundle_path=tmp_path / "bundle",
+        source_root=source_root,
+    )
+
+    assert blocks[0].metadata["asset_source"] == str(pdf_path)
+    assert assets[0].source_path == str(pdf_path)
+    assert assets[0].web_path == str(tmp_path / "bundle" / "assets" / "fig-0001.png")
+    assert assets[0].metadata["original_reference"] == "eps/arch"
+    assert assets[0].metadata["asset_resolution"] == "converted"
 
 
 def test_normalize_latexml_html_marks_code_generated_figure_for_controlled_render(

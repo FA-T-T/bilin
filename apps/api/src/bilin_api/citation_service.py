@@ -206,7 +206,7 @@ def extract_latexml_citations(html: str) -> list[CitationEntry]:
         if not title:
             continue
         authors = blocks[0] if blocks else None
-        label = citation_label(body, citation_id)
+        label = citation_label(body, citation_id, len(entries) + 1)
         query = scholar_query(title, authors)
         entries.append(
             CitationEntry(
@@ -321,7 +321,7 @@ def citation_title(blocks: list[str], raw_text: str) -> str:
     return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
 
 
-def citation_label(html: str, citation_id: str) -> str:
+def citation_label(html: str, citation_id: str, fallback_index: int | None = None) -> str:
     match = re.search(
         r"<span\b[^>]*class=(?P<quote>['\"])[^'\"]*\bltx_tag_bibitem\b[^'\"]*(?P=quote)[^>]*>"
         r"(?P<label>.*?)</span>",
@@ -330,9 +330,13 @@ def citation_label(html: str, citation_id: str) -> str:
     )
     label = clean_html_text(match.group("label")) if match else ""
     if label:
-        return label.strip("[]")
+        stripped = label.strip("[]")
+        if re.fullmatch(r"\d+[a-z]?", stripped):
+            return stripped
     fallback = re.search(r"(\d+)$", citation_id)
-    return fallback.group(1) if fallback else citation_id
+    if fallback:
+        return fallback.group(1)
+    return str(fallback_index) if fallback_index is not None else citation_id
 
 
 def citation_year(raw_text: str) -> str | None:

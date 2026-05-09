@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,22 +13,34 @@ from uuid import uuid4
 import aiosqlite
 
 from bilin_api.content_notice import with_markdown_content_watermark
-from bilin_api.database import init_library_db, open_db, utc_now
+from bilin_api.database import init_global_db, init_library_db, open_db, utc_now
 from bilin_api.repositories import get_library, list_libraries
 from bilin_api.schemas import (
+    ArticleDeleteResult,
     ArticleDocument,
     ArticleFamily,
     ArticleListItem,
     ArticleManifest,
     ArticleRevision,
+    ArticleTranslationState,
+    ArticleTranslationStatus,
     AssetRecord,
     ChatMessage,
     DocumentBlock,
     GlossaryTerm,
+    JobStatus,
+    JobType,
     Library,
     NotePatch,
+    ReaderCard,
+    ReaderCardPosition,
+    ReaderCardSourceType,
+    ReaderCardStatus,
+    ReaderCardType,
     TranslationVariant,
 )
+
+TRANSLATABLE_BLOCK_TYPES = {"paragraph", "list", "figure", "table"}
 
 
 def sha256_bytes(content: bytes) -> str:
@@ -253,7 +267,10 @@ async def get_article_revision(library: Library, revision_id: str) -> ArticleRev
     return _revision_from_row(row) if row else None
 
 
-async def list_article_items(library: Library) -> list[ArticleListItem]:
+async def list_article_items(
+    library: Library,
+    target_language: str = "zh-CN",
+) -> list[ArticleListItem]:
     db_path = await ensure_library_database(library)
     async with open_db(db_path) as conn:
         cursor = await conn.execute(
@@ -270,6 +287,12 @@ async def list_article_items(library: Library) -> list[ArticleListItem]:
             """
         )
         rows = await cursor.fetchall()
+    revision_ids = [row["id"] for row in rows]
+    translation_statuses = await article_translation_statuses(
+        library,
+        revision_ids,
+        target_language,
+    )
     items: list[ArticleListItem] = []
     for row in rows:
         revision = _revision_from_row(row)
@@ -289,14 +312,264 @@ async def list_article_items(library: Library) -> list[ArticleListItem]:
                 manifest=read_manifest(Path(revision.bundle_path)),
                 block_count=row["block_count"],
                 asset_count=row["asset_count"],
+                translation_status=translation_statuses.get(
+                    revision.id,
+                    ArticleTranslationStatus(target_language=target_language),
+                ),
             )
         )
     return items
 
 
-async def get_article_item(library: Library, revision_id: str) -> ArticleListItem | None:
-    items = await list_article_items(library)
+async def article_translation_statuses(
+    library: Library,
+    revision_ids: list[str],
+    target_language: str = "zh-CN",
+) -> dict[str, ArticleTranslationStatus]:
+    if not revision_ids:
+        return {}
+    translatable: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
+    translated: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
+    invalid: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
+    placeholders = ",".join("?" for _ in revision_ids)
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            f"""
+            SELECT
+              b.article_revision_id, b.id AS block_id, b.block_uid, b.content_hash,
+              b.block_type, b.source_markdown, tv.id AS variant_id,
+              tv.validation_status AS variant_validation_status,
+              tv.metadata_json AS variant_metadata_json
+            FROM blocks b
+            LEFT JOIN translation_variants tv
+              ON tv.block_id = b.id AND tv.target_language = ?
+            WHERE b.article_revision_id IN ({placeholders})
+            """,
+            (target_language, *revision_ids),
+        )
+        rows = await cursor.fetchall()
+    for row in rows:
+        revision_id = row["article_revision_id"]
+        if not _is_translatable_block_row(row):
+            continue
+        translatable[revision_id].add(row["block_id"])
+        if (
+            row["variant_id"]
+            and row["variant_validation_status"] == "ok"
+            and _translation_variant_row_matches_block(row)
+        ):
+            translated[revision_id].add(row["block_id"])
+        elif row["variant_id"] and _translation_variant_row_matches_block(row):
+            invalid[revision_id].add(row["block_id"])
+
+    job_counts = await _translation_job_counts_by_revision(library, revision_ids, target_language)
+    statuses: dict[str, ArticleTranslationStatus] = {}
+    for revision_id in revision_ids:
+        counts = job_counts.get(revision_id, Counter()).copy()
+        invalid_blocks = len(invalid[revision_id] - translated[revision_id])
+        counts[JobStatus.failed.value] = max(counts[JobStatus.failed.value], invalid_blocks)
+        statuses[revision_id] = _build_article_translation_status(
+            target_language=target_language,
+            translatable_blocks=len(translatable[revision_id]),
+            translated_blocks=len(translated[revision_id]),
+            job_counts=counts,
+        )
+    return statuses
+
+
+def _build_article_translation_status(
+    *,
+    target_language: str,
+    translatable_blocks: int,
+    translated_blocks: int,
+    job_counts: Counter[str],
+) -> ArticleTranslationStatus:
+    queued_jobs = job_counts[JobStatus.queued.value]
+    running_jobs = job_counts[JobStatus.running.value]
+    paused_jobs = job_counts[JobStatus.paused.value]
+    failed_jobs = job_counts[JobStatus.failed.value]
+    if translatable_blocks == 0:
+        state = ArticleTranslationState.not_required
+    elif translated_blocks >= translatable_blocks:
+        state = ArticleTranslationState.translated
+    elif queued_jobs + running_jobs + paused_jobs > 0:
+        state = ArticleTranslationState.translating
+    elif failed_jobs > 0:
+        state = ArticleTranslationState.failed
+    elif translated_blocks > 0:
+        state = ArticleTranslationState.partial
+    else:
+        state = ArticleTranslationState.not_started
+    return ArticleTranslationStatus(
+        target_language=target_language,
+        status=state,
+        translatable_blocks=translatable_blocks,
+        translated_blocks=translated_blocks,
+        queued_jobs=queued_jobs,
+        running_jobs=running_jobs,
+        paused_jobs=paused_jobs,
+        failed_jobs=failed_jobs,
+    )
+
+
+async def _translation_job_counts_by_revision(
+    library: Library,
+    revision_ids: list[str],
+    target_language: str,
+) -> dict[str, Counter[str]]:
+    revision_set = set(revision_ids)
+    counts: dict[str, Counter[str]] = {revision_id: Counter() for revision_id in revision_ids}
+    global_db_path = await init_global_db()
+    async with open_db(global_db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT status, payload_json
+            FROM jobs
+            WHERE type = ? AND status IN (?, ?, ?, ?) AND payload_json LIKE ?
+            """,
+            (
+                JobType.translate_block.value,
+                JobStatus.queued.value,
+                JobStatus.running.value,
+                JobStatus.paused.value,
+                JobStatus.failed.value,
+                f"%{library.id}%",
+            ),
+        )
+        rows = await cursor.fetchall()
+    for row in rows:
+        payload = _loads(row["payload_json"], {})
+        revision_id = payload.get("article_revision_id")
+        if (
+            payload.get("library_id") == library.id
+            and revision_id in revision_set
+            and payload.get("target_language") == target_language
+        ):
+            counts[revision_id][row["status"]] += 1
+    return counts
+
+
+def _is_translatable_block_row(row: aiosqlite.Row) -> bool:
+    source_markdown = row["source_markdown"] or ""
+    return row["block_type"] in TRANSLATABLE_BLOCK_TYPES and bool(source_markdown.strip())
+
+
+def _translation_variant_row_matches_block(row: aiosqlite.Row) -> bool:
+    metadata = _loads(row["variant_metadata_json"], {})
+    cached_hash = metadata.get("content_hash")
+    cached_block_uid = metadata.get("block_uid")
+    return (
+        not isinstance(cached_hash, str)
+        or cached_hash == row["content_hash"]
+        or cached_block_uid == row["block_uid"]
+    )
+
+
+async def get_article_item(
+    library: Library,
+    revision_id: str,
+    target_language: str = "zh-CN",
+) -> ArticleListItem | None:
+    items = await list_article_items(library, target_language)
     return next((item for item in items if item.article_revision.id == revision_id), None)
+
+
+async def archive_article_revision(library: Library, revision_id: str) -> ArticleListItem | None:
+    revision = await get_article_revision(library, revision_id)
+    if revision is None:
+        return None
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            "UPDATE article_revisions SET status = ?, updated_at = ? WHERE id = ?",
+            ("archived", now, revision_id),
+        )
+        await conn.commit()
+    return await get_article_item(library, revision_id)
+
+
+async def delete_article_revision(library: Library, revision_id: str) -> ArticleDeleteResult | None:
+    revision = await get_article_revision(library, revision_id)
+    if revision is None:
+        return None
+    bundle_path = Path(revision.bundle_path)
+    db_path = await ensure_library_database(library)
+    removed_family = False
+    async with open_db(db_path) as conn:
+        await conn.execute("BEGIN")
+        cursor = await conn.execute(
+            "SELECT id FROM blocks WHERE article_revision_id = ?",
+            (revision_id,),
+        )
+        block_ids = [row["id"] for row in await cursor.fetchall()]
+        if block_ids:
+            placeholders = ",".join("?" for _ in block_ids)
+            await conn.execute(
+                f"DELETE FROM translation_variants WHERE block_id IN ({placeholders})",
+                tuple(block_ids),
+            )
+            await conn.execute(
+                f"DELETE FROM block_embeddings WHERE block_id IN ({placeholders})",
+                tuple(block_ids),
+            )
+            await conn.execute(
+                f"DELETE FROM blocks WHERE id IN ({placeholders})",
+                tuple(block_ids),
+            )
+        await conn.execute("DELETE FROM block_fts WHERE article_revision_id = ?", (revision_id,))
+        await conn.execute(
+            "DELETE FROM block_embeddings WHERE article_revision_id = ?",
+            (revision_id,),
+        )
+        await conn.execute("DELETE FROM assets WHERE article_revision_id = ?", (revision_id,))
+        await conn.execute(
+            "DELETE FROM chat_messages WHERE article_revision_id = ?", (revision_id,)
+        )
+        await conn.execute("DELETE FROM note_patches WHERE article_revision_id = ?", (revision_id,))
+        await conn.execute("DELETE FROM reader_cards WHERE article_revision_id = ?", (revision_id,))
+        await _delete_article_scoped_glossary_terms(conn, revision_id)
+        await conn.execute("DELETE FROM article_revisions WHERE id = ?", (revision_id,))
+        cursor = await conn.execute(
+            "SELECT COUNT(*) AS revision_count FROM article_revisions WHERE family_id = ?",
+            (revision.family_id,),
+        )
+        row = await cursor.fetchone()
+        if row is not None and row["revision_count"] == 0:
+            await conn.execute("DELETE FROM article_families WHERE id = ?", (revision.family_id,))
+            removed_family = True
+        await conn.commit()
+    if bundle_path.exists():
+        shutil.rmtree(bundle_path)
+    return ArticleDeleteResult(
+        library_id=library.id,
+        article_family_id=revision.family_id,
+        article_revision_id=revision_id,
+        bundle_path=str(bundle_path),
+        deleted_cache=not bundle_path.exists(),
+        removed_family=removed_family,
+    )
+
+
+async def _delete_article_scoped_glossary_terms(
+    conn: aiosqlite.Connection,
+    revision_id: str,
+) -> None:
+    cursor = await conn.execute("SELECT id, metadata_json FROM glossary_terms")
+    rows = await cursor.fetchall()
+    term_ids = [
+        row["id"]
+        for row in rows
+        if _loads(row["metadata_json"], {}).get("article_revision_id") == revision_id
+    ]
+    if not term_ids:
+        return
+    placeholders = ",".join("?" for _ in term_ids)
+    await conn.execute(
+        f"DELETE FROM glossary_terms WHERE id IN ({placeholders})",
+        tuple(term_ids),
+    )
 
 
 async def replace_document(
@@ -1199,6 +1472,233 @@ async def update_glossary_term(
     return await get_glossary_term(library, term_id)
 
 
+async def list_reader_cards(
+    library: Library,
+    revision_id: str,
+    target_language: str | None = None,
+    include_archived: bool = False,
+) -> list[ReaderCard]:
+    db_path = await ensure_library_database(library)
+    clauses = ["article_revision_id = ?"]
+    params: list[str] = [revision_id]
+    if target_language is not None:
+        clauses.append("target_language = ?")
+        params.append(target_language)
+    if not include_archived:
+        clauses.append("status != ?")
+        params.append(ReaderCardStatus.archived.value)
+    where = " AND ".join(clauses)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            f"""
+            SELECT * FROM reader_cards
+            WHERE {where}
+            ORDER BY anchor_block_uid, updated_at DESC
+            """,
+            tuple(params),
+        )
+        rows = await cursor.fetchall()
+    return [_reader_card_from_row(row) for row in rows]
+
+
+async def get_reader_card(
+    library: Library,
+    revision_id: str,
+    card_id: str,
+) -> ReaderCard | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT * FROM reader_cards
+            WHERE id = ? AND article_revision_id = ?
+            """,
+            (card_id, revision_id),
+        )
+        row = await cursor.fetchone()
+    return _reader_card_from_row(row) if row else None
+
+
+async def find_reader_card_by_canonical_key(
+    library: Library,
+    revision_id: str,
+    canonical_key: str,
+    target_language: str,
+) -> ReaderCard | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT * FROM reader_cards
+            WHERE article_revision_id = ?
+              AND canonical_key = ?
+              AND target_language = ?
+              AND status != ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (revision_id, canonical_key, target_language, ReaderCardStatus.archived.value),
+        )
+        row = await cursor.fetchone()
+    return _reader_card_from_row(row) if row else None
+
+
+async def find_shared_reader_card(
+    library: Library,
+    canonical_key: str,
+    target_language: str,
+) -> ReaderCard | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT * FROM reader_cards
+            WHERE canonical_key = ?
+              AND target_language = ?
+              AND status != ?
+              AND body_markdown != ''
+            ORDER BY
+              CASE status WHEN 'pinned' THEN 0 WHEN 'exported' THEN 1 ELSE 2 END,
+              updated_at DESC
+            LIMIT 1
+            """,
+            (canonical_key, target_language, ReaderCardStatus.archived.value),
+        )
+        row = await cursor.fetchone()
+    return _reader_card_from_row(row) if row else None
+
+
+async def create_reader_card(
+    library: Library,
+    *,
+    revision_id: str,
+    card_type: ReaderCardType,
+    anchor_block_uid: str,
+    anchor_text: str,
+    canonical_key: str,
+    abbreviation: str | None,
+    full_form: str | None,
+    title: str,
+    body_markdown: str,
+    target_language: str,
+    source_type: ReaderCardSourceType,
+    source_url: str | None = None,
+    position: ReaderCardPosition = ReaderCardPosition.right,
+    status: ReaderCardStatus = ReaderCardStatus.candidate,
+    metadata: dict[str, Any] | None = None,
+) -> ReaderCard:
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    card_id = str(uuid4())
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            """
+            INSERT INTO reader_cards(
+              id, article_revision_id, card_type, anchor_block_uid, anchor_text, canonical_key,
+              abbreviation, full_form, title, body_markdown, target_language, source_type,
+              source_url, position, status, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                card_id,
+                revision_id,
+                card_type.value,
+                anchor_block_uid,
+                anchor_text,
+                canonical_key,
+                abbreviation,
+                full_form,
+                title,
+                body_markdown,
+                target_language,
+                source_type.value,
+                source_url,
+                position.value,
+                status.value,
+                json.dumps(metadata or {}),
+                now,
+                now,
+            ),
+        )
+        await conn.commit()
+    card = await get_reader_card(library, revision_id, card_id)
+    if card is None:
+        msg = "Created reader card could not be read back"
+        raise RuntimeError(msg)
+    return card
+
+
+async def update_reader_card(
+    library: Library,
+    revision_id: str,
+    card_id: str,
+    *,
+    anchor_text: str | None = None,
+    abbreviation: str | None = None,
+    full_form: str | None = None,
+    title: str | None = None,
+    body_markdown: str | None = None,
+    source_url: str | None = None,
+    position: ReaderCardPosition | None = None,
+    status: ReaderCardStatus | None = None,
+    metadata: dict[str, Any] | None = None,
+    canonical_key: str | None = None,
+    source_type: ReaderCardSourceType | None = None,
+) -> ReaderCard | None:
+    current = await get_reader_card(library, revision_id, card_id)
+    if current is None:
+        return None
+    metadata_payload = current.metadata.copy()
+    if metadata is not None:
+        metadata_payload.update(metadata)
+    if body_markdown is not None and body_markdown != current.body_markdown:
+        metadata_payload["user_edited"] = True
+    now = utc_now()
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            """
+            UPDATE reader_cards
+            SET anchor_text = ?, canonical_key = ?, abbreviation = ?, full_form = ?, title = ?,
+                body_markdown = ?, source_type = ?, source_url = ?, position = ?, status = ?,
+                metadata_json = ?, updated_at = ?
+            WHERE id = ? AND article_revision_id = ?
+            """,
+            (
+                anchor_text if anchor_text is not None else current.anchor_text,
+                canonical_key if canonical_key is not None else current.canonical_key,
+                abbreviation if abbreviation is not None else current.abbreviation,
+                full_form if full_form is not None else current.full_form,
+                title if title is not None else current.title,
+                body_markdown if body_markdown is not None else current.body_markdown,
+                (source_type if source_type is not None else current.source_type).value,
+                source_url if source_url is not None else current.source_url,
+                (position if position is not None else current.position).value,
+                (status if status is not None else current.status).value,
+                json.dumps(metadata_payload),
+                now,
+                card_id,
+                revision_id,
+            ),
+        )
+        await conn.commit()
+    return await get_reader_card(library, revision_id, card_id)
+
+
+async def archive_reader_card(
+    library: Library,
+    revision_id: str,
+    card_id: str,
+) -> ReaderCard | None:
+    return await update_reader_card(
+        library,
+        revision_id,
+        card_id,
+        status=ReaderCardStatus.archived,
+    )
+
+
 def read_manifest(bundle_path: Path) -> ArticleManifest | None:
     path = bundle_path / "manifest.json"
     if not path.exists():
@@ -1391,6 +1891,29 @@ def _glossary_term_from_row(row: aiosqlite.Row) -> GlossaryTerm:
         source_term=row["source_term"],
         target_term=row["target_term"],
         language_direction=row["language_direction"],
+        status=row["status"],
+        metadata=_loads(row["metadata_json"], {}),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _reader_card_from_row(row: aiosqlite.Row) -> ReaderCard:
+    return ReaderCard(
+        id=row["id"],
+        article_revision_id=row["article_revision_id"],
+        card_type=row["card_type"],
+        anchor_block_uid=row["anchor_block_uid"],
+        anchor_text=row["anchor_text"],
+        canonical_key=row["canonical_key"],
+        abbreviation=row["abbreviation"],
+        full_form=row["full_form"],
+        title=row["title"],
+        body_markdown=row["body_markdown"],
+        target_language=row["target_language"],
+        source_type=row["source_type"],
+        source_url=row["source_url"],
+        position=row["position"],
         status=row["status"],
         metadata=_loads(row["metadata_json"], {}),
         created_at=row["created_at"],

@@ -8,12 +8,18 @@ from bilin_api.embedding_service import build_article_embeddings, queue_article_
 from bilin_api.export_service import export_article
 from bilin_api.importer import import_arxiv, import_result_to_json
 from bilin_api.latexml_parser import ParseFailure, parse_article_revision
+from bilin_api.reader_card_service import (
+    extract_article_reader_cards,
+    generate_article_reader_card,
+    queue_reader_card_extraction,
+)
 from bilin_api.repositories import (
     claim_next_job,
     complete_job,
     create_job,
     fail_job,
     get_job,
+    list_provider_profiles,
     requeue_job,
     update_job_progress,
 )
@@ -24,6 +30,9 @@ from bilin_api.schemas import (
     Job,
     JobStatus,
     JobType,
+    ProviderProfile,
+    ReaderCardExtractionRequest,
+    ReaderCardGenerationRequest,
     TranslationBatchRequest,
 )
 from bilin_api.translation_service import (
@@ -62,6 +71,12 @@ async def run_job(job: Job) -> None:
         if job.type == JobType.export_article:
             await run_export_article_job(job)
             return
+        if job.type == JobType.extract_reader_cards:
+            await run_extract_reader_cards_job(job)
+            return
+        if job.type == JobType.generate_reader_card:
+            await run_generate_reader_card_job(job)
+            return
         await fail_job(job.id, {"message": f"Unsupported job type: {job.type}."})
     except Exception as exc:  # pragma: no cover - defensive worker boundary
         await fail_job(job.id, {"message": str(exc), "type": type(exc).__name__})
@@ -83,6 +98,8 @@ async def run_import_arxiv_job(job: Job) -> None:
             "library_id": library.id,
             "article_revision_id": result.article_revision_id,
         }
+        if isinstance(job.payload.get("source"), str):
+            parse_payload["source"] = job.payload["source"]
         if isinstance(job.payload.get("translate_after_parse"), dict):
             parse_payload["translate_after_parse"] = job.payload["translate_after_parse"]
         parse_job = await create_parse_job(parse_payload)
@@ -99,12 +116,20 @@ async def run_parse_article_job(job: Job) -> None:
         result = await parse_article_revision(library, revision_id)
         embed_job = await queue_article_embedding(library, revision_id)
         result["embed_job_id"] = embed_job.id
-        translation_payload = job.payload.get("translate_after_parse")
-        if isinstance(translation_payload, dict):
+        card_job = await queue_reader_card_extraction(
+            library,
+            revision_id,
+            ReaderCardExtractionRequest(
+                target_language=str(job.payload.get("target_language") or "zh-CN")
+            ),
+        )
+        result["reader_card_job_id"] = card_job.id
+        translation_request = await translation_request_after_parse(job)
+        if translation_request is not None:
             translation_result = await queue_article_translation(
                 library,
                 revision_id,
-                TranslationBatchRequest.model_validate(translation_payload),
+                translation_request,
             )
             result["translation_job_ids"] = translation_result.job_ids
         await update_job_progress(job.id, 1.0)
@@ -117,10 +142,65 @@ async def create_parse_job(payload: dict[str, object]) -> Job:
     return await create_job(JobType.parse_article, payload=payload)
 
 
+async def translation_request_after_parse(job: Job) -> TranslationBatchRequest | None:
+    payload = job.payload.get("translate_after_parse")
+    if payload is False:
+        return None
+    if isinstance(payload, dict):
+        return TranslationBatchRequest.model_validate(payload)
+    if job.payload.get("source") == "citation":
+        return None
+    provider = await default_translation_provider()
+    if provider is None or not provider.default_model:
+        return None
+    return TranslationBatchRequest(
+        target_language=str(job.payload.get("target_language") or "zh-CN"),
+        provider_profile_id=provider.id,
+        model=provider.default_model,
+    )
+
+
+async def default_translation_provider() -> ProviderProfile | None:
+    for provider in await list_provider_profiles():
+        if provider.default_model and provider_supports_translation(provider):
+            return provider
+    return None
+
+
+def provider_supports_translation(provider: ProviderProfile) -> bool:
+    capabilities = provider.capabilities
+    selected = capabilities.get("selected_model_capabilities")
+    if isinstance(selected, dict) and selected.get("translation") is False:
+        return False
+    return capabilities.get("translation") is not False
+
+
 async def run_translate_block_worker_job(job: Job) -> None:
     try:
         await update_job_progress(job.id, 0.1)
         result = await run_translate_block_job(job)
+        validation_status = result.get("validation_status")
+        if validation_status and validation_status != "ok":
+            max_attempts = int(job.payload.get("max_attempts") or 1)
+            error = {
+                "code": "translation_validation_failed",
+                "message": (
+                    f"Translation output for block {result.get('block_uid')} failed validation: "
+                    f"{validation_status}"
+                ),
+                "validation_status": validation_status,
+                "block_uid": result.get("block_uid"),
+                "target_language": result.get("target_language"),
+                "translation_variant_id": result.get("translation_variant_id"),
+                "retryable": job.attempts < max_attempts,
+                "attempt": job.attempts,
+                "max_attempts": max_attempts,
+            }
+            if job.attempts < max_attempts:
+                await requeue_job(job.id, error)
+                return
+            await fail_job(job.id, error)
+            return
         await update_job_progress(job.id, 1.0)
         await complete_job(job.id, result)
     except Exception as exc:
@@ -162,5 +242,31 @@ async def run_embed_article_job(job: Job) -> None:
         return
     await update_job_progress(job.id, 0.2)
     result = await build_article_embeddings(library, revision_id, request)
+    await update_job_progress(job.id, 1.0)
+    await complete_job(job.id, result.model_dump(mode="json"))
+
+
+async def run_extract_reader_cards_job(job: Job) -> None:
+    library = await resolve_library(str(job.payload["library_id"]))
+    revision_id = str(job.payload["article_revision_id"])
+    request = ReaderCardExtractionRequest.model_validate(job.payload.get("request", {}))
+    current = await get_job(job.id)
+    if current is None or current.status == JobStatus.cancelled:
+        return
+    await update_job_progress(job.id, 0.2)
+    result = await extract_article_reader_cards(library, revision_id, request)
+    await update_job_progress(job.id, 1.0)
+    await complete_job(job.id, result.model_dump(mode="json"))
+
+
+async def run_generate_reader_card_job(job: Job) -> None:
+    library = await resolve_library(str(job.payload["library_id"]))
+    revision_id = str(job.payload["article_revision_id"])
+    request = ReaderCardGenerationRequest.model_validate(job.payload.get("request", {}))
+    current = await get_job(job.id)
+    if current is None or current.status == JobStatus.cancelled:
+        return
+    await update_job_progress(job.id, 0.2)
+    result = await generate_article_reader_card(library, revision_id, request)
     await update_job_progress(job.id, 1.0)
     await complete_job(job.id, result.model_dump(mode="json"))

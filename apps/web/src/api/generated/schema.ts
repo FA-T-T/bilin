@@ -67,6 +67,41 @@ export interface paths {
         get: operations["get_library_by_id_libraries__library_id__get"];
         put?: never;
         post?: never;
+        /** Delete Library By Id */
+        delete: operations["delete_library_by_id_libraries__library_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Library By Id */
+        post: operations["archive_library_by_id_libraries__library_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/translations/missing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Translate Missing Library Blocks */
+        post: operations["translate_missing_library_blocks_libraries__library_id__translations_missing_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -222,6 +257,24 @@ export interface paths {
         get: operations["get_article_libraries__library_id__articles__revision_id__get"];
         put?: never;
         post?: never;
+        /** Delete Article */
+        delete: operations["delete_article_libraries__library_id__articles__revision_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Article */
+        post: operations["archive_article_libraries__library_id__articles__revision_id__archive_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -411,6 +464,127 @@ export interface paths {
         /** Put Glossary Term */
         put: operations["put_glossary_term_libraries__library_id__articles__revision_id__glossary__term_id__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Reader Cards */
+        get: operations["get_reader_cards_libraries__library_id__articles__revision_id__cards_get"];
+        put?: never;
+        /** Post Reader Card */
+        post: operations["post_reader_card_libraries__library_id__articles__revision_id__cards_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/{card_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Reader Card */
+        put: operations["put_reader_card_libraries__library_id__articles__revision_id__cards__card_id__put"];
+        post?: never;
+        /** Delete Reader Card */
+        delete: operations["delete_reader_card_libraries__library_id__articles__revision_id__cards__card_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Reader Card Extraction */
+        post: operations["post_reader_card_extraction_libraries__library_id__articles__revision_id__cards_extract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/extract/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Reader Card Extraction Job */
+        post: operations["post_reader_card_extraction_job_libraries__library_id__articles__revision_id__cards_extract_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Reader Card Generation */
+        post: operations["post_reader_card_generation_libraries__library_id__articles__revision_id__cards_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/generate/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Reader Card Generation Job */
+        post: operations["post_reader_card_generation_job_libraries__library_id__articles__revision_id__cards_generate_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/cards/export/obsidian": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Reader Card Obsidian Export */
+        post: operations["post_reader_card_obsidian_export_libraries__library_id__articles__revision_id__cards_export_obsidian_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -786,6 +960,24 @@ export interface paths {
         get: operations["get_jobs_jobs_get"];
         put?: never;
         post?: never;
+        /** Clear All Jobs */
+        delete: operations["clear_all_jobs_jobs_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Jobs Summary */
+        get: operations["get_jobs_summary_jobs_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -894,6 +1086,24 @@ export interface components {
             article_revision_id: string;
             /** Citations */
             citations?: components["schemas"]["CitationEntry"][];
+        };
+        /** ArticleDeleteResult */
+        ArticleDeleteResult: {
+            /** Library Id */
+            library_id: string;
+            /** Article Family Id */
+            article_family_id: string;
+            /** Article Revision Id */
+            article_revision_id: string;
+            /** Bundle Path */
+            bundle_path: string;
+            /** Deleted Cache */
+            deleted_cache: boolean;
+            /**
+             * Removed Family
+             * @default false
+             */
+            removed_family: boolean;
         };
         /** ArticleDocument */
         ArticleDocument: {
@@ -1024,6 +1234,7 @@ export interface components {
              * @default 0
              */
             asset_count: number;
+            translation_status?: components["schemas"]["ArticleTranslationStatus"];
         };
         /** ArticleManifest */
         ArticleManifest: {
@@ -1108,6 +1319,51 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ArticleTranslationState
+         * @enum {string}
+         */
+        ArticleTranslationState: "not_required" | "not_started" | "translating" | "partial" | "translated" | "failed";
+        /** ArticleTranslationStatus */
+        ArticleTranslationStatus: {
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** @default not_started */
+            status: components["schemas"]["ArticleTranslationState"];
+            /**
+             * Translatable Blocks
+             * @default 0
+             */
+            translatable_blocks: number;
+            /**
+             * Translated Blocks
+             * @default 0
+             */
+            translated_blocks: number;
+            /**
+             * Queued Jobs
+             * @default 0
+             */
+            queued_jobs: number;
+            /**
+             * Running Jobs
+             * @default 0
+             */
+            running_jobs: number;
+            /**
+             * Paused Jobs
+             * @default 0
+             */
+            paused_jobs: number;
+            /**
+             * Failed Jobs
+             * @default 0
+             */
+            failed_jobs: number;
         };
         /** ArticleTranslations */
         ArticleTranslations: {
@@ -1651,16 +1907,66 @@ export interface components {
             /** Lease Owner */
             lease_owner?: string | null;
         };
+        /** JobClearResult */
+        JobClearResult: {
+            /** Cleared */
+            cleared: number;
+        };
         /**
          * JobStatus
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
+        /** JobSummary */
+        JobSummary: {
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Queued
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Running
+             * @default 0
+             */
+            running: number;
+            /**
+             * Paused
+             * @default 0
+             */
+            paused: number;
+            /**
+             * Succeeded
+             * @default 0
+             */
+            succeeded: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Cancelled
+             * @default 0
+             */
+            cancelled: number;
+            /**
+             * Active
+             * @default 0
+             */
+            active: number;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /**
          * JobType
          * @enum {string}
          */
-        JobType: "import_arxiv" | "parse_article" | "translate_block" | "embed_article" | "export_article";
+        JobType: "import_arxiv" | "parse_article" | "translate_block" | "embed_article" | "export_article" | "extract_reader_cards" | "generate_reader_card";
         /** Library */
         Library: {
             /** Id */
@@ -1692,11 +1998,61 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** LibraryDeleteResult */
+        LibraryDeleteResult: {
+            /** Library Id */
+            library_id: string;
+            /** Path */
+            path: string;
+            /** Deleted Cache */
+            deleted_cache: boolean;
+        };
         /**
          * LibraryStatus
          * @enum {string}
          */
         LibraryStatus: "active" | "missing" | "archived";
+        /** LibraryTranslationBatchResult */
+        LibraryTranslationBatchResult: {
+            /** Library Id */
+            library_id: string;
+            /** Target Language */
+            target_language: string;
+            /**
+             * Articles Considered
+             * @default 0
+             */
+            articles_considered: number;
+            /**
+             * Articles Queued
+             * @default 0
+             */
+            articles_queued: number;
+            /**
+             * Jobs Created
+             * @default 0
+             */
+            jobs_created: number;
+            /**
+             * Existing Jobs
+             * @default 0
+             */
+            existing_jobs: number;
+            /**
+             * Cached Blocks
+             * @default 0
+             */
+            cached_blocks: number;
+            /**
+             * Skipped Blocks
+             * @default 0
+             */
+            skipped_blocks: number;
+            /** Job Ids */
+            job_ids?: string[];
+            /** Article Results */
+            article_results?: components["schemas"]["TranslationBatchResult"][];
+        };
         /** NotePatch */
         NotePatch: {
             /** Id */
@@ -1983,6 +2339,239 @@ export interface components {
          * @enum {string}
          */
         ProviderProtocol: "openai-compatible" | "anthropic-compatible";
+        /** ReaderCard */
+        ReaderCard: {
+            /** Id */
+            id: string;
+            /** Article Revision Id */
+            article_revision_id: string;
+            card_type: components["schemas"]["ReaderCardType"];
+            /** Anchor Block Uid */
+            anchor_block_uid: string;
+            /** Anchor Text */
+            anchor_text: string;
+            /** Canonical Key */
+            canonical_key: string;
+            /** Abbreviation */
+            abbreviation?: string | null;
+            /** Full Form */
+            full_form?: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Body Markdown
+             * @default
+             */
+            body_markdown: string;
+            /** Target Language */
+            target_language: string;
+            source_type: components["schemas"]["ReaderCardSourceType"];
+            /** Source Url */
+            source_url?: string | null;
+            /** @default right */
+            position: components["schemas"]["ReaderCardPosition"];
+            /** @default candidate */
+            status: components["schemas"]["ReaderCardStatus"];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ReaderCardCreate */
+        ReaderCardCreate: {
+            /** @default note */
+            card_type: components["schemas"]["ReaderCardType"];
+            /** Anchor Block Uid */
+            anchor_block_uid: string;
+            /** Anchor Text */
+            anchor_text: string;
+            /** Abbreviation */
+            abbreviation?: string | null;
+            /** Full Form */
+            full_form?: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Body Markdown
+             * @default
+             */
+            body_markdown: string;
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** @default user_note */
+            source_type: components["schemas"]["ReaderCardSourceType"];
+            /** Source Url */
+            source_url?: string | null;
+            /** @default right */
+            position: components["schemas"]["ReaderCardPosition"];
+            /** @default pinned */
+            status: components["schemas"]["ReaderCardStatus"];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ReaderCardExtractionRequest */
+        ReaderCardExtractionRequest: {
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /**
+             * Limit
+             * @default 30
+             */
+            limit: number;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+        };
+        /** ReaderCardExtractionResult */
+        ReaderCardExtractionResult: {
+            /** Article Revision Id */
+            article_revision_id: string;
+            /** Target Language */
+            target_language: string;
+            /** Candidates Created */
+            candidates_created: number;
+            /** Existing Candidates */
+            existing_candidates: number;
+            /** Wiki Cards Created */
+            wiki_cards_created: number;
+            /** Cards */
+            cards?: components["schemas"]["ReaderCard"][];
+        };
+        /** ReaderCardGenerationRequest */
+        ReaderCardGenerationRequest: {
+            /** Anchor Block Uid */
+            anchor_block_uid: string;
+            /** Anchor Text */
+            anchor_text: string;
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** Provider Profile Id */
+            provider_profile_id?: string | null;
+            /** Model */
+            model?: string | null;
+            /**
+             * Native Search
+             * @default true
+             */
+            native_search: boolean;
+            /** @default term */
+            card_type: components["schemas"]["ReaderCardType"];
+            /** Title */
+            title?: string | null;
+            /** Abbreviation */
+            abbreviation?: string | null;
+            /** Full Form */
+            full_form?: string | null;
+        };
+        /** ReaderCardGenerationResult */
+        ReaderCardGenerationResult: {
+            /** Article Revision Id */
+            article_revision_id: string;
+            card: components["schemas"]["ReaderCard"];
+            /**
+             * Native Search Used
+             * @default false
+             */
+            native_search_used: boolean;
+            source_type: components["schemas"]["ReaderCardSourceType"];
+        };
+        /** ReaderCardObsidianExportRequest */
+        ReaderCardObsidianExportRequest: {
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** Card Ids */
+            card_ids?: string[] | null;
+        };
+        /** ReaderCardObsidianExportResult */
+        ReaderCardObsidianExportResult: {
+            /** Vault Path */
+            vault_path: string;
+            /** Note Path */
+            note_path: string;
+            /** Cards Exported */
+            cards_exported: number;
+            /**
+             * Updated Existing
+             * @default false
+             */
+            updated_existing: boolean;
+        };
+        /**
+         * ReaderCardPosition
+         * @enum {string}
+         */
+        ReaderCardPosition: "left" | "right" | "floating";
+        /**
+         * ReaderCardSourceType
+         * @enum {string}
+         */
+        ReaderCardSourceType: "wikipedia" | "wikidata" | "ai_search" | "paper_local" | "user_note";
+        /**
+         * ReaderCardStatus
+         * @enum {string}
+         */
+        ReaderCardStatus: "candidate" | "pinned" | "exported" | "archived";
+        /**
+         * ReaderCardType
+         * @enum {string}
+         */
+        ReaderCardType: "term" | "note" | "formula" | "figure" | "question";
+        /** ReaderCardUpdate */
+        ReaderCardUpdate: {
+            /** Anchor Text */
+            anchor_text?: string | null;
+            /** Abbreviation */
+            abbreviation?: string | null;
+            /** Full Form */
+            full_form?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Body Markdown */
+            body_markdown?: string | null;
+            /** Source Url */
+            source_url?: string | null;
+            position?: components["schemas"]["ReaderCardPosition"] | null;
+            status?: components["schemas"]["ReaderCardStatus"] | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ReaderCards */
+        ReaderCards: {
+            /** Article Revision Id */
+            article_revision_id: string;
+            /** Target Language */
+            target_language: string;
+            /** Cards */
+            cards?: components["schemas"]["ReaderCard"][];
+        };
         /**
          * RetrievalMode
          * @enum {string}
@@ -2396,6 +2985,103 @@ export interface operations {
             };
         };
     };
+    delete_library_by_id_libraries__library_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_library_by_id_libraries__library_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Library"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    translate_missing_library_blocks_libraries__library_id__translations_missing_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranslationBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryTranslationBatchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_providers_providers_get: {
         parameters: {
             query?: never;
@@ -2689,7 +3375,9 @@ export interface operations {
     };
     list_articles_libraries__library_id__articles_get: {
         parameters: {
-            query?: never;
+            query?: {
+                target_language?: string;
+            };
             header?: never;
             path: {
                 library_id: string;
@@ -2719,6 +3407,72 @@ export interface operations {
         };
     };
     get_article_libraries__library_id__articles__revision_id__get: {
+        parameters: {
+            query?: {
+                target_language?: string;
+            };
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleListItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_article_libraries__library_id__articles__revision_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_article_libraries__library_id__articles__revision_id__archive_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3190,6 +3944,326 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GlossaryTerm"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reader_cards_libraries__library_id__articles__revision_id__cards_get: {
+        parameters: {
+            query?: {
+                target_language?: string;
+            };
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCards"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_libraries__library_id__articles__revision_id__cards_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_reader_card_libraries__library_id__articles__revision_id__cards__card_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_reader_card_libraries__library_id__articles__revision_id__cards__card_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_extraction_libraries__library_id__articles__revision_id__cards_extract_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardExtractionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCardExtractionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_extraction_job_libraries__library_id__articles__revision_id__cards_extract_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardExtractionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_generation_libraries__library_id__articles__revision_id__cards_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardGenerationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCardGenerationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_generation_job_libraries__library_id__articles__revision_id__cards_generate_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardGenerationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_reader_card_obsidian_export_libraries__library_id__articles__revision_id__cards_export_obsidian_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderCardObsidianExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReaderCardObsidianExportResult"];
                 };
             };
             /** @description Validation Error */
@@ -3969,7 +5043,9 @@ export interface operations {
     };
     get_jobs_jobs_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3983,6 +5059,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_jobs_jobs_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobClearResult"];
+                };
+            };
+        };
+    };
+    get_jobs_summary_jobs_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobSummary"];
                 };
             };
         };

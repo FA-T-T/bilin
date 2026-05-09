@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from time import monotonic
@@ -11,6 +12,7 @@ from bilin_api.article_store import (
     create_translation_variant,
     find_cached_translation_variant,
     get_block_by_uid,
+    list_article_items,
     list_blocks,
     list_translation_variants,
     resolve_library,
@@ -34,6 +36,7 @@ from bilin_api.schemas import (
     JobStatus,
     JobType,
     Library,
+    LibraryTranslationBatchResult,
     ProviderProfile,
     TranslationBatchRequest,
     TranslationBatchResult,
@@ -46,7 +49,7 @@ Translator = Callable[
     Awaitable[LLMResponse],
 ]
 
-TRANSLATABLE_BLOCK_TYPES = {"paragraph", "figure", "table"}
+TRANSLATABLE_BLOCK_TYPES = {"paragraph", "list", "figure", "table"}
 _PROVIDER_SEMAPHORES: dict[tuple[str, int], asyncio.Semaphore] = {}
 _PROVIDER_RATE_LOCKS: dict[str, asyncio.Lock] = {}
 _PROVIDER_NEXT_REQUEST_AT: dict[str, float] = {}
@@ -155,6 +158,102 @@ async def queue_article_translation(
     )
 
 
+async def queue_library_missing_translations(
+    library: Library,
+    request: TranslationBatchRequest,
+) -> LibraryTranslationBatchResult:
+    await require_translation_provider(request)
+    article_results: list[TranslationBatchResult] = []
+    job_ids: list[str] = []
+    articles_considered = 0
+    for item in await list_article_items(library, request.target_language):
+        if item.article_revision.status == "archived":
+            continue
+        articles_considered += 1
+        status = item.translation_status
+        if status.translatable_blocks == 0 or status.status == "translated":
+            continue
+        missing_uids = await missing_translation_block_uids(
+            library,
+            item.article_revision.id,
+            request.target_language,
+        )
+        if not missing_uids:
+            continue
+        scoped_request = request.model_copy(
+            update={
+                "block_uids": missing_uids,
+                "force": False,
+            }
+        )
+        result = await queue_article_translation(library, item.article_revision.id, scoped_request)
+        if result.jobs_created or result.existing_jobs or result.cached_blocks:
+            article_results.append(result)
+            job_ids.extend(result.job_ids)
+    return LibraryTranslationBatchResult(
+        library_id=library.id,
+        target_language=request.target_language,
+        articles_considered=articles_considered,
+        articles_queued=sum(
+            1
+            for result in article_results
+            if result.jobs_created or result.existing_jobs or result.cached_blocks
+        ),
+        jobs_created=sum(result.jobs_created for result in article_results),
+        existing_jobs=sum(result.existing_jobs for result in article_results),
+        cached_blocks=sum(result.cached_blocks for result in article_results),
+        skipped_blocks=sum(result.skipped_blocks for result in article_results),
+        job_ids=job_ids,
+        article_results=article_results,
+    )
+
+
+async def require_translation_provider(request: TranslationBatchRequest) -> ProviderProfile:
+    provider = await get_provider_profile(request.provider_profile_id)
+    if provider is None:
+        msg = f"Provider profile not found: {request.provider_profile_id}"
+        raise ValueError(msg)
+    model = request.model or provider.default_model
+    if not model:
+        msg = "Translation requires a model or provider default_model."
+        raise ValueError(msg)
+    return provider
+
+
+async def missing_translation_block_uids(
+    library: Library,
+    revision_id: str,
+    target_language: str,
+) -> list[str]:
+    blocks = await list_blocks(library, revision_id)
+    variants = await list_translation_variants(library, revision_id, target_language)
+    translated_block_ids = {
+        variant.block_id
+        for variant in variants
+        if translation_variant_matches_current_block(variant, blocks)
+    }
+    return [
+        block.block_uid
+        for block in blocks
+        if is_translatable_block(block) and block.id not in translated_block_ids
+    ]
+
+
+def translation_variant_matches_current_block(
+    variant: TranslationVariant,
+    blocks: list[DocumentBlock],
+) -> bool:
+    if variant.validation_status != "ok":
+        return False
+    block = next((candidate for candidate in blocks if candidate.id == variant.block_id), None)
+    if block is None:
+        return False
+    metadata = variant.metadata
+    if metadata.get("block_uid") and metadata["block_uid"] != block.block_uid:
+        return False
+    return not (metadata.get("content_hash") and metadata["content_hash"] != block.content_hash)
+
+
 async def run_translate_block_job(
     job: Job,
     translator: Translator | None = None,
@@ -240,12 +339,13 @@ async def run_translate_block_job(
             context_markdown,
             job.payload.get("custom_prompt"),
         )
-    validation_status = validate_translation_markdown(block.source_markdown, response.text)
+    cleaned_translation = clean_translation_markdown(block.source_markdown, response.text)
+    validation_status = validate_translation_markdown(block.source_markdown, cleaned_translation)
     variant = await create_translation_variant(
         library=library,
         block=block,
         target_language=target_language,
-        raw_markdown=response.text,
+        raw_markdown=cleaned_translation,
         provider_profile_id=provider.id,
         model=model,
         glossary_version=glossary_version_text,
@@ -265,7 +365,7 @@ async def run_translate_block_job(
             source_hash=block.content_hash,
             source_markdown=block.source_markdown,
             target_language=target_language,
-            raw_markdown=response.text,
+            raw_markdown=cleaned_translation,
             provider_profile_id=provider.id,
             model=model,
             validation_status=validation_status,
@@ -457,10 +557,35 @@ def custom_prompt_hash(custom_prompt: Any) -> str | None:
     return sha256_text(custom_prompt.strip())
 
 
+def clean_translation_markdown(source_markdown: str, translated_markdown: str) -> str:
+    source = source_markdown.strip()
+    translated = translated_markdown.strip()
+    if not source or not translated:
+        return translated
+    if normalize_translation_text(source) == normalize_translation_text(translated):
+        return translated
+    if translated.startswith(source):
+        remainder = translated[len(source) :].lstrip()
+        remainder = remainder.lstrip("\n\r\t :：-—–")
+        if remainder and normalize_translation_text(remainder) != normalize_translation_text(
+            source
+        ):
+            return remainder.strip()
+    return translated
+
+
+def normalize_translation_text(markdown: str) -> str:
+    return re.sub(r"\s+", " ", markdown.strip()).casefold()
+
+
 def validate_translation_markdown(source_markdown: str, translated_markdown: str) -> str:
     translated = translated_markdown.strip()
     if not translated:
         return "empty"
+    if normalize_translation_text(source_markdown) == normalize_translation_text(
+        translated
+    ) and not is_translation_invariant_markdown(source_markdown):
+        return "unchanged_source"
     if translated.count("```") % 2 != 0:
         return "unbalanced_code_fence"
     source_fences = source_markdown.count("```")
@@ -468,6 +593,18 @@ def validate_translation_markdown(source_markdown: str, translated_markdown: str
     if source_fences and translated_fences != source_fences:
         return "code_fence_count_changed"
     return "ok"
+
+
+def is_translation_invariant_markdown(markdown: str) -> bool:
+    text = markdown.strip()
+    if not text:
+        return False
+    visible = re.sub(r"\[([^\]]+)]\([^)]*\)", r"\1", text)
+    visible = re.sub(r"[^A-Za-z0-9]+", " ", visible).strip()
+    words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", visible)
+    if not words:
+        return True
+    return len(words) <= 4 and all(word.upper() == word for word in words)
 
 
 @asynccontextmanager

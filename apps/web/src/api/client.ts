@@ -1,4 +1,5 @@
 import type {
+  ArticleDeleteResult,
   ArticleDocument,
   ArticleEmbeddingStatus,
   ArticleExportRequest,
@@ -27,8 +28,12 @@ import type {
   ImportLocalKind,
   ImportLocalResult,
   Job,
+  JobClearResult,
+  JobSummary,
   Library,
   LibraryCreate,
+  LibraryDeleteResult,
+  LibraryTranslationBatchResult,
   NotePatch,
   NotePatchGenerateRequest,
   NotePatchGenerateResult,
@@ -43,6 +48,16 @@ import type {
   ProviderProfile,
   ProviderProfileCreate,
   ProviderProfileUpdate,
+  ReaderCard,
+  ReaderCardCreate,
+  ReaderCardExtractionRequest,
+  ReaderCardExtractionResult,
+  ReaderCardGenerationRequest,
+  ReaderCardGenerationResult,
+  ReaderCardObsidianExportRequest,
+  ReaderCardObsidianExportResult,
+  ReaderCards,
+  ReaderCardUpdate,
   TranslationBatchRequest,
   TranslationBatchResult,
   TranslationMemoryEntry,
@@ -189,11 +204,29 @@ export const apiClient = {
       body: JSON.stringify(payload)
     }),
   getLibrary: (libraryId: string) => request<Library>(`/libraries/${libraryId}`),
-  listArticles: (libraryId: string) =>
-    request<ArticleListItem[]>(`/libraries/${encodeURIComponent(libraryId)}/articles`),
-  getArticle: (libraryId: string, revisionId: string) =>
+  archiveLibrary: (libraryId: string) =>
+    request<Library>(`/libraries/${encodeURIComponent(libraryId)}/archive`, { method: "POST" }),
+  deleteLibrary: (libraryId: string) =>
+    request<LibraryDeleteResult>(`/libraries/${encodeURIComponent(libraryId)}`, {
+      method: "DELETE"
+    }),
+  listArticles: (libraryId: string, targetLanguage = "zh-CN") =>
+    request<ArticleListItem[]>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles?target_language=${encodeURIComponent(targetLanguage)}`
+    ),
+  getArticle: (libraryId: string, revisionId: string, targetLanguage = "zh-CN") =>
     request<ArticleListItem>(
-      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}`
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}?target_language=${encodeURIComponent(targetLanguage)}`
+    ),
+  archiveArticle: (libraryId: string, revisionId: string) =>
+    request<ArticleListItem>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/archive`,
+      { method: "POST" }
+    ),
+  deleteArticle: (libraryId: string, revisionId: string) =>
+    request<ArticleDeleteResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}`,
+      { method: "DELETE" }
     ),
   getArticleDocument: (libraryId: string, revisionId: string) =>
     request<ArticleDocument>(
@@ -329,6 +362,72 @@ export const apiClient = {
         body: JSON.stringify(payload)
       }
     ),
+  getReaderCards: (libraryId: string, revisionId: string, targetLanguage: string) =>
+    request<ReaderCards>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards?target_language=${encodeURIComponent(targetLanguage)}`
+    ),
+  createReaderCard: (libraryId: string, revisionId: string, payload: ReaderCardCreate) =>
+    request<ReaderCard>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  updateReaderCard: (
+    libraryId: string,
+    revisionId: string,
+    cardId: string,
+    payload: ReaderCardUpdate
+  ) =>
+    request<ReaderCard>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards/${encodeURIComponent(cardId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      }
+    ),
+  deleteReaderCard: (libraryId: string, revisionId: string, cardId: string) =>
+    request<ReaderCard>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards/${encodeURIComponent(cardId)}`,
+      { method: "DELETE" }
+    ),
+  extractReaderCards: (
+    libraryId: string,
+    revisionId: string,
+    payload: ReaderCardExtractionRequest
+  ) =>
+    request<ReaderCardExtractionResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards/extract`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  generateReaderCard: (
+    libraryId: string,
+    revisionId: string,
+    payload: ReaderCardGenerationRequest
+  ) =>
+    request<ReaderCardGenerationResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards/generate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  exportReaderCardsToObsidian: (
+    libraryId: string,
+    revisionId: string,
+    payload: ReaderCardObsidianExportRequest
+  ) =>
+    request<ReaderCardObsidianExportResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/cards/export/obsidian`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   getArticleChat: (libraryId: string, revisionId: string) =>
     request<ArticleChatHistory>(
       `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/chat`
@@ -433,6 +532,14 @@ export const apiClient = {
         body: JSON.stringify(payload)
       }
     ),
+  translateLibraryMissing: (libraryId: string, payload: TranslationBatchRequest) =>
+    request<LibraryTranslationBatchResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/translations/missing`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   translateBlock: (
     libraryId: string,
     revisionId: string,
@@ -460,7 +567,9 @@ export const apiClient = {
       payload.file,
       localImportContentType(payload.kind)
     ),
-  listJobs: () => request<Job[]>("/jobs"),
+  listJobs: (limit = 120) => request<Job[]>(`/jobs?limit=${encodeURIComponent(String(limit))}`),
+  getJobSummary: () => request<JobSummary>("/jobs/summary"),
+  clearJobs: () => request<JobClearResult>("/jobs", { method: "DELETE" }),
   pauseJob: (jobId: string) => request<Job>(`/jobs/${jobId}/pause`, { method: "POST" }),
   resumeJob: (jobId: string) => request<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" })

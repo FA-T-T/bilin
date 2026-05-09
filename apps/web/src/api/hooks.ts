@@ -22,6 +22,11 @@ import type {
   ProviderModelDiscoveryRequest,
   ProviderProfileCreate,
   ProviderProfileUpdate,
+  ReaderCardCreate,
+  ReaderCardExtractionRequest,
+  ReaderCardGenerationRequest,
+  ReaderCardObsidianExportRequest,
+  ReaderCardUpdate,
   TranslationBatchRequest,
   TranslationMemoryEntryUpdate,
   TranslationMemoryReviewStatus
@@ -32,7 +37,10 @@ export const queryKeys = {
   providers: ["providers"] as const,
   libraries: ["libraries"] as const,
   library: (libraryId: string) => ["library", libraryId] as const,
-  articles: (libraryId: string) => ["articles", libraryId] as const,
+  articles: (libraryId: string, targetLanguage?: string) =>
+    targetLanguage
+      ? (["articles", libraryId, targetLanguage] as const)
+      : (["articles", libraryId] as const),
   articleDocument: (libraryId: string, revisionId: string) =>
     ["article-document", libraryId, revisionId] as const,
   articleCitations: (libraryId: string, revisionId: string) =>
@@ -71,13 +79,17 @@ export const queryKeys = {
     ] as const,
   articleGlossary: (libraryId: string, revisionId: string, targetLanguage: string) =>
     ["article-glossary", libraryId, revisionId, targetLanguage] as const,
+  articleReaderCards: (libraryId: string, revisionId: string, targetLanguage: string) =>
+    ["article-reader-cards", libraryId, revisionId, targetLanguage] as const,
   articleChat: (libraryId: string, revisionId: string) =>
     ["article-chat", libraryId, revisionId] as const,
   noteTemplates: (libraryId: string, revisionId: string) =>
     ["note-templates", libraryId, revisionId] as const,
   notePatches: (libraryId: string, revisionId: string) =>
     ["note-patches", libraryId, revisionId] as const,
-  jobs: ["jobs"] as const
+  jobs: ["jobs"] as const,
+  jobSummary: ["jobs", "summary"] as const,
+  jobList: (limit: number) => ["jobs", "list", limit] as const
 };
 
 export function useDoctor() {
@@ -145,13 +157,63 @@ export function useCreateLibrary() {
   });
 }
 
-export function useArticles(libraryId?: string) {
+export function useArchiveLibrary() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (libraryId: string) => apiClient.archiveLibrary(libraryId),
+    onSuccess: (library) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.libraries });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.library(library.id) });
+    }
+  });
+}
+
+export function useDeleteLibrary() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (libraryId: string) => apiClient.deleteLibrary(libraryId),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.libraries });
+      void queryClient.removeQueries({ queryKey: queryKeys.library(result.library_id) });
+      void queryClient.removeQueries({ queryKey: queryKeys.articles(result.library_id) });
+    }
+  });
+}
+
+export function useArticles(libraryId?: string, targetLanguage = "zh-CN") {
   return useQuery({
-    queryKey: queryKeys.articles(libraryId ?? ""),
-    queryFn: () => apiClient.listArticles(libraryId ?? ""),
+    queryKey: queryKeys.articles(libraryId ?? "", targetLanguage),
+    queryFn: () => apiClient.listArticles(libraryId ?? "", targetLanguage),
     enabled: Boolean(libraryId),
     refetchInterval: 5000,
     retry: false
+  });
+}
+
+export function useArchiveArticle(libraryId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (revisionId: string) => apiClient.archiveArticle(libraryId ?? "", revisionId),
+    onSuccess: () => {
+      if (libraryId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.articles(libraryId) });
+      }
+    }
+  });
+}
+
+export function useDeleteArticle(libraryId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (revisionId: string) => apiClient.deleteArticle(libraryId ?? "", revisionId),
+    onSuccess: (_result, revisionId) => {
+      if (libraryId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.articles(libraryId) });
+        void queryClient.removeQueries({
+          queryKey: queryKeys.articleDocument(libraryId, revisionId)
+        });
+      }
+    }
   });
 }
 
@@ -289,6 +351,20 @@ export function useTranslateArticle(libraryId?: string, revisionId?: string) {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.articleTranslations(libraryId, revisionId, payload.target_language)
         });
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+    }
+  });
+}
+
+export function useTranslateLibraryMissing(libraryId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: TranslationBatchRequest) =>
+      apiClient.translateLibraryMissing(libraryId ?? "", payload),
+    onSuccess: () => {
+      if (libraryId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.articles(libraryId) });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     }
@@ -455,6 +531,109 @@ export function useUpdateGlossaryTerm(libraryId?: string, revisionId?: string) {
         });
         void queryClient.invalidateQueries({
           queryKey: queryKeys.articleTranslations(libraryId, revisionId, targetLanguage)
+        });
+      }
+    }
+  });
+}
+
+export function useArticleReaderCards(
+  libraryId?: string,
+  revisionId?: string,
+  targetLanguage = "zh-CN"
+) {
+  return useQuery({
+    queryKey: queryKeys.articleReaderCards(libraryId ?? "", revisionId ?? "", targetLanguage),
+    queryFn: () => apiClient.getReaderCards(libraryId ?? "", revisionId ?? "", targetLanguage),
+    enabled: Boolean(libraryId && revisionId),
+    retry: false
+  });
+}
+
+export function useCreateReaderCard(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReaderCardCreate) =>
+      apiClient.createReaderCard(libraryId ?? "", revisionId ?? "", payload),
+    onSuccess: (card) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, card.target_language)
+        });
+      }
+    }
+  });
+}
+
+export function useUpdateReaderCard(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ cardId, payload }: { cardId: string; payload: ReaderCardUpdate }) =>
+      apiClient.updateReaderCard(libraryId ?? "", revisionId ?? "", cardId, payload),
+    onSuccess: (card) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, card.target_language)
+        });
+      }
+    }
+  });
+}
+
+export function useDeleteReaderCard(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (cardId: string) =>
+      apiClient.deleteReaderCard(libraryId ?? "", revisionId ?? "", cardId),
+    onSuccess: (card) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, card.target_language)
+        });
+      }
+    }
+  });
+}
+
+export function useExtractReaderCards(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReaderCardExtractionRequest) =>
+      apiClient.extractReaderCards(libraryId ?? "", revisionId ?? "", payload),
+    onSuccess: (result) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, result.target_language)
+        });
+      }
+    }
+  });
+}
+
+export function useGenerateReaderCard(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReaderCardGenerationRequest) =>
+      apiClient.generateReaderCard(libraryId ?? "", revisionId ?? "", payload),
+    onSuccess: (result) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, result.card.target_language)
+        });
+      }
+    }
+  });
+}
+
+export function useExportReaderCardsToObsidian(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReaderCardObsidianExportRequest) =>
+      apiClient.exportReaderCardsToObsidian(libraryId ?? "", revisionId ?? "", payload),
+    onSuccess: (_result, payload) => {
+      if (libraryId && revisionId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articleReaderCards(libraryId, revisionId, payload.target_language)
         });
       }
     }
@@ -655,11 +834,22 @@ export function useImportLocalFile(libraryId?: string) {
   });
 }
 
-export function useJobs() {
+export function useJobSummary() {
   return useQuery({
-    queryKey: queryKeys.jobs,
-    queryFn: apiClient.listJobs,
-    refetchInterval: 5000,
+    queryKey: queryKeys.jobSummary,
+    queryFn: apiClient.getJobSummary,
+    refetchInterval: 3000,
+    retry: false
+  });
+}
+
+export function useJobs(options: { limit?: number; enabled?: boolean } = {}) {
+  const limit = options.limit ?? 120;
+  return useQuery({
+    queryKey: queryKeys.jobList(limit),
+    queryFn: () => apiClient.listJobs(limit),
+    enabled: options.enabled ?? true,
+    refetchInterval: options.enabled === false ? false : 5000,
     retry: false
   });
 }
@@ -676,14 +866,23 @@ export function useJobAction(action: "pause" | "resume" | "cancel") {
   });
 }
 
-export function useJobEvents() {
+export function useClearJobs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: apiClient.clearJobs,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.jobs })
+  });
+}
+
+export function useJobEvents(enabled = true) {
   const queryClient = useQueryClient();
   useEffect(() => {
+    if (!enabled) return undefined;
     if (typeof EventSource === "undefined") return undefined;
     const source = new EventSource(`${API_BASE_URL}/events`);
     source.addEventListener("jobs", () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     });
     return () => source.close();
-  }, [queryClient]);
+  }, [enabled, queryClient]);
 }

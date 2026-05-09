@@ -1,4 +1,12 @@
-import { Copy, FileInput, MessageSquare, RefreshCw, ScrollText, Terminal } from "lucide-react";
+import {
+  Copy,
+  FileInput,
+  MessageSquare,
+  RefreshCw,
+  ScrollText,
+  StickyNote,
+  Terminal
+} from "lucide-react";
 import type { ReactNode } from "react";
 import type { MessageKey } from "../i18n";
 
@@ -7,6 +15,7 @@ export type ReaderToolbarActionId =
   | "copy-source"
   | "copy-obsidian"
   | "ask-source"
+  | "create-card"
   | "show-latex"
   | "copy-translation"
   | "retranslate"
@@ -28,6 +37,7 @@ export const READER_TOOLBAR_ACTIONS: Record<ToolbarKind, ToolbarActionDefinition
     { id: "copy-source", labelKey: "toolbar.copySource", icon: <Copy size={iconSize} /> },
     { id: "copy-obsidian", labelKey: "toolbar.copyObsidian", icon: <FileInput size={iconSize} /> },
     { id: "ask-source", labelKey: "toolbar.askSource", icon: <MessageSquare size={iconSize} /> },
+    { id: "create-card", labelKey: "toolbar.createCard", icon: <StickyNote size={iconSize} /> },
     { id: "show-latex", labelKey: "toolbar.showLatex", icon: <Terminal size={iconSize} /> }
   ],
   translation: [

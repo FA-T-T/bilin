@@ -1,8 +1,14 @@
-import { Button, Group, Slider, Stack, Text, Title } from "@mantine/core";
+import { Button, Divider, Group, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { RotateCcw } from "lucide-react";
 
 import { useT, type MessageKey } from "../i18n";
-import { type ReaderPreferenceKey, type ReaderPreferences, useUiStore } from "../state/ui";
+import {
+  type ReaderFeaturePreferenceKey,
+  type ReaderFeaturePreferences,
+  type ReaderPreferenceKey,
+  type ReaderPreferences,
+  useUiStore
+} from "../state/ui";
 
 interface ReaderPreferencesPanelProps {
   compact?: boolean;
@@ -17,6 +23,12 @@ interface PreferenceControl {
   max: number;
   step: number;
   valueLabel: (value: number) => string;
+}
+
+interface FeatureControl {
+  key: ReaderFeaturePreferenceKey;
+  labelKey: MessageKey;
+  helpKey: MessageKey;
 }
 
 const controls: PreferenceControl[] = [
@@ -58,14 +70,89 @@ const controls: PreferenceControl[] = [
   }
 ];
 
+const featureControls: FeatureControl[] = [
+  {
+    key: "chapterIndexVisible",
+    labelKey: "reader.featureChapterIndex",
+    helpKey: "reader.featureChapterIndexHelp"
+  },
+  {
+    key: "bottomProgressVisible",
+    labelKey: "reader.featureBottomProgress",
+    helpKey: "reader.featureBottomProgressHelp"
+  },
+  {
+    key: "blockToolsEnabled",
+    labelKey: "reader.featureBlockTools",
+    helpKey: "reader.featureBlockToolsHelp"
+  },
+  {
+    key: "colorMarkersEnabled",
+    labelKey: "reader.featureColorMarkers",
+    helpKey: "reader.featureColorMarkersHelp"
+  },
+  {
+    key: "termCardsEnabled",
+    labelKey: "reader.featureTermCards",
+    helpKey: "reader.featureTermCardsHelp"
+  },
+  {
+    key: "quickAskEnabled",
+    labelKey: "reader.featureQuickAsk",
+    helpKey: "reader.featureQuickAskHelp"
+  },
+  {
+    key: "sentenceHoverAccentEnabled",
+    labelKey: "reader.featureSentenceHover",
+    helpKey: "reader.featureSentenceHoverHelp"
+  },
+  {
+    key: "citationPreviewEnabled",
+    labelKey: "reader.featureCitationPreview",
+    helpKey: "reader.featureCitationPreviewHelp"
+  },
+  {
+    key: "imageLightboxEnabled",
+    labelKey: "reader.featureImageLightbox",
+    helpKey: "reader.featureImageLightboxHelp"
+  },
+  {
+    key: "watermarkVisible",
+    labelKey: "reader.featureWatermark",
+    helpKey: "reader.featureWatermarkHelp"
+  },
+  {
+    key: "taskNotificationsEnabled",
+    labelKey: "reader.featureTaskNotifications",
+    helpKey: "reader.featureTaskNotificationsHelp"
+  },
+  {
+    key: "glossaryReplacementEnabled",
+    labelKey: "reader.featureGlossaryReplacement",
+    helpKey: "reader.featureGlossaryReplacementHelp"
+  },
+  {
+    key: "includeUntranslatedInExport",
+    labelKey: "reader.featureIncludeUntranslatedExport",
+    helpKey: "reader.featureIncludeUntranslatedExportHelp"
+  }
+];
+
 export function ReaderPreferencesPanel({
   compact = false,
   showTitle = true
 }: ReaderPreferencesPanelProps) {
   const t = useT();
   const preferences = useUiStore((state) => state.readerPreferences);
+  const featurePreferences = useUiStore((state) => state.readerFeaturePreferences);
   const setReaderPreference = useUiStore((state) => state.setReaderPreference);
+  const setReaderFeaturePreference = useUiStore((state) => state.setReaderFeaturePreference);
   const resetReaderPreferences = useUiStore((state) => state.resetReaderPreferences);
+  const resetReaderFeaturePreferences = useUiStore((state) => state.resetReaderFeaturePreferences);
+  const resetAllReaderPreferences = () => {
+    resetReaderPreferences();
+    resetReaderFeaturePreferences();
+  };
 
   return (
     <section
@@ -84,7 +171,7 @@ export function ReaderPreferencesPanel({
             variant="subtle"
             size="xs"
             leftSection={<RotateCcw size={14} aria-hidden="true" />}
-            onClick={resetReaderPreferences}
+            onClick={resetAllReaderPreferences}
           >
             {t("reader.resetPreferences")}
           </Button>
@@ -100,18 +187,61 @@ export function ReaderPreferencesPanel({
           />
         ))}
       </div>
+      <Divider className="reader-preferences-divider" />
+      <Stack gap="xs" className="reader-feature-switches">
+        <div>
+          <Text fw={700} size="sm">
+            {t("reader.featureToggles")}
+          </Text>
+          <Text c="dimmed" size="xs">
+            {t("reader.featureTogglesHelp")}
+          </Text>
+        </div>
+        {featureControls.map((control) => (
+          <FeatureSwitch
+            control={control}
+            key={control.key}
+            preferences={featurePreferences}
+            onChange={setReaderFeaturePreference}
+          />
+        ))}
+      </Stack>
       {!showTitle ? (
         <Button
           className="reader-preferences-reset"
           variant="subtle"
           size="xs"
           leftSection={<RotateCcw size={14} aria-hidden="true" />}
-          onClick={resetReaderPreferences}
+          onClick={resetAllReaderPreferences}
         >
           {t("reader.resetPreferences")}
         </Button>
       ) : null}
     </section>
+  );
+}
+
+function FeatureSwitch({
+  control,
+  preferences,
+  onChange
+}: {
+  control: FeatureControl;
+  preferences: ReaderFeaturePreferences;
+  onChange: <Key extends ReaderFeaturePreferenceKey>(
+    key: Key,
+    value: ReaderFeaturePreferences[Key]
+  ) => void;
+}) {
+  const t = useT();
+  return (
+    <Switch
+      className="reader-feature-switch"
+      checked={preferences[control.key]}
+      label={t(control.labelKey)}
+      description={t(control.helpKey)}
+      onChange={(event) => onChange(control.key, event.currentTarget.checked)}
+    />
   );
 }
 

@@ -1,0 +1,11 @@
+# LaTeX Compatibility Table
+
+Ilios keeps LaTeX-to-web compatibility rules in `shared/latex-compatibility.json`. This file is the first place to update when a paper exposes a KaTeX or LaTeXML dialect gap. The backend parser reads it before running LaTeXML and while normalizing math TeX. The frontend reader reads the same file before calling KaTeX, so old cached documents and newly parsed documents follow the same rule set.
+
+The table is deliberately conservative. A rule belongs here only when it is semantic-preserving or display-preserving across papers. Font aliases such as `\vmathbb{1}` becoming `\mathbb{1}` are safe. Layout wrappers such as `\resizebox{...}{...}{x}` becoming `x` are acceptable because browser layout owns size. Paper-specific commands whose meaning depends on the source preamble should not be guessed in this global table.
+
+Each command-group rule records the affected commands, argument count, replacement strategy, risk level, and reason. `template` rules render a replacement such as `\overset{#1}{#2}`. `unwrap` rules keep the first argument. `keep_arg` rules keep a specific argument, as in `\rotatebox{90}{x}` becoming `x`. Commands that also need LaTeXML help are mirrored in `latexml_preamble_commands`, which generates `\providecommand` shims in the temporary parser entry file without modifying the original source package.
+
+When adding a new compatibility rule, first confirm that KaTeX or LaTeXML does not support the command natively, then add the smallest safe rule to `shared/latex-compatibility.json`. Add or extend a regression in `apps/api/tests/test_latexml_parser.py` and `apps/web/tests/render.test.tsx`. Then run the parser and reader checks. If a command is only safe for one paper because its definition is local, do not add it here; handle it later through source-aware macro extraction.
+
+The current table is based on KaTeX's supported-function list, KaTeX's macro-extension behavior, the KaTeX unsupported-command wiki, and LaTeXML's customization model. The table is not a promise that every arbitrary LaTeX package is supported. It is a maintained compatibility layer for high-frequency, low-risk failures observed in arXiv papers and community reports.

@@ -68,6 +68,31 @@ def test_extract_latexml_citations() -> None:
     assert citations[0].scholar_url.startswith("https://scholar.google.com/scholar?")
 
 
+def test_extract_latexml_citations_uses_short_numeric_labels_for_author_year_styles() -> None:
+    html = """
+    <section id="bib" class="ltx_bibliography">
+    <ul class="ltx_biblist">
+    <li id="bib.qec_binary_orthogonal_geometry" class="ltx_bibitem">
+    <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">
+      Calderbank et al.(1997)Calderbank, Rains, Shor, and Sloane
+    </span>
+    <span class="ltx_bibblock">
+      A. R. Calderbank, E. M. Rains, P. W. Shor, and N. J. A. Sloane.
+    </span>
+    <span class="ltx_bibblock">Quantum error correction via codes over GF(4).</span>
+    <span class="ltx_bibblock">IEEE Transactions on Information Theory, 1997.</span>
+    </li>
+    </ul>
+    </section>
+    """
+
+    citations = extract_latexml_citations(html)
+
+    assert citations[0].label == "1"
+    assert citations[0].title == "Quantum error correction via codes over GF(4)"
+    assert citations[0].year == "1997"
+
+
 @pytest.mark.asyncio
 async def test_lookup_citation_scholar_parses_first_result(
     bilin_home: Path,

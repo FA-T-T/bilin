@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,9 +22,11 @@ from bilin_api.database import init_global_db, init_library_db, open_db, utc_now
 from bilin_api.schemas import (
     Job,
     JobStatus,
+    JobSummary,
     JobType,
     Library,
     LibraryCreate,
+    LibraryDeleteResult,
     LibraryStatus,
     NoteTemplate,
     NoteTemplateCreate,
@@ -169,6 +173,45 @@ async def create_library(payload: LibraryCreate) -> Library:
         )
         await conn.commit()
     return library
+
+
+async def archive_library(library_id: str) -> Library | None:
+    return await update_library_status(library_id, LibraryStatus.archived)
+
+
+async def update_library_status(library_id: str, status: LibraryStatus) -> Library | None:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            "UPDATE libraries SET status = ?, updated_at = ? WHERE id = ?",
+            (status.value, utc_now(), library_id),
+        )
+        await conn.commit()
+    return await get_library(library_id)
+
+
+async def delete_library(library_id: str) -> LibraryDeleteResult | None:
+    library = await get_library(library_id)
+    if library is None:
+        return None
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        await conn.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
+        await conn.execute(
+            "DELETE FROM jobs WHERE payload_json LIKE ?",
+            (f"%{library_id}%",),
+        )
+        await conn.commit()
+    library_path = Path(library.path)
+    deleted_cache = False
+    if library_path.exists() and (library_path / "library.sqlite").exists():
+        shutil.rmtree(library_path)
+        deleted_cache = not library_path.exists()
+    return LibraryDeleteResult(
+        library_id=library.id,
+        path=library.path,
+        deleted_cache=deleted_cache,
+    )
 
 
 def default_provider_base_url(protocol: ProviderProtocol) -> str:
@@ -667,12 +710,65 @@ async def create_job(
     return job
 
 
-async def list_jobs() -> list[Job]:
+async def list_jobs(
+    *,
+    limit: int | None = None,
+    statuses: Sequence[JobStatus] | None = None,
+) -> list[Job]:
     db_path = await init_global_db()
+    where: list[str] = []
+    params: list[object] = []
+    if statuses:
+        placeholders = ", ".join("?" for _ in statuses)
+        where.append(f"status IN ({placeholders})")
+        params.extend(status.value for status in statuses)
+    sql = "SELECT * FROM jobs"
+    if where:
+        sql += f" WHERE {' AND '.join(where)}"
+    sql += " ORDER BY created_at DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(max(1, min(limit, 500)))
     async with open_db(db_path) as conn:
-        cursor = await conn.execute("SELECT * FROM jobs ORDER BY created_at DESC")
+        cursor = await conn.execute(sql, params)
         rows = await cursor.fetchall()
     return [_job_from_row(row) for row in rows]
+
+
+async def get_job_summary() -> JobSummary:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status")
+        rows = await cursor.fetchall()
+        cursor = await conn.execute("SELECT MAX(updated_at) AS updated_at FROM jobs")
+        updated_row = await cursor.fetchone()
+    counts = {row["status"]: int(row["count"]) for row in rows}
+    queued = counts.get(JobStatus.queued.value, 0)
+    running = counts.get(JobStatus.running.value, 0)
+    paused = counts.get(JobStatus.paused.value, 0)
+    updated_at = updated_row["updated_at"] if updated_row else None
+    return JobSummary(
+        total=sum(counts.values()),
+        queued=queued,
+        running=running,
+        paused=paused,
+        succeeded=counts.get(JobStatus.succeeded.value, 0),
+        failed=counts.get(JobStatus.failed.value, 0),
+        cancelled=counts.get(JobStatus.cancelled.value, 0),
+        active=queued + running + paused,
+        updated_at=updated_at,
+    )
+
+
+async def clear_jobs() -> int:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute("SELECT COUNT(*) AS count FROM jobs")
+        row = await cursor.fetchone()
+        count = int(row["count"]) if row else 0
+        await conn.execute("DELETE FROM jobs")
+        await conn.commit()
+    return count
 
 
 async def get_job(job_id: str) -> Job | None:

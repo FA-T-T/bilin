@@ -13,12 +13,15 @@ import { TaskDrawer } from "../src/components/TaskDrawer";
 import { LibraryDetailPage } from "../src/pages/LibraryDetailPage";
 import { ReaderPage } from "../src/pages/ReaderPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
-import type { DocumentBlock } from "../src/api/types";
+import type { DocumentBlock, ReaderCard } from "../src/api/types";
 import { useUiStore } from "../src/state/ui";
 
 beforeEach(() => {
   useUiStore.getState().setLocale("en");
   useUiStore.getState().resetReaderPreferences();
+  useUiStore.getState().resetReaderFeaturePreferences();
+  useUiStore.getState().setTranslationTargetLanguage("zh-CN");
+  useUiStore.getState().setAutoTranslateOnLanguageSwitch(true);
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     value: vi.fn(),
     configurable: true
@@ -31,6 +34,9 @@ afterEach(() => {
   useUiStore.getState().setReaderViewMode("study");
   useUiStore.getState().setLocale("en");
   useUiStore.getState().resetReaderPreferences();
+  useUiStore.getState().resetReaderFeaturePreferences();
+  useUiStore.getState().setTranslationTargetLanguage("zh-CN");
+  useUiStore.getState().setAutoTranslateOnLanguageSwitch(true);
   vi.unstubAllGlobals();
 });
 
@@ -61,6 +67,31 @@ function renderRoute(route: string, path: string, node: ReactNode) {
       </MantineProvider>
     </QueryClientProvider>
   );
+}
+
+function mockElementRect(
+  element: Element,
+  rect: { left: number; top: number; right: number; bottom: number }
+) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({
+        ...rect,
+        x: rect.left,
+        y: rect.top,
+        width: rect.right - rect.left,
+        height: rect.bottom - rect.top,
+        toJSON: () => ({})
+      }) as DOMRect
+  });
+}
+
+function dispatchWindowPointerMove(clientX: number, clientY: number) {
+  const event = new Event("pointermove");
+  Object.defineProperty(event, "clientX", { value: clientX });
+  Object.defineProperty(event, "clientY", { value: clientY });
+  window.dispatchEvent(event);
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -145,7 +176,8 @@ function syntheticDocumentPayload(count = 300) {
 }
 
 async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
-  await userEvent.click(await screen.findByRole("tab", { name }));
+  await userEvent.click(await screen.findByRole("button", { name: "Reader tools" }));
+  await userEvent.click(await screen.findByRole("button", { name }));
 }
 
 async function expandFirstTranslation() {
@@ -195,7 +227,17 @@ const article = {
     metadata: {}
   },
   block_count: 6,
-  asset_count: 2
+  asset_count: 2,
+  translation_status: {
+    target_language: "zh-CN",
+    status: "not_started",
+    translatable_blocks: 4,
+    translated_blocks: 0,
+    queued_jobs: 0,
+    running_jobs: 0,
+    paused_jobs: 0,
+    failed_jobs: 0
+  }
 };
 
 const documentPayload = {
@@ -448,6 +490,53 @@ const glossaryCandidatePayload = {
   ]
 };
 
+const readerCardsPayload = {
+  article_revision_id: "revision-1",
+  target_language: "zh-CN",
+  cards: [
+    {
+      id: "card-cnn",
+      article_revision_id: "revision-1",
+      card_type: "term",
+      anchor_block_uid: "p-0001",
+      anchor_text: "CNN",
+      canonical_key: "CNN::convolutional neural network",
+      abbreviation: "CNN",
+      full_form: "Convolutional Neural Networks",
+      title: "Convolutional Neural Networks (CNN)",
+      body_markdown: "卷积神经网络是一类用于网格结构数据的神经网络。",
+      target_language: "zh-CN",
+      source_type: "wikipedia",
+      source_url: "https://zh.wikipedia.org/wiki/卷积神经网络",
+      position: "right",
+      status: "candidate",
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    },
+    {
+      id: "card-sa",
+      article_revision_id: "revision-1",
+      card_type: "term",
+      anchor_block_uid: "p-0001",
+      anchor_text: "SA",
+      canonical_key: "SA::self attention",
+      abbreviation: "SA",
+      full_form: "Self Attention",
+      title: "Self Attention (SA)",
+      body_markdown: "自注意力用序列内部的相关性来更新表示。",
+      target_language: "zh-CN",
+      source_type: "paper_local",
+      source_url: null,
+      position: "right",
+      status: "candidate",
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+  ]
+};
+
 const chatPayload = {
   article_revision_id: "revision-1",
   messages: [
@@ -518,9 +607,50 @@ describe("Bilin web shell", () => {
     ).toBeInTheDocument();
   });
 
+  it("archives and deletes libraries from the library home", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/libraries") && !init?.method) return jsonResponse([library]);
+      if (url.endsWith("/libraries/library-1/archive")) {
+        return jsonResponse({ ...library, status: "archived" });
+      }
+      if (url.endsWith("/libraries/library-1")) {
+        return jsonResponse({
+          library_id: "library-1",
+          path: "/tmp/papers",
+          deleted_cache: true
+        });
+      }
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<LibraryHomePage />);
+
+    expect(await screen.findByRole("link", { name: "Papers" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1/archive") && init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Delete library and local cache?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => String(url).endsWith("/libraries/library-1") && init?.method === "DELETE"
+        )
+      ).toBe(true);
+    });
+  });
+
   it("renders the reader empty state without article context", async () => {
     renderWithProviders(<ReaderPage />);
-    expect(screen.getByText("Article reader")).toBeInTheDocument();
     expect(
       screen.getByText("Open an article from a library so the reader can load its parsed document.")
     ).toBeInTheDocument();
@@ -653,6 +783,52 @@ describe("Bilin web shell", () => {
     expect(container).not.toHaveTextContent("$ to a sequence of continuous representations $");
   });
 
+  it("normalizes LaTeXML math dialects before KaTeX rendering", () => {
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock(
+          "eq-latexml-dialects",
+          "equation",
+          String.raw`\sigma_{x}=\pmatrix{0&1\cr 1&0},\ {\rm and}\ \sigma_{z}=\pmatrix{1&0\cr 0&-1}.
+f_{M}(E)=\left\{\begin{array}{ll}0&\mbox{if $[M,E]=0$}\\ 1&\mbox{if $\{M,E\}=0$}\end{array}\right.
+\begin{array}{r}r\{\\ n-k-r\{\end{array}\left(\begin{array}{cc|cc}\raisebox{0.0pt}[6.45831pt]{$\overbrace{I}^{r}$}&\raisebox{0.0pt}[6.45831pt]{$\overbrace{A}^{n-r}$}&B&C\\ 0&0&D&E\end{array}\right).
+L\eqqcolon \textsc{mask}
+\vmathbb{1}+\varmathbb{N}+\vvmathbb{C}+\mathds{R}+\mathbbm{Z}+\mathbbold{Q}+\text{\sl N}_{\mathrm{BN}}\nopagebreak
+\wideparen{AB}+\buildrel{d}\over{=}+\cancelto{0}{x}+\mspace{2mu}y+\strut z+\rotatebox{90}{r}+\scalebox{2}{s}+\resizebox{1cm}{!}{t}+\multicolumn{2}{c}{u}+\ensuremath{v}+w\xspace+\label{eq:w}+\iddots+\begin{split}a&=b\end{split}`
+        )}
+        viewMode="source"
+      />
+    );
+
+    expect(container.querySelector(".math-block .katex")).toBeInTheDocument();
+    expect(container.querySelector(".katex-error")).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain("\\vmathbb");
+    expect(container.textContent).not.toContain("\\mathds");
+    expect(container.textContent).not.toContain("\\mathbbm");
+    expect(container.textContent).not.toContain("\\sl");
+    expect(container.textContent).not.toContain("\\nopagebreak");
+    expect(container.textContent).not.toContain("\\wideparen");
+    expect(container.textContent).not.toContain("\\cancelto");
+    expect(container.textContent).not.toContain("\\mspace");
+    expect(container.textContent).not.toContain("\\rotatebox");
+    expect(container.textContent).not.toContain("\\multicolumn");
+  });
+
+  it("shows equation numbers from parser metadata", () => {
+    renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock("eq-numbered", "equation", String.raw`E=mc^2`, {
+          label: "eq.energy",
+          equation_number: "(2.1)",
+          equation_numbers: ["(2.1)"]
+        })}
+        viewMode="source"
+      />
+    );
+
+    expect(screen.getByText("(2.1)")).toHaveClass("equation-number");
+  });
+
   it("mounts block toolbars only after hover for ordinary paragraphs", async () => {
     const { container } = renderWithProviders(
       <ReaderBlock
@@ -665,6 +841,125 @@ describe("Bilin web shell", () => {
     expect(screen.queryByLabelText("Copy source")).not.toBeInTheDocument();
     await userEvent.hover(container.querySelector(".reader-block") as HTMLElement);
     expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+  });
+
+  it("keeps block toolbars alive while the pointer stays inside the operation boundary", async () => {
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock(
+          "p-toolbar-boundary",
+          "paragraph",
+          "A paragraph with outside tools."
+        )}
+        viewMode="source"
+        onToolbarAction={() => undefined}
+      />
+    );
+    const block = container.querySelector(".reader-block") as HTMLElement;
+
+    fireEvent.pointerEnter(block);
+    expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+    const toolbar = container.querySelector(".hover-toolbar") as HTMLElement;
+    mockElementRect(block, { left: 100, top: 100, right: 500, bottom: 180 });
+    mockElementRect(toolbar, { left: 54, top: 112, right: 90, bottom: 168 });
+
+    fireEvent.pointerLeave(block, { clientX: 72, clientY: 130, relatedTarget: toolbar });
+    expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Copy source")).toBeInTheDocument());
+    act(() => dispatchWindowPointerMove(70, 130));
+    expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+    act(() => dispatchWindowPointerMove(24, 48));
+    await waitFor(() => expect(screen.queryByLabelText("Copy source")).not.toBeInTheDocument());
+  });
+
+  it("shows paragraph quick ask only while the matching block is active", async () => {
+    const onQuickAsk = vi.fn();
+    const block = readerTestBlock("p-quick-ask", "paragraph", "A paragraph worth asking about.");
+    const { container } = renderWithProviders(
+      <ReaderBlock block={block} viewMode="source" canQuickAsk onQuickAsk={onQuickAsk} />
+    );
+
+    expect(screen.queryByLabelText("Paragraph question")).not.toBeInTheDocument();
+    await userEvent.hover(container.querySelector(".reader-block") as HTMLElement);
+    await userEvent.type(screen.getByLabelText("Paragraph question"), "Why does this matter?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    expect(onQuickAsk).toHaveBeenCalledWith(block, "Why does this matter?");
+  });
+
+  it("places opened reader cards inside the viewport even when the tag sits outside the page", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { value: 360, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 420, configurable: true });
+    try {
+      function CardHarness() {
+        const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+        return (
+          <ReaderBlock
+            block={readerTestBlock("p-card-edge", "paragraph", "A paragraph with a concept card.")}
+            viewMode="source"
+            termWikiEnabled
+            expandedReaderCardId={expandedCardId}
+            readerCards={readerCardsPayload.cards as ReaderCard[]}
+            onReaderCardToggle={(_blockUid, cardId) =>
+              setExpandedCardId((current) => (current === cardId ? null : cardId))
+            }
+          />
+        );
+      }
+      renderWithProviders(<CardHarness />);
+      const cardButton = screen.getByRole("button", {
+        name: "Convolutional Neural Networks (CNN)"
+      });
+      Object.defineProperty(cardButton, "getBoundingClientRect", {
+        value: () => ({ left: 8, right: 50, top: 120, bottom: 148, width: 42, height: 28 }),
+        configurable: true
+      });
+
+      await userEvent.click(cardButton);
+
+      const popover = screen
+        .getByText("卷积神经网络是一类用于网格结构数据的神经网络。")
+        .closest(".reader-card-popover") as HTMLElement;
+      expect(popover.style.left).toBe("12px");
+      expect(popover.style.width).toBe("336px");
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: originalInnerWidth,
+        configurable: true
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: originalInnerHeight,
+        configurable: true
+      });
+    }
+  });
+
+  it("deletes a collapsed reader card directly from its tag", async () => {
+    const onDelete = vi.fn();
+    renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock("p-card-delete", "paragraph", "A paragraph with a question card.")}
+        viewMode="source"
+        termWikiEnabled
+        readerCards={[
+          {
+            ...(readerCardsPayload.cards[0] as ReaderCard),
+            id: "card-question",
+            card_type: "question",
+            abbreviation: "Q",
+            title: "hello",
+            source_type: "paper_local"
+          }
+        ]}
+        onReaderCardDelete={onDelete}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete card: hello" }));
+
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "card-question" }));
   });
 
   it("shows citation metadata and library actions on hover", async () => {
@@ -768,6 +1063,96 @@ describe("Bilin web shell", () => {
     expect(image).toHaveClass("asset-image-article-multi-panel");
     expect((image as HTMLElement).style.getPropertyValue("--asset-max-inline-size")).toBe("217px");
     expect((image as HTMLElement).style.getPropertyValue("--asset-max-block-size")).toBe("336px");
+  });
+
+  it("toggles article images into a full-screen lightbox", async () => {
+    renderWithProviders(
+      <ReaderBlock
+        block={{
+          id: "block-lightbox",
+          article_revision_id: "revision-1",
+          block_uid: "fig-lightbox",
+          structural_path: "00009",
+          block_type: "figure",
+          parent_uid: null,
+          content_hash: "hash-lightbox",
+          context_hash: null,
+          source_markdown: "**Figure 6.** Training curves.",
+          source_latex: null,
+          metadata: { asset_id: "fig-lightbox" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        asset={{
+          id: "asset-lightbox",
+          article_revision_id: "revision-1",
+          asset_id: "fig-lightbox",
+          kind: "figure",
+          source_path: "/tmp/figure.png",
+          web_path: "/tmp/figure.png",
+          caption: "Training curves.",
+          label: "S4.F6",
+          metadata: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        assetUrl="http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-lightbox"
+        viewMode="source"
+      />
+    );
+
+    await userEvent.click(screen.getByRole("img", { name: "Training curves." }));
+    const dialog = screen.getByRole("dialog", { name: "Training curves." });
+    expect(dialog).toHaveClass("asset-image-lightbox");
+    expect(dialog.parentElement).toBe(document.body);
+    const previewImage = within(dialog).getByRole("img", { name: "Training curves." });
+    expect(previewImage).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-lightbox"
+    );
+    await userEvent.click(previewImage);
+    expect(screen.queryByRole("dialog", { name: "Training curves." })).not.toBeInTheDocument();
+  });
+
+  it("respects the image lightbox feature switch", async () => {
+    renderWithProviders(
+      <ReaderBlock
+        block={{
+          id: "block-lightbox-disabled",
+          article_revision_id: "revision-1",
+          block_uid: "fig-lightbox-disabled",
+          structural_path: "00009",
+          block_type: "figure",
+          parent_uid: null,
+          content_hash: "hash-lightbox-disabled",
+          context_hash: null,
+          source_markdown: "**Figure 6.** Training curves.",
+          source_latex: null,
+          metadata: { asset_id: "fig-lightbox-disabled" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        asset={{
+          id: "asset-lightbox-disabled",
+          article_revision_id: "revision-1",
+          asset_id: "fig-lightbox-disabled",
+          kind: "figure",
+          source_path: "/tmp/figure.png",
+          web_path: "/tmp/figure.png",
+          caption: "Training curves.",
+          label: "S4.F6",
+          metadata: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }}
+        assetUrl="http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-lightbox-disabled"
+        imageLightboxEnabled={false}
+        viewMode="source"
+      />
+    );
+
+    await userEvent.click(screen.getByRole("img", { name: "Training curves." }));
+    expect(screen.queryByRole("dialog", { name: "Training curves." })).not.toBeInTheDocument();
   });
 
   it("keeps side-by-side subfigure widths on the same parsed scale", () => {
@@ -1020,8 +1405,41 @@ describe("Bilin web shell", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void init;
       const url = String(input);
+      if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
-      if (url.endsWith("/libraries/library-1/articles")) return jsonResponse([article]);
+      if (url.includes("/libraries/library-1/articles?target_language=")) {
+        return jsonResponse([article]);
+      }
+      if (url.endsWith("/libraries/library-1/translations/missing")) {
+        return jsonResponse({
+          library_id: "library-1",
+          target_language: "zh-CN",
+          articles_considered: 1,
+          articles_queued: 1,
+          jobs_created: 4,
+          existing_jobs: 0,
+          cached_blocks: 0,
+          skipped_blocks: 0,
+          job_ids: ["job-translation-1"],
+          article_results: []
+        });
+      }
+      if (url.endsWith("/libraries/library-1/articles/revision-1/archive")) {
+        return jsonResponse({
+          ...article,
+          article_revision: { ...article.article_revision, status: "archived" }
+        });
+      }
+      if (url.endsWith("/libraries/library-1/articles/revision-1")) {
+        return jsonResponse({
+          library_id: "library-1",
+          article_family_id: "family-1",
+          article_revision_id: "revision-1",
+          bundle_path: "/tmp/papers/articles/arxiv/2401.00001/v2",
+          deleted_cache: true,
+          removed_family: true
+        });
+      }
       if (url.endsWith("/libraries/library-1/imports/arxiv")) {
         return jsonResponse(
           {
@@ -1061,7 +1479,23 @@ describe("Bilin web shell", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/libraries/library-1", "/libraries/:libraryId", <LibraryDetailPage />);
-    expect(await screen.findByText("A Minimal Bilin Test Paper")).toBeInTheDocument();
+    const titleLink = await screen.findByRole("link", { name: "A Minimal Bilin Test Paper" });
+    expect(titleLink).toHaveAttribute("href", "/articles/revision-1?libraryId=library-1");
+    expect(screen.getByText("Not translated")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
+    const translateMissingButton = screen.getByRole("button", { name: "Translate missing" });
+    await waitFor(() => expect(translateMissingButton).not.toBeDisabled());
+    await userEvent.click(translateMissingButton);
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1/translations/missing") &&
+            init?.method === "POST" &&
+            String(init.body).includes("provider-1")
+        )
+      ).toBe(true);
+    });
     await userEvent.type(screen.getByLabelText("arXiv ID"), "2401.00001");
     await userEvent.click(screen.getByRole("button", { name: "Add article" }));
 
@@ -1070,6 +1504,30 @@ describe("Bilin web shell", () => {
         fetchMock.mock.calls.some(
           ([url, init]) =>
             String(url).endsWith("/libraries/library-1/imports/arxiv") && init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1/articles/revision-1/archive") &&
+            init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Delete article and cache?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1/articles/revision-1") &&
+            init?.method === "DELETE"
         )
       ).toBe(true);
     });
@@ -1098,7 +1556,20 @@ describe("Bilin web shell", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/jobs")) {
+        if (url.endsWith("/jobs/summary")) {
+          return jsonResponse({
+            total: 1,
+            queued: 0,
+            running: 0,
+            paused: 0,
+            succeeded: 0,
+            failed: 1,
+            cancelled: 0,
+            active: 0,
+            updated_at: new Date().toISOString()
+          });
+        }
+        if (url.includes("/jobs?limit=")) {
           return jsonResponse([
             {
               id: "job-parse-1",
@@ -1137,6 +1608,54 @@ describe("Bilin web shell", () => {
     expect(await screen.findByText(/Install LaTeXML/)).toBeInTheDocument();
   });
 
+  it("keeps the task drawer bounded when the queue is large", async () => {
+    const recentJobs = Array.from({ length: 120 }, (_, index) => ({
+      id: `job-${index}`,
+      type: "translate_block",
+      status: index === 0 ? "running" : "queued",
+      priority: 0,
+      payload: { index },
+      result: null,
+      error: null,
+      progress: index === 0 ? 0.4 : 0,
+      attempts: index === 0 ? 1 : 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      started_at: index === 0 ? new Date().toISOString() : null,
+      finished_at: null,
+      lease_owner: index === 0 ? "worker-test" : null
+    }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/jobs/summary")) {
+        return jsonResponse({
+          total: 1550,
+          queued: 1549,
+          running: 1,
+          paused: 0,
+          succeeded: 0,
+          failed: 0,
+          cancelled: 0,
+          active: 1550,
+          updated_at: new Date().toISOString()
+        });
+      }
+      if (url.includes("/jobs?limit=120")) return jsonResponse(recentJobs);
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    useUiStore.getState().openTaskDrawer();
+
+    renderWithProviders(<TaskDrawer />);
+
+    expect(await screen.findByText("Queued 1549")).toBeInTheDocument();
+    expect(await screen.findByText("Showing latest 120 of 1550 tasks.")).toBeInTheDocument();
+    expect(await screen.findAllByText("translate_block")).toHaveLength(120);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/jobs?limit=120"))).toBe(
+      true
+    );
+  });
+
   it("renders a real article document from the API", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1166,7 +1685,7 @@ describe("Bilin web shell", () => {
     );
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    expect(await screen.findByText("A Minimal Bilin Test Paper")).toBeInTheDocument();
+    expect(await screen.findByText(/LLM-generated content may be inaccurate/)).toBeInTheDocument();
     expect(await screen.findByTestId("reader-block-list")).toHaveAttribute(
       "data-virtualization",
       "progressive"
@@ -1189,6 +1708,55 @@ describe("Bilin web shell", () => {
     expect(await screen.findByText("Glossary changed")).toBeInTheDocument();
     await openReaderTool("Ask");
     expect(await screen.findByText("External source")).toBeInTheDocument();
+  });
+
+  it("does not display invalid source-copy translations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({
+            ...translationsPayload,
+            variants: [
+              {
+                ...translationsPayload.variants[0],
+                raw_markdown: "First paragraph with inline technical content.",
+                validation_status: "unchanged_source"
+              }
+            ]
+          });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    const paragraph = await screen.findByText("First paragraph with inline technical content.");
+    const sourcePane = paragraph.closest(".source-pane");
+    expect(sourcePane).not.toBeNull();
+    fireEvent.pointerDown(
+      within(sourcePane as HTMLElement).getByRole("button", { name: "Show translation" })
+    );
+
+    expect(await screen.findByText("Translation pending.")).toBeInTheDocument();
+    expect(screen.queryByText("第一段 technical content 的译文。")).not.toBeInTheDocument();
   });
 
   it("searches offscreen source and translation blocks without relying on rendered DOM", async () => {
@@ -1243,6 +1811,58 @@ describe("Bilin web shell", () => {
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
   });
 
+  it("renders the term wiki card layer without changing the reader body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/cards")) {
+          return jsonResponse(readerCardsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(chatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+    expect(await screen.findByText("First paragraph with inline technical content.")).toBeVisible();
+    expect(container.querySelector(".reader-card-rail")).not.toBeNull();
+    expect(
+      await screen.findByRole("button", { name: "Convolutional Neural Networks (CNN)" })
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Convolutional Neural Networks (CNN)" })
+    );
+    expect(await screen.findByText("卷积神经网络是一类用于网格结构数据的神经网络。")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Self Attention (SA)" }));
+    expect(
+      screen.queryByText("卷积神经网络是一类用于网格结构数据的神经网络。")
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("自注意力用序列内部的相关性来更新表示。")).toBeVisible();
+  });
+
   it("applies saved reading preferences to the reader layout", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1278,7 +1898,9 @@ describe("Bilin web shell", () => {
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
 
-    expect(await screen.findByText("A Minimal Bilin Test Paper")).toBeInTheDocument();
+    expect(
+      await screen.findByText("First paragraph with inline technical content.")
+    ).toBeInTheDocument();
     const page = document.querySelector(".reader-page") as HTMLElement;
     expect(page.style.getPropertyValue("--reader-line-width")).toBe("76%");
     expect(page.style.getPropertyValue("--reader-paragraph-spacing")).toBe("0.5em");
@@ -1303,6 +1925,26 @@ describe("Bilin web shell", () => {
     expect(JSON.parse(entries.get("iiios-reader-preferences") ?? "{}")).toMatchObject({
       lineWidthPercent: 74,
       bilingualSourceRatio: 0.62
+    });
+  });
+
+  it("persists reader feature preferences in local storage", () => {
+    const entries = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => entries.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => entries.set(key, value)),
+      removeItem: vi.fn((key: string) => entries.delete(key)),
+      clear: vi.fn(() => entries.clear())
+    });
+
+    useUiStore.getState().setReaderFeaturePreference("termCardsEnabled", false);
+    useUiStore.getState().setReaderFeaturePreference("quickAskEnabled", false);
+    useUiStore.getState().setReaderFeaturePreference("includeUntranslatedInExport", false);
+
+    expect(JSON.parse(entries.get("iiios-reader-feature-preferences") ?? "{}")).toMatchObject({
+      termCardsEnabled: false,
+      quickAskEnabled: false,
+      includeUntranslatedInExport: false
     });
   });
 
@@ -1502,6 +2144,7 @@ describe("Bilin web shell", () => {
       within(screen.getByTestId("reader-view-mode")).queryByText("Focus")
     ).not.toBeInTheDocument();
     expect(screen.queryByText("第一段 技术内容 的译文。")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Chapters" }));
     expect(screen.getByRole("link", { name: "1 Introduction" })).toHaveAttribute(
       "aria-current",
       "location"
@@ -1753,6 +2396,35 @@ describe("Bilin web shell", () => {
     expect(screen.getByText("Abstract").closest(".paired-block")).toBeNull();
   });
 
+  it("renders short standalone bold-topic paragraphs as in-flow headings", () => {
+    const headingBlock: DocumentBlock = {
+      id: "block-topic-heading",
+      article_revision_id: "revision-1",
+      block_uid: "p-topic-heading",
+      structural_path: "00063",
+      block_type: "paragraph",
+      parent_uid: null,
+      content_hash: "hash-topic-heading",
+      context_hash: null,
+      source_markdown: "PASCAL VOC",
+      source_latex: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    renderWithProviders(
+      <ReaderBlock block={headingBlock} viewMode="study" translation="帕斯卡视觉对象类别。" />
+    );
+
+    expect(screen.getByRole("heading", { name: "PASCAL VOC", level: 3 })).toBeInTheDocument();
+    expect(screen.getByText("PASCAL VOC").closest(".reader-block")).toHaveClass(
+      "paragraph-heading-block"
+    );
+    expect(screen.queryByText("帕斯卡视觉对象类别。")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Show translation")).not.toBeInTheDocument();
+  });
+
   it("renders formulas inside LaTeXML table fragments", () => {
     const tableBlock = documentPayload.blocks.find((block) => block.block_type === "table")!;
     const tableAsset = {
@@ -1766,7 +2438,7 @@ describe("Bilin web shell", () => {
       label: "tab:math",
       metadata: {
         html_fragment:
-          '<figure class="ltx_table" id="tab:math"><table><tr><th>Loss</th><td><math alttext="L = x_i^2"></math></td></tr><tr><th>Complexity</th><td><math alttext="O(k\\cdot n\\cdot d^{2})"></math></td></tr></table></figure>'
+          '<figure class="ltx_table" id="tab:math"><table><tr><th>Loss</th><td><math alttext="L = x_i^2"></math></td></tr><tr><th>Complexity</th><td><math alttext="O(k\\cdot n\\cdot d^{2})"></math></td></tr><tr><th>Block</th><td><math alttext="\\left[\\begin{array}[]{c}\\text{3$\\times$3, 64}\\\\[-1.00006pt]\\text{3$\\times$3, 64}\\end{array}\\right]\\times2"></math></td></tr></table></figure>'
       },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -1776,12 +2448,117 @@ describe("Bilin web shell", () => {
       <ReaderBlock block={tableBlock} asset={tableAsset} viewMode="bilingual" />
     );
     expect(container.querySelector(".environment-block-table")).not.toBeNull();
+    expect(container.querySelector(".academic-table-scroll")).not.toBeNull();
     expect(container.querySelector(".latexml-fragment-preview table")).not.toBeNull();
     expect(container.querySelector(".latexml-fragment-preview .katex")).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview .katex-error")).toBeNull();
     expect(container.querySelector(".latexml-fragment-preview")).toHaveTextContent(
       "O(k\\cdot n\\cdot d^{2})"
     );
     expect(container.querySelector(".latexml-fragment-preview")).not.toHaveTextContent(/ddd\d/);
+  });
+
+  it("renders LaTeXML inline SVG figures when no bitmap asset exists", () => {
+    const figureBlock: DocumentBlock = {
+      id: "block-svg-figure",
+      article_revision_id: "revision-1",
+      block_uid: "fig-svg",
+      structural_path: "00060",
+      block_type: "figure",
+      parent_uid: null,
+      content_hash: "hash-svg-figure",
+      context_hash: null,
+      source_markdown: "**Figure 1.** Quantum gate network.",
+      source_latex: null,
+      metadata: {
+        asset_id: "fig-svg",
+        label: "Ch2.F1"
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const figureAsset = {
+      id: "asset-svg-figure",
+      article_revision_id: "revision-1",
+      asset_id: "fig-svg",
+      kind: "figure",
+      source_path: null,
+      web_path: null,
+      caption: "Quantum gate network.",
+      label: "Ch2.F1",
+      metadata: {
+        html_fragment:
+          '<figure class="ltx_figure"><svg width="166" height="83" overflow="visible"><script>alert(1)</script><g transform="translate(0,83) scale(1,-1)"><path d="M 0,0 40,0" stroke="#000000" stroke-width="0.4"></path><text x="4" y="12">q</text></g></svg><figcaption>Figure 1: Quantum gate network.</figcaption></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={figureBlock} asset={figureAsset} viewMode="source" />
+    );
+
+    const svg = container.querySelector(".latexml-fragment-preview svg");
+    expect(svg).not.toBeNull();
+    expect(svg).toHaveClass("latexml-inline-svg");
+    expect(svg).toHaveAttribute("width", "166");
+    expect(container.querySelector(".latexml-fragment-preview path")).toHaveAttribute(
+      "d",
+      "M 0,0 40,0"
+    );
+    expect(container.querySelector(".latexml-fragment-preview script")).toBeNull();
+  });
+
+  it("keeps CIFAR-style LaTeXML tables structured instead of flattening rows", () => {
+    const tableBlock: DocumentBlock = {
+      id: "block-cifar-table",
+      article_revision_id: "revision-1",
+      block_uid: "tbl-cifar",
+      structural_path: "00076",
+      block_type: "table",
+      parent_uid: null,
+      content_hash: "hash-cifar-table",
+      context_hash: null,
+      source_markdown:
+        "**Table 6.** Classification error on the CIFAR-10 test set. All methods are with data augmentation.",
+      source_latex: null,
+      metadata: {
+        asset_id: "tbl-cifar",
+        label: "S4.T6"
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const tableAsset = {
+      id: "asset-cifar-table",
+      article_revision_id: "revision-1",
+      asset_id: "tbl-cifar",
+      kind: "table",
+      source_path: null,
+      web_path: null,
+      caption: "Classification error on the CIFAR-10 test set.",
+      label: "S4.T6",
+      metadata: {
+        html_fragment:
+          '<figure class="ltx_table" id="S4.T6"><div class="ltx_transformed_outer"><span class="ltx_transformed_inner" style="transform:scale(1.2);"><table class="ltx_tabular"><tbody><tr><td colspan="3">method</td><td>error (%)</td></tr><tr><td colspan="3">Maxout <cite>[Goodfellow2013]</cite></td><td>9.38</td></tr><tr><td></td><td># layers</td><td># params</td><td></td></tr><tr><td>ResNet</td><td>110</td><td>1.7M</td><td>6.43 <math alttext="6.61\\pm0.16"></math></td></tr></tbody></table></span></div><figcaption><span class="ltx_tag ltx_tag_table">Table 6: </span>Classification error on the CIFAR-10 test set.</figcaption></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={tableBlock} asset={tableAsset} viewMode="source" />
+    );
+    const table = container.querySelector(".latexml-fragment-preview table");
+    expect(table).not.toBeNull();
+    expect(container.querySelector(".latexml-fragment-preview figure")).toBeNull();
+    expect(container.querySelectorAll(".latexml-fragment-preview tr")).toHaveLength(4);
+    expect(container.querySelectorAll(".latexml-fragment-preview th")).toHaveLength(2);
+    expect(container.querySelector(".latexml-fragment-preview th")).toHaveAttribute("colspan", "3");
+    expect(container.querySelector(".latexml-fragment-preview .katex")).not.toBeNull();
+    expect(screen.getByText("Table 6.").closest("p")).toHaveTextContent(
+      "Table 6. Classification error on the CIFAR-10 test set."
+    );
   });
 
   it("renders LaTeXML equation tables as equations for existing parsed articles", () => {
@@ -1800,7 +2577,7 @@ describe("Bilin web shell", () => {
         asset_id: "tbl-equation",
         label: "S3.E1",
         html_fragment:
-          '<table class="ltx_equation ltx_eqn_table" id="S3.E1"><tr><td><math display="block" alttext="\\mathrm{Attention}(Q,K,V)=V"></math></td><td>(1)</td></tr></table>'
+          '<table class="ltx_equation ltx_eqn_table" id="S3.E1"><tr><td><math display="block" alttext="\\mathrm{Attention}(Q,K,V)=V"></math></td><td class="ltx_eqn_cell ltx_eqn_eqno">(1)</td></tr></table>'
       },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -1829,6 +2606,7 @@ describe("Bilin web shell", () => {
     );
 
     expect(container.querySelector(".math-block .katex")).not.toBeNull();
+    expect(screen.getByText("(1)")).toHaveClass("equation-number");
     expect(container.querySelector(".latexml-fragment-preview table")).toBeNull();
     expect(screen.queryByText(/Table 1/)).not.toBeInTheDocument();
     expect(screen.queryByText(/表1/)).not.toBeInTheDocument();
@@ -2131,7 +2909,9 @@ describe("Bilin web shell", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    expect(await screen.findByText("A Minimal Bilin Test Paper")).toBeInTheDocument();
+    expect(
+      await screen.findByText("First paragraph with inline technical content.")
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Translate paper" }));
 
     await waitFor(() => {
@@ -2140,6 +2920,19 @@ describe("Bilin web shell", () => {
           ([url, init]) =>
             String(url).includes("/libraries/library-1/articles/revision-1/translations") &&
             init?.method === "POST"
+        )
+      ).toBe(true);
+    });
+
+    await userEvent.click(screen.getByRole("textbox", { name: "Target language" }));
+    await userEvent.click(await screen.findByRole("option", { name: "日本語" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).includes("/libraries/library-1/articles/revision-1/translations") &&
+            init?.method === "POST" &&
+            String(init.body).includes('"target_language":"ja"')
         )
       ).toBe(true);
     });
@@ -2269,7 +3062,9 @@ describe("Bilin web shell", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    expect(await screen.findByText("A Minimal Bilin Test Paper")).toBeInTheDocument();
+    expect(
+      await screen.findByText("First paragraph with inline technical content.")
+    ).toBeInTheDocument();
     await openReaderTool("Ask");
     await userEvent.type(screen.getByLabelText("Question"), "What is the paragraph about?");
     await userEvent.click(screen.getByRole("button", { name: "Ask paper" }));

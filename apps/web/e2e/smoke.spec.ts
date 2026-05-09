@@ -18,7 +18,7 @@ test("opens the reader shell", async ({ page }) => {
   await expect(page.getByText("来自 mocked article API 的译文。")).toHaveCount(0);
   await page.getByRole("button", { name: "Show translation" }).click();
   await expect(page.getByText("来自 mocked article API 的译文。")).toBeVisible();
-  await expect(page.locator(".reader-chapters")).toBeVisible();
+  await expect(page.locator(".reader-bottom-chapters")).toBeVisible();
   await expect(page.locator(".reader-command-center")).toBeVisible();
   const sourceContent = page.locator(".study-block-translation-open .study-source-content").first();
   const translationPanel = page
@@ -38,7 +38,8 @@ test("opens the reader shell", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toBeVisible();
   await expect(page.getByText("A parsed paragraph from source LaTeX.")).toBeVisible();
   await page.getByLabel("Close source inspector").click();
-  await page.getByTestId("reader-view-mode").getByText("Source").click();
+  await page.getByLabel("Reading mode").click();
+  await page.getByRole("button", { name: "Source" }).click();
   await expect(page.getByText("Translation pending.")).toHaveCount(0);
   await page.getByLabel("Open task drawer").click();
   await expect(page.getByText("Background tasks")).toBeVisible();

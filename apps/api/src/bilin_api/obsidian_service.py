@@ -11,6 +11,9 @@ from bilin_api.schemas import (
     ObsidianClipColor,
     ObsidianClipRequest,
     ObsidianClipResult,
+    ReaderCard,
+    ReaderCardObsidianExportResult,
+    ReaderCardSourceType,
     TranslationVariant,
 )
 
@@ -79,6 +82,26 @@ async def save_obsidian_clip(
         article_heading=article_title,
         block_uid=request.block_uid,
         created_file=created_file,
+        updated_existing=updated_existing,
+    )
+
+
+async def save_obsidian_term_cards(
+    library: Library,
+    cards: list[ReaderCard],
+) -> ReaderCardObsidianExportResult:
+    vault_path = default_obsidian_vault_path()
+    vault_path.mkdir(parents=True, exist_ok=True)
+    (vault_path / ".obsidian").mkdir(exist_ok=True)
+    note_path = vault_path / f"{safe_filename(library.name)}.md"
+    created_file = not note_path.exists()
+    current = initial_library_note(library.name) if created_file else note_path.read_text("utf-8")
+    updated, updated_existing = upsert_term_wiki_cards(current, cards)
+    note_path.write_text(updated, encoding="utf-8")
+    return ReaderCardObsidianExportResult(
+        vault_path=str(vault_path),
+        note_path=str(note_path),
+        cards_exported=len(cards),
         updated_existing=updated_existing,
     )
 
@@ -253,4 +276,74 @@ def clean_heading(value: str) -> str:
 
 def obsidian_block_anchor(revision_id: str, block_uid: str) -> str:
     token = re.sub(r"[^A-Za-z0-9-]+", "-", f"ilios-{revision_id}-{block_uid}")
+    return f"^{token.strip('-')}"
+
+
+def upsert_term_wiki_cards(content: str, cards: list[ReaderCard]) -> tuple[str, bool]:
+    content = strip_legacy_markers(content)
+    section_start, section_end = find_term_wiki_section(content)
+    section = "## 术语 Wiki\n" if section_start is None else content[section_start:section_end]
+    updated_existing = False
+    for card in sorted(cards, key=lambda item: item.title.casefold()):
+        entry = render_term_card_for_obsidian(card)
+        anchor = obsidian_card_anchor(card.id)
+        if anchor in section:
+            entry_start, entry_end = find_term_card_range(section, anchor)
+            section = (
+                section[:entry_start].rstrip() + f"\n\n{entry}\n" + section[entry_end:].lstrip()
+            )
+            updated_existing = True
+        else:
+            section = section.rstrip() + f"\n\n{entry}\n"
+    if section_start is None:
+        return content.rstrip() + f"\n\n{section.strip()}\n", updated_existing
+    return (
+        content[:section_start] + section.rstrip() + "\n" + content[section_end:],
+        updated_existing,
+    )
+
+
+def find_term_wiki_section(content: str) -> tuple[int, int] | tuple[None, None]:
+    marker = "\n## 术语 Wiki"
+    start = content.find(marker)
+    if start == -1:
+        if content.startswith("## 术语 Wiki"):
+            start = 0
+        else:
+            return None, None
+    elif start > 0:
+        start += 1
+    next_heading = content.find("\n## ", start + len("## 术语 Wiki"))
+    return start, len(content) if next_heading == -1 else next_heading + 1
+
+
+def find_term_card_range(section: str, anchor: str) -> tuple[int, int]:
+    anchor_index = section.find(anchor)
+    if anchor_index == -1:
+        return len(section), len(section)
+    start = section.rfind("\n### ", 0, anchor_index)
+    start = 0 if start == -1 else start + 1
+    end = section.find("\n### ", anchor_index + len(anchor))
+    return start, len(section) if end == -1 else end + 1
+
+
+def render_term_card_for_obsidian(card: ReaderCard) -> str:
+    lines = [
+        f"### {card.title}",
+        "",
+        card.body_markdown.strip(),
+        "",
+    ]
+    if card.source_type == ReaderCardSourceType.wikipedia and card.source_url:
+        lines.append(f"来源：[Wikipedia]({card.source_url})")
+    elif card.source_type == ReaderCardSourceType.ai_search:
+        lines.append("_AI generated from this paper/search context._")
+    else:
+        lines.append("_AI generated from this paper context._")
+    lines.extend(["", "#ilios/term-wiki", obsidian_card_anchor(card.id)])
+    return "\n".join(lines)
+
+
+def obsidian_card_anchor(card_id: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9-]+", "-", f"ilios-card-{card_id}")
     return f"^{token.strip('-')}"
