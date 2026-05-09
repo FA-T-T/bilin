@@ -73,6 +73,7 @@ LATEXML_DISABLED_PACKAGES = {
     "glossaries",
     "glossaries-extra",
     "mfirstuc",
+    "qcircuit",
 }
 LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
     "cas-dc",
@@ -474,18 +475,23 @@ def prepare_latexml_side_sources(unpack_dir: Path, main_tex: Path) -> None:
         if path.suffix.casefold() not in source_suffixes:
             continue
         original = path.read_text(encoding="utf-8", errors="ignore")
-        prepared = _disable_latexml_incompatible_packages(original)
+        prepared = prepare_latexml_included_source(original)
         if prepared != original:
             path.write_text(prepared, encoding="utf-8")
 
 
 def prepare_latexml_source(source: str) -> str:
-    source = _disable_latexml_incompatible_packages(source)
+    source = prepare_latexml_included_source(source)
     source = _replace_latexml_layout_document_classes(source)
     if source.startswith("% Bilin LaTeXML parser entry"):
         return source
     source = _inject_latexml_compatibility_preamble(source)
     return "% Bilin LaTeXML parser entry. Original source is left untouched.\n" + source
+
+
+def prepare_latexml_included_source(source: str) -> str:
+    source = _disable_latexml_incompatible_packages(source)
+    return _replace_latexml_code_generated_diagrams(source)
 
 
 def _inject_latexml_compatibility_preamble(source: str) -> str:
@@ -525,6 +531,56 @@ def _replace_latexml_layout_document_classes(source: str) -> str:
         )
 
     return document_class_pattern.sub(replace, source, count=1)
+
+
+def _replace_latexml_code_generated_diagrams(source: str) -> str:
+    return _replace_tex_command_balanced_group(
+        source,
+        command=r"\Qcircuit",
+        replacement=r"\mbox{Quantum circuit diagram}",
+    )
+
+
+def _replace_tex_command_balanced_group(source: str, *, command: str, replacement: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        start = source.find(command, cursor)
+        if start == -1:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        group_start = source.find("{", start + len(command))
+        if group_start == -1:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        group_end = _find_balanced_group_end(source, group_start)
+        if group_end is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        parts.append(source[cursor:start])
+        parts.append(replacement)
+        cursor = group_end + 1
+
+
+def _find_balanced_group_end(source: str, group_start: int) -> int | None:
+    depth = 0
+    escaped = False
+    for index in range(group_start, len(source)):
+        character = source[index]
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if character == "{":
+            depth += 1
+            continue
+        if character == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
 
 
 def _latexml_search_paths(unpack_dir: Path, main_tex_parent: Path) -> list[Path]:

@@ -25,6 +25,7 @@ from bilin_api.latexml_parser import (
     find_main_tex,
     normalize_latexml_html,
     parse_article_revision,
+    prepare_latexml_included_source,
     prepare_latexml_side_sources,
     prepare_latexml_source,
     render_source_markdown,
@@ -172,6 +173,24 @@ def test_prepare_latexml_side_sources_disables_incompatible_packages_in_inputs(
     prepared = preamble.read_text(encoding="utf-8")
     assert "% Bilin disabled for LaTeXML: \\usepackage[english]{babel}" in prepared
     assert "\\usepackage{graphicx,amsmath}% Bilin disabled for LaTeXML: polyglossia" in prepared
+
+
+def test_prepare_latexml_included_source_replaces_qcircuit_blocks() -> None:
+    prepared = prepare_latexml_included_source(
+        "\\usepackage{qcircuit}\n"
+        "\\begin{figure}\n"
+        "\\Qcircuit @C=1em @!R {"
+        "\\lstick{\\ket{0}} & \\gate{H} & \\qw \\\\"
+        "}\n"
+        "\\caption{Circuit}\n"
+        "\\end{figure}\n"
+    )
+
+    assert "% Bilin disabled for LaTeXML: \\usepackage{qcircuit}" in prepared
+    assert "\\Qcircuit" not in prepared
+    assert "\\gate{H}" not in prepared
+    assert "\\mbox{Quantum circuit diagram}" in prepared
+    assert "\\caption{Circuit}" in prepared
 
 
 def test_latexml_timeout_budget_scales_with_source_size(tmp_path: Path) -> None:
