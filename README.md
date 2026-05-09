@@ -25,36 +25,94 @@
 
 AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM consumption, not human browsing.
 
-## 衔牍是什么？📚
+## 衔牍是什么
 
-你刚进入一个研究方向，导师给你一篇 30 页英文论文，让你下周组会汇报。你打开 PDF，发现 Introduction 就卡了半小时。你试过把论文丢给通用 AI，它给的总结很顺，但你不知道哪些细节被跳过了。
-你也试过逐句翻译插件，整篇译完还是一头雾水，因为公式、图表、术语和章节逻辑没有真正被你理解。
+衔牍是一个本地优先的论文阅读工具，为非英语母语的研究者设计。它把英文论文整理成更容易进入的阅读对象：章节、段落、公式、图、表和 caption 都保留为可引用的结构化 block。读者可以先用母语理解论文，再回到英文原文校准术语和表达。
 
-第二语言是科研入门的巨大障碍, 在真正的进入研究之前, 你首先被匮乏的领域性知识打败了. 反复的在检索, 翻译, 碎片化理解之间周旋, 这有用, 但是太低效了.
+衔牍从 arXiv source package 或本地 LaTeX 源码包开始工作。公式编号、交叉引用、图表 caption 和章节层级会进入结构化解析流程，减少截图识别和 OCR 带来的结构丢失。问答默认围绕当前论文证据展开，回答会保留引用到的 block id，方便回到原文验证。
 
-然后你打开衔牍。它从 arXiv 或本地 LaTeX 源码包开始，把论文拆成章节、段落、公式、图和表。你可以先用母语消化每个段落，再随时回到英文原文校准术语。你可以针对当前段落提问，也可以把问答沉淀成组会讲义。论文、源码、PDF、翻译缓存、问答和笔记都保存在你选择的本地 library 文件夹里，不需要账号，也不需要上传到云端。
+所有论文、源码包、PDF、解析结果、翻译缓存、问答记录和笔记都保存在你指定的本地 library 文件夹里。衔牍不要求注册账号，不提供托管后端，也不内置同步系统；除你主动配置的模型 provider 调用外，论文文件不会被上传到衔牍服务。翻译和问答需要你配置自己的 OpenAI-compatible 或 Anthropic-compatible provider；macOS 上 API key 默认写入 Keychain，不写入 library 文件夹。
 
-衔牍的目标不是替代英文原文，它是科研入门的第一层：先辅助你读懂研究本身，再把你带回英文原文。对母语不是英语的大学生、研究生和跨领域研究者来说，这条路径通常更快，也更稳。先用母语理解问题背景、方法动机和实验逻辑，再回头学习作者如何用英文表达这些概念，你同时在学习研究和学术英语。🌱
+## 主要能力
 
-
-## 它解决什么问题？✨
-
-| 你的痛点 | 衔牍的回应 |
+| 范围 | 衔牍提供什么 |
 | --- | --- |
-| 理解英文论文效率低 | 以母语阅读 |
-| 公式或图表不知道在讲什么 | 针对当前 block 提问，回答保存引用到的论文证据 |
-| 下周要组会汇报 | 内置精读、组会、快速扫读和复现导向讲义模板 |
-| 以后想整理到知识库 | 一键保存段落到 OneDrive 中的 Obsidian vault，也可以导出 Markdown、lecture notes 和完整 bundle |
+| 导入与解析 | 输入 arXiv ID 下载 source package 和 PDF，或导入本地 TeX archive；安装 LaTeXML 后可解析出章节、段落、公式、图和表；Markdown 可作为弱结构文档导入，PDF 可作为源文件保存进 bundle。 |
+| 阅读模式 | Study 以英文原文为主并逐段展开译文；Bilingual 并排校准原文和译文；Translation 用母语通读；Source 回到原文和 LaTeX 源码。 |
+| 段落工作流 | 每个 block 可以标色、复制、查看源码、重新翻译、针对当前段落提问，并把中英文摘录保存到 Obsidian。 |
+| 问答与笔记 | 在文章证据范围内提问，保留引用 block id；可以生成可编辑的讲义笔记 patch，使用精读、组会、快速扫读和复现导向模板。 |
+| 本地数据 | 一个 library 是可携带文件夹，包含 SQLite、源码包、解析结果、assets、翻译缓存、笔记、导出物和 bundle manifests；你可以用 iCloud、OneDrive 或 Syncthing 管理同步，但冲突处理交给外部工具。 |
+| 导出 | 支持 source、translated、bilingual、lecture-note 和完整 bundle artifact。导出的 Markdown 和讲义会带有不可见内容来源提示，提醒使用者遵守原论文许可。 |
 
-## 衔牍已经能做什么？
+完整功能说明见 [docs/user-feature-guide.md](docs/user-feature-guide.md)。这份文档覆盖 Reader 模式、颜色标记、Obsidian 联动、段落工具栏、术语、问答、讲义和导出的实际用法。
 
-它已经支持创建本地 library，导入 arXiv source package，导入本地 TeX archive，把 Markdown 导入为弱结构文档，把 PDF 作为源文件保存进 bundle，在本机安装 LaTeXML 时解析 TeX，保存结构化 document blocks 和 assets，构建确定性的本地 block embeddings，通过 OpenAI-compatible 或 Anthropic-compatible provider 翻译段落和 caption，保存多个 translation variants，审核并复用 translation memory，管理文章术语，使用 macOS Keychain 保存 provider key，在文章证据范围内流式问答，生成可编辑的讲义笔记 patch，编辑自定义笔记模板，一键把中英文段落摘录保存到 Obsidian，并导出 source、translated、bilingual、lecture-note 或完整 bundle artifact。
+## 应用截图
 
-完整功能说明见 [docs/user-feature-guide.md](docs/user-feature-guide.md)。这份文档解释了 Reader 的 Study、Focus、Bilingual、Translation 和 Source 模式，也说明了颜色标记、Obsidian 联动、段落工具栏、术语、问答、讲义和导出的实际用法。
+以下截图使用本地文库中的论文 *Deep Residual Learning for Image Recognition* 作为示例。截图中的论文正文、图表和公式属于原论文作者或相应权利人，这里只用于展示衔牍的本地阅读、翻译、问答和结构化渲染能力。
 
-## 界面语言 🌍
+### 阅读模式
 
-衔牍提供简体中文、English、日本語、한국어、Español、Français 和 Deutsch 入口。第一次打开时，界面会跟随浏览器语言；之后可以在 Settings 的 Interface 页面随时切换。部分语言的文案仍可能回退到 English，但不会影响导入、阅读、翻译、问答和导出流程。
+同一篇文章、同一个段落位置，只切换 Reader 模式。
+
+<table>
+  <tr>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/02-mode-study.png" alt="精读模式">
+      <br><sub>精读模式：以英文原文为主线，逐段展开译文，不打断论文阅读节奏。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/03-mode-bilingual.png" alt="双语模式">
+      <br><sub>双语模式：原文与中文译文并排校准，适合检查术语和论证细节。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/04-mode-translation.png" alt="译文模式">
+      <br><sub>译文模式：先用母语通读结构，再回到英文原文校准表达。</sub>
+    </td>
+  </tr>
+</table>
+
+### 主要功能
+
+<table>
+  <tr>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/01-library-and-article-list.png" alt="本地文库和论文列表">
+      <br><sub>本地文库：论文、解析状态、翻译进度和打开入口集中在一个可携带文件夹中。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/05-side-ask-panel.png" alt="侧边栏提问">
+      <br><sub>论文问答：回答限定在本地文章证据内，并保留引用到的 block id。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/04-paragraph-highlight-and-translation.png" alt="段落标色、句子强调和段落提问">
+      <br><sub>段落工作流：标色、句子强调、译文展开和当前段落提问在同一块内完成。</sub>
+    </td>
+  </tr>
+</table>
+
+### 图文结构展示
+
+<table>
+  <tr>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/06-figure-and-caption.png" alt="图片和 caption 展示">
+      <br><sub>图片与 caption：真实 figure asset、英文说明和中文译文一起保留。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/07-equation-rendering.png" alt="公式渲染">
+      <br><sub>公式渲染：LaTeX 结构、编号和正文引用在 reader 中保持可读。</sub>
+    </td>
+    <td width="33.33%">
+      <img src="docs/screenshots/readme/08-table-rendering.png" alt="表格渲染">
+      <br><sub>表格渲染：论文表格以结构化方式展示，并保留 caption 语义。</sub>
+    </td>
+  </tr>
+</table>
+
+## 界面语言
+
+衔牍提供简体中文、English、日本語、한국어、Español、Français 和 Deutsch 入口。第一次打开时，界面会跟随浏览器语言；之后可以在 Settings 的 Interface 页面随时切换。部分语言的文案可能回退到 English，但不会影响导入、阅读、翻译、问答和导出流程。
+
 ## 快速开始
 
 衔牍需要 Node.js、pnpm、Python 3.13 和 uv。核心应用可以在没有 TeX 工具链的情况下启动，但真实 TeX 解析需要 `latexml` 和 `latexmlpost` 在 `PATH` 上。图像和资产转换建议安装 ImageMagick `magick`、Ghostscript `gs`，以及 `tectonic` 或 `pdflatex`。
@@ -88,7 +146,7 @@ make dev
 
 进入 library 后，可以输入 arXiv ID，例如 `1706.03762`。衔牍会下载 source package 和 PDF，创建自包含 article bundle，并在启用 parse 时排队解析任务。本地 TeX archive 复用同样的 bundle 路径。Markdown 会立即导入为弱结构 document。PDF 只保存为源文件。
 
-解析完成后，从 article table 打开 reader。Reader 支持 Study、Focus、Bilingual、Translation 和 Source 视图。章节通过可折叠 Chapters 控件提供。段落 hover 后会显示复制、查看源 LaTeX、针对当前段落提问和重新翻译等操作。图和表在存在真实 asset 时显示 asset；缺失 asset 时保留 caption、label 和结构化 fallback，而不是假装已经渲染成功。
+解析完成后，从 article table 打开 reader。Reader 支持 Study、Focus、Bilingual、Translation 和 Source 视图。章节通过可折叠 Chapters 控件提供。段落 hover 后会显示复制、查看源 LaTeX、针对当前段落提问和重新翻译等操作。图和表在存在真实 asset 时显示 asset；缺失 asset 时保留 caption、label 和结构化 fallback，并明确呈现为未渲染资产。
 
 ## 配置模型
 
