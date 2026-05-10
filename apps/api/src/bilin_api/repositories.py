@@ -28,6 +28,7 @@ from bilin_api.schemas import (
     LibraryCreate,
     LibraryDeleteResult,
     LibraryStatus,
+    LibraryUpdate,
     NoteTemplate,
     NoteTemplateCreate,
     NoteTemplateUpdate,
@@ -173,6 +174,20 @@ async def create_library(payload: LibraryCreate) -> Library:
         )
         await conn.commit()
     return library
+
+
+async def update_library(library_id: str, payload: LibraryUpdate) -> Library | None:
+    current = await get_library(library_id)
+    if current is None:
+        return None
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            "UPDATE libraries SET name = ?, updated_at = ? WHERE id = ?",
+            (payload.name, utc_now(), library_id),
+        )
+        await conn.commit()
+    return await get_library(library_id)
 
 
 async def archive_library(library_id: str) -> Library | None:

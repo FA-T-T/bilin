@@ -65,7 +65,8 @@ export interface paths {
         };
         /** Get Library By Id */
         get: operations["get_library_by_id_libraries__library_id__get"];
-        put?: never;
+        /** Put Library */
+        put: operations["put_library_libraries__library_id__put"];
         post?: never;
         /** Delete Library By Id */
         delete: operations["delete_library_by_id_libraries__library_id__delete"];
@@ -137,6 +138,23 @@ export interface paths {
         put?: never;
         /** Post Discover Models */
         post: operations["post_discover_models_providers_discover_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Provider Presets */
+        get: operations["get_provider_presets_providers_presets_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -291,6 +309,24 @@ export interface paths {
         /** Get Article Document */
         get: operations["get_article_document_libraries__library_id__articles__revision_id__document_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/articles/{revision_id}/reading-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Reading Progress */
+        get: operations["get_reading_progress_libraries__library_id__articles__revision_id__reading_progress_get"];
+        /** Put Reading Progress */
+        put: operations["put_reading_progress_libraries__library_id__articles__revision_id__reading_progress_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1235,6 +1271,7 @@ export interface components {
              */
             asset_count: number;
             translation_status?: components["schemas"]["ArticleTranslationStatus"];
+            reading_progress?: components["schemas"]["ArticleReadingProgress"] | null;
         };
         /** ArticleManifest */
         ArticleManifest: {
@@ -1287,6 +1324,29 @@ export interface components {
             article_revision_id: string;
             /** Patches */
             patches?: components["schemas"]["NotePatch"][];
+        };
+        /** ArticleReadingProgress */
+        ArticleReadingProgress: {
+            /** Article Revision Id */
+            article_revision_id: string;
+            /** Active Block Uid */
+            active_block_uid?: string | null;
+            /** Active Segment Index */
+            active_segment_index?: number | null;
+            /**
+             * Segment Count
+             * @default 0
+             */
+            segment_count: number;
+            /** Segments */
+            segments?: number[];
+            /**
+             * Total Seconds
+             * @default 0
+             */
+            total_seconds: number;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /** ArticleRevision */
         ArticleRevision: {
@@ -2053,6 +2113,11 @@ export interface components {
             /** Article Results */
             article_results?: components["schemas"]["TranslationBatchResult"][];
         };
+        /** LibraryUpdate */
+        LibraryUpdate: {
+            /** Name */
+            name: string;
+        };
         /** NotePatch */
         NotePatch: {
             /** Id */
@@ -2250,6 +2315,27 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             };
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ProviderPreset */
+        ProviderPreset: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            protocol: components["schemas"]["ProviderProtocol"];
+            /** Base Url */
+            base_url: string;
+            /**
+             * Default Max Concurrent Requests
+             * @default 1
+             */
+            default_max_concurrent_requests: number;
+            /** Default Requests Per Minute */
+            default_requests_per_minute?: number | null;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
@@ -2571,6 +2657,15 @@ export interface components {
             target_language: string;
             /** Cards */
             cards?: components["schemas"]["ReaderCard"][];
+        };
+        /** ReadingProgressUpdate */
+        ReadingProgressUpdate: {
+            /** Active Block Uid */
+            active_block_uid?: string | null;
+            /** Block Seconds */
+            block_seconds?: {
+                [key: string]: number;
+            };
         };
         /**
          * RetrievalMode
@@ -2985,6 +3080,41 @@ export interface operations {
             };
         };
     };
+    put_library_libraries__library_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Library"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_library_by_id_libraries__library_id__delete: {
         parameters: {
             query?: never;
@@ -3164,6 +3294,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_provider_presets_providers_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderPreset"][];
                 };
             };
         };
@@ -3523,6 +3673,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArticleDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reading_progress_libraries__library_id__articles__revision_id__reading_progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleReadingProgress"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_reading_progress_libraries__library_id__articles__revision_id__reading_progress_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadingProgressUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleReadingProgress"];
                 };
             };
             /** @description Validation Error */

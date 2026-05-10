@@ -176,8 +176,8 @@ function syntheticDocumentPayload(count = 300) {
 }
 
 async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
-  await userEvent.click(await screen.findByRole("button", { name: "Reader tools" }));
-  await userEvent.click(await screen.findByRole("button", { name }));
+  if (screen.queryByRole("button", { name: `Collapse ${name}` })) return;
+  await userEvent.click(await screen.findByRole("button", { name: `Expand ${name}` }));
 }
 
 async function expandFirstTranslation() {
@@ -608,13 +608,23 @@ describe("Bilin web shell", () => {
   });
 
   it("archives and deletes libraries from the library home", async () => {
+    let currentLibrary = library;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/libraries") && !init?.method) return jsonResponse([library]);
-      if (url.endsWith("/libraries/library-1/archive")) {
-        return jsonResponse({ ...library, status: "archived" });
+      if (url.endsWith("/libraries") && !init?.method) return jsonResponse([currentLibrary]);
+      if (url.endsWith("/libraries/library-1") && init?.method === "PUT") {
+        currentLibrary = {
+          ...currentLibrary,
+          name: JSON.parse(String(init.body)).name,
+          updated_at: new Date().toISOString()
+        };
+        return jsonResponse(currentLibrary);
       }
-      if (url.endsWith("/libraries/library-1")) {
+      if (url.endsWith("/libraries/library-1/archive")) {
+        currentLibrary = { ...currentLibrary, status: "archived" };
+        return jsonResponse(currentLibrary);
+      }
+      if (url.endsWith("/libraries/library-1") && init?.method === "DELETE") {
         return jsonResponse({
           library_id: "library-1",
           path: "/tmp/papers",
@@ -628,6 +638,21 @@ describe("Bilin web shell", () => {
     renderWithProviders(<LibraryHomePage />);
 
     expect(await screen.findByRole("link", { name: "Papers" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Edit library name" }));
+    await userEvent.clear(screen.getByLabelText("New library name"));
+    await userEvent.type(screen.getByLabelText("New library name"), "Reading List");
+    await userEvent.click(screen.getByRole("button", { name: "Save library name" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1") &&
+            init?.method === "PUT" &&
+            String(init.body).includes("Reading List")
+        )
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("link", { name: "Reading List" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Archive" }));
     await waitFor(() => {
       expect(
@@ -1402,11 +1427,19 @@ L\eqqcolon \textsc{mask}
   });
 
   it("submits an arXiv import job and renders article rows", async () => {
+    let currentLibrary = library;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void init;
       const url = String(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
-      if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
+      if (url.endsWith("/libraries/library-1") && init?.method === "PUT") {
+        currentLibrary = {
+          ...currentLibrary,
+          name: JSON.parse(String(init.body)).name,
+          updated_at: new Date().toISOString()
+        };
+        return jsonResponse(currentLibrary);
+      }
+      if (url.endsWith("/libraries/library-1")) return jsonResponse(currentLibrary);
       if (url.includes("/libraries/library-1/articles?target_language=")) {
         return jsonResponse([article]);
       }
@@ -1479,11 +1512,34 @@ L\eqqcolon \textsc{mask}
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/libraries/library-1", "/libraries/:libraryId", <LibraryDetailPage />);
-    const titleLink = await screen.findByRole("link", { name: "A Minimal Bilin Test Paper" });
-    expect(titleLink).toHaveAttribute("href", "/articles/revision-1?libraryId=library-1");
-    expect(screen.getByText("Not translated")).toBeInTheDocument();
+    const titleButton = await screen.findByRole("button", {
+      name: /A Minimal Bilin Test Paper/
+    });
+    expect(titleButton).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Read" })).toHaveAttribute(
+      "href",
+      "/articles/revision-1?libraryId=library-1"
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Edit library name" }));
+    await userEvent.clear(screen.getByLabelText("New library name"));
+    await userEvent.type(screen.getByLabelText("New library name"), "Reading List");
+    await userEvent.click(screen.getByRole("button", { name: "Save library name" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1") &&
+            init?.method === "PUT" &&
+            String(init.body).includes("Reading List")
+        )
+      ).toBe(true);
+    });
+    expect(await screen.findByText("Reading List")).toBeInTheDocument();
+    expect(screen.getAllByText("Not translated").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
-    const translateMissingButton = screen.getByRole("button", { name: "Translate missing" });
+    const translateMissingButton = screen.getAllByRole("button", {
+      name: "Translate missing"
+    })[0];
     await waitFor(() => expect(translateMissingButton).not.toBeDisabled());
     await userEvent.click(translateMissingButton);
     await waitFor(() => {
@@ -1532,7 +1588,7 @@ L\eqqcolon \textsc{mask}
       ).toBe(true);
     });
 
-    await userEvent.click(screen.getByText("Local file"));
+    await userEvent.click(screen.getAllByText("Local file").at(-1)!);
     const file = new File(["fake tar"], "paper.tar.gz", { type: "application/gzip" });
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
     expect(fileInput).not.toBeNull();
@@ -1549,6 +1605,47 @@ L\eqqcolon \textsc{mask}
         )
       ).toBe(true);
     });
+  });
+
+  it("renders reading progress as a style-like title heatmap", async () => {
+    const articleWithProgress = {
+      ...article,
+      reading_progress: {
+        article_revision_id: "revision-1",
+        active_block_uid: "p-0002",
+        active_segment_index: 3,
+        segment_count: 6,
+        segments: [0, 30, 90, 120, 0, 15],
+        total_seconds: 255,
+        updated_at: new Date().toISOString()
+      }
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
+        if (url.includes("/libraries/library-1/articles?target_language=")) {
+          return jsonResponse([articleWithProgress]);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/libraries/library-1",
+      "/libraries/:libraryId",
+      <LibraryDetailPage />
+    );
+    const titleButton = await screen.findByRole("button", {
+      name: /A Minimal Bilin Test Paper/
+    });
+    const heatmap = container.querySelector(".article-title-progress-heatmap");
+
+    expect(titleButton).toHaveAttribute("title", "Reading time 4m, resume at block 4");
+    expect(heatmap).toBeInTheDocument();
+    expect(heatmap?.querySelectorAll(".article-title-progress-segment")).toHaveLength(6);
   });
 
   it("shows parse dependency failures in the task drawer", async () => {
@@ -1759,7 +1856,7 @@ L\eqqcolon \textsc{mask}
     expect(screen.queryByText("第一段 technical content 的译文。")).not.toBeInTheDocument();
   });
 
-  it("searches offscreen source and translation blocks without relying on rendered DOM", async () => {
+  it("keeps long reader pages virtualized without a reader full-text search bar", async () => {
     const longDocument = syntheticDocumentPayload(300);
     const longTranslations = {
       ...translationsPayload,
@@ -1801,13 +1898,61 @@ L\eqqcolon \textsc{mask}
     );
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    const searchInput = await screen.findByLabelText("Search paper");
+    expect(await screen.findByTestId("reader-block-list")).toHaveAttribute(
+      "data-virtualization",
+      "progressive"
+    );
+    expect(screen.queryByLabelText("Search paper")).not.toBeInTheDocument();
     expect(screen.queryByTestId("reader-block-shell-p-0251")).not.toBeInTheDocument();
-    await userEvent.type(searchInput, "translation needle");
+  });
 
-    expect(await screen.findByText("1/1 matches")).toBeInTheDocument();
-    expect(screen.getByTestId("reader-block-shell-p-0251")).toBeInTheDocument();
-    await userEvent.keyboard("{Enter}");
+  it("waits for an explicit click before activating a chapter jump", async () => {
+    const longDocument = syntheticDocumentPayload(160);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(longDocument);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    await screen.findByText(
+      "Synthetic paragraph 1 with enough article-like text to estimate line height."
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Chapters" }));
+
+    const firstChapter = await screen.findByRole("link", { name: "1 Section 1" });
+    const thirdChapter = await screen.findByRole("link", { name: "3 Section 3" });
+    expect(firstChapter).toHaveAttribute("aria-current", "location");
+
+    await userEvent.hover(thirdChapter);
+
+    expect(firstChapter).toHaveAttribute("aria-current", "location");
+    expect(thirdChapter).not.toHaveAttribute("aria-current", "location");
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+    await userEvent.click(thirdChapter);
+
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
   });
 
@@ -2720,6 +2865,19 @@ L\eqqcolon \textsc{mask}
   it("saves provider profiles from settings", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/providers/presets")) {
+        return jsonResponse([
+          {
+            id: "example-ai",
+            name: "Example AI",
+            protocol: "openai-compatible",
+            base_url: "https://api.example.com/v1",
+            default_max_concurrent_requests: 2,
+            default_requests_per_minute: 120,
+            metadata: {}
+          }
+        ]);
+      }
       if (url.endsWith("/providers/discover-models") && init?.method === "POST") {
         return jsonResponse({
           protocol: "openai-compatible",
@@ -2762,12 +2920,9 @@ L\eqqcolon \textsc{mask}
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(<SettingsPage />);
-    await userEvent.click(screen.getByText("Advanced"));
-    await userEvent.type(screen.getByLabelText("Profile label"), "Mock Provider");
+    await userEvent.click(await screen.findByRole("button", { name: "Example AI" }));
     await userEvent.type(screen.getByLabelText("API key"), "test-key");
-    await userEvent.clear(screen.getByLabelText("Concurrency"));
-    await userEvent.type(screen.getByLabelText("Concurrency"), "2");
-    await userEvent.type(screen.getByLabelText("Requests per minute"), "120");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.example.com/v1");
     await userEvent.click(screen.getByRole("button", { name: "Find models" }));
     expect(await screen.findByText("Mock Model")).toBeInTheDocument();
     expect(screen.getByText("Embedding Model")).toBeInTheDocument();
@@ -2781,17 +2936,29 @@ L\eqqcolon \textsc{mask}
         )
       ).toBe(true);
     });
+    const [, discoverInit] =
+      fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).endsWith("/providers/discover-models") && init?.method === "POST"
+      ) ?? [];
+    expect(JSON.parse(String(discoverInit?.body))).toMatchObject({
+      protocol: "openai-compatible",
+      base_url: "https://api.example.com/v1"
+    });
     const [, init] =
       fetchMock.mock.calls.find(
         ([url, init]) => String(url).endsWith("/providers") && init?.method === "POST"
       ) ?? [];
     expect(JSON.parse(String(init?.body))).toMatchObject({
-      name: "Mock Provider",
+      name: "Example AI · Mock Model",
+      base_url: "https://api.example.com/v1",
       default_model: "mock-model",
       max_concurrent_requests: 2,
       requests_per_minute: 120,
       capabilities: {
         model_discovery: true,
+        provider_preset_id: "example-ai",
+        provider_preset_name: "Example AI",
         native_search: true
       }
     });
@@ -2912,6 +3079,7 @@ L\eqqcolon \textsc{mask}
     expect(
       await screen.findByText("First paragraph with inline technical content.")
     ).toBeInTheDocument();
+    await openReaderTool("Translate");
     await userEvent.click(screen.getByRole("button", { name: "Translate paper" }));
 
     await waitFor(() => {
@@ -2924,6 +3092,7 @@ L\eqqcolon \textsc{mask}
       ).toBe(true);
     });
 
+    await userEvent.click(screen.getByRole("button", { name: "Expand Model provider" }));
     await userEvent.click(screen.getByRole("textbox", { name: "Target language" }));
     await userEvent.click(await screen.findByRole("option", { name: "日本語" }));
     await waitFor(() => {

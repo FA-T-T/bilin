@@ -10,12 +10,13 @@ import {
   useComputedColorScheme,
   useMantineColorScheme
 } from "@mantine/core";
-import { BookOpen, Library, Moon, Settings, Sun, TerminalSquare } from "lucide-react";
+import { Moon, Settings, Sun, TerminalSquare } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { useJobSummary } from "../api/hooks";
 import { useProductName, useT } from "../i18n";
 import { useUiStore } from "../state/ui";
+import { XianduLogo } from "./brand/XianduLogo";
 import { TaskDrawer } from "./TaskDrawer";
 
 export function AppLayout() {
@@ -29,14 +30,23 @@ export function AppLayout() {
   const activeJobCount = jobs.data?.active ?? 0;
   const isReaderRoute = location.pathname.startsWith("/articles/");
 
+  const libraryActive = location.pathname === "/" || location.pathname.startsWith("/libraries");
+  const settingsActive = location.pathname.startsWith("/settings");
+
   return (
-    <AppShell header={{ height: isReaderRoute ? 0 : 62 }} padding={isReaderRoute ? 0 : "md"}>
-      {isReaderRoute ? null : (
+    <AppShell className="app-shell" header={{ height: isReaderRoute ? 0 : 58 }} padding={0}>
+      {!isReaderRoute ? (
         <AppShell.Header className="app-header">
-          <Group justify="space-between" h="100%" px="xl">
-            <Group gap="sm" className="brand-lockup">
+          <Group justify="space-between" h="100%" px="xl" className="app-header-inner">
+            <Link
+              className="brand-lockup brand-library-link"
+              to="/"
+              aria-current={libraryActive ? "page" : undefined}
+              aria-label={t("nav.library")}
+              data-active={libraryActive || undefined}
+            >
               <span className="brand-mark" aria-hidden="true">
-                <BookOpen size={18} />
+                <XianduLogo title={productName} />
               </span>
               <div>
                 <Title order={3} className="brand-title">
@@ -46,23 +56,16 @@ export function AppLayout() {
                   {t("app.subtitle")}
                 </Text>
               </div>
-            </Group>
+            </Link>
             <Group gap="xs" className="app-nav">
-              <Button
-                component={Link}
-                to="/"
-                variant="subtle"
-                leftSection={<Library size={16} />}
-                aria-label={t("nav.library")}
-              >
-                {t("nav.library")}
-              </Button>
               <Button
                 component={Link}
                 to="/settings"
                 variant="subtle"
                 leftSection={<Settings size={16} />}
                 aria-label={t("nav.settings")}
+                aria-current={settingsActive ? "page" : undefined}
+                data-active={settingsActive || undefined}
               >
                 {t("nav.settings")}
               </Button>
@@ -71,7 +74,7 @@ export function AppLayout() {
                   <ActionIcon
                     variant="default"
                     onClick={openTaskDrawer}
-                    aria-label={t("nav.openTasks")}
+                    aria-label={t("nav.openGlobalTasks")}
                   >
                     <TerminalSquare size={18} />
                   </ActionIcon>
@@ -94,7 +97,7 @@ export function AppLayout() {
             </Group>
           </Group>
         </AppShell.Header>
-      )}
+      ) : null}
       <AppShell.Main>
         <Outlet />
         <TaskDrawer />

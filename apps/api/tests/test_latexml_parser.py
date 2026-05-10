@@ -134,6 +134,9 @@ def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims()
         "\\begin{document}\n"
         "\\title[mode=title]{A CAS Paper}\n"
         "\\author[1]{Ada Lovelace}[orcid=0000-0000]\n"
+        "\\author[2]{Grace Hopper}[\n"
+        "  type=editor, orcid=0000-0001-5034-474X]\n"
+        "\\author[1,2]{Katherine Johnson}[corref=cor1, fnref=fn1]\n"
         "\\address[1]{Analytical Engine Lab}\n"
         "\\begin{abstract}x\\end{abstract}\n"
         "\\maketitle\n"
@@ -148,6 +151,12 @@ def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims()
     assert "\\def\\BilinCASTitleWith[#1]#2{\\BilinArticleTitle{#2}}" in prepared
     assert "\\def\\BilinCASAuthorWithMeta#1[#2]{\\BilinArticleAuthor{#1}}" in prepared
     assert "\\providecommand{\\address}" in prepared
+    assert "[orcid=0000-0000]" not in prepared
+    assert "type=editor, orcid=0000-0001-5034-474X" not in prepared
+    assert "[corref=cor1, fnref=fn1]" not in prepared
+    assert "\\author[1]{Ada Lovelace}" in prepared
+    assert "\\author[2]{Grace Hopper}" in prepared
+    assert "\\author[1,2]{Katherine Johnson}" in prepared
 
 
 def test_prepare_latexml_side_sources_disables_incompatible_packages_in_inputs(
@@ -488,6 +497,47 @@ def test_normalize_latexml_html_skips_generated_toc_navigation(tmp_path: Path) -
         "Stabilizer codes encode quantum information.",
     ]
     assert not any(block.source_markdown in {"Contents", "List of Tables"} for block in blocks)
+
+
+def test_normalize_latexml_html_skips_author_metadata_attribute_paragraph(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <article class="ltx_document ltx_authors_1line">
+              <div id="p1" class="ltx_para">
+                <p class="ltx_p">[type=editor,
+                orcid=0000-0001-5034-474X]
+                [orcid=0000-0002-6517-2458]
+                [corref=cor1, fnref=fn1]</p>
+              </div>
+              <div id="p2" class="ltx_para">
+                <p class="ltx_p">[corref=cor2, fnref=fn2]</p>
+              </div>
+              <h1 class="ltx_title ltx_title_document">
+                The Variational Quantum Eigensolver: a review of methods and best practices
+              </h1>
+              <p class="ltx_p">The VQE computes an upper bound for a ground-state energy.</p>
+            </article>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["section", "paragraph"]
+    source_markdown = render_source_markdown(blocks).lower()
+    assert "orcid" not in source_markdown
+    assert "corref" not in source_markdown
+    assert blocks[0].source_markdown == (
+        "The Variational Quantum Eigensolver: a review of methods and best practices"
+    )
+    assert blocks[1].source_markdown == (
+        "The VQE computes an upper bound for a ground-state energy."
+    )
 
 
 def test_normalize_latexml_html_cleans_author_year_citation_artifacts(tmp_path: Path) -> None:

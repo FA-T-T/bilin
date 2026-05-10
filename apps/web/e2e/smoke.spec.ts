@@ -13,7 +13,22 @@ test("opens the reader shell", async ({ page }) => {
 
   await mockArticleApi(page);
   await page.goto("/articles/revision-smoke?libraryId=library-smoke");
-  await expect(page.getByRole("heading", { name: "A Playwright Parsed Paper" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "A Playwright Parsed Paper" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Library papers" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Reader workspace" })).toBeVisible();
+  await page.getByRole("button", { name: /A Switchable Library Paper/ }).click();
+  await expect(page).toHaveURL(/revision-alt/);
+  await expect(page.getByRole("region", { name: "A Switchable Library Paper" })).toBeVisible();
+  await page.getByRole("button", { name: /A Playwright Parsed Paper/ }).click();
+  await expect(page).toHaveURL(/revision-smoke/);
+  await page.getByLabel("Collapse paper switcher").click();
+  await expect(page.getByLabel("Expand paper switcher")).toBeVisible();
+  await page.getByLabel("Expand paper switcher").click();
+  await expect(page.getByRole("button", { name: "Expand Tasks" })).toBeVisible();
+  await page.getByRole("button", { name: "Expand Tasks" }).click();
+  await expect(page.getByRole("button", { name: "Collapse Tasks" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Question" }).fill("What is the main point?");
+  await expect(page.getByRole("button", { name: "Ask paper" })).toBeEnabled();
   await expect(page.getByText("A parsed paragraph from the mocked article API.")).toBeVisible();
   await expect(page.getByText("来自 mocked article API 的译文。")).toHaveCount(0);
   await page.getByRole("button", { name: "Show translation" }).click();
@@ -41,17 +56,17 @@ test("opens the reader shell", async ({ page }) => {
   await page.getByLabel("Reading mode").click();
   await page.getByRole("button", { name: "Source" }).click();
   await expect(page.getByText("Translation pending.")).toHaveCount(0);
-  await page.getByLabel("Open task drawer").click();
+  await page.getByRole("button", { name: "Manage tasks" }).click();
   await expect(page.getByText("Background tasks")).toBeVisible();
 
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
 });
 
-test("keeps long reader pages bounded while searching and scrolling", async ({ page }) => {
+test("keeps long reader pages bounded while scrolling", async ({ page }) => {
   await mockLongArticleApi(page);
   await page.goto("/articles/revision-long?libraryId=library-smoke");
-  await expect(page.getByRole("heading", { name: "A Long Performance Paper" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "A Long Performance Paper" })).toBeVisible();
   await expect(page.getByTestId("reader-block-list")).toHaveAttribute(
     "data-virtualization",
     "progressive"
@@ -62,11 +77,7 @@ test("keeps long reader pages bounded while searching and scrolling", async ({ p
   expect(nodeCount).toBeLessThan(4_600);
   expect(buttonCount).toBeLessThan(250);
 
-  await page.getByLabel("Search paper").fill("far performance needle");
-  await expect(page.getByText("1/1 matches")).toBeVisible();
-  await expect(
-    page.getByText("This far-off paragraph contains a far performance needle.")
-  ).toBeVisible();
+  await expect(page.getByLabel("Search paper")).toHaveCount(0);
   await page.mouse.wheel(0, 5000);
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2))
@@ -100,8 +111,33 @@ async function mockArticleApi(page: Page) {
     if (pathname === "/jobs") {
       return fulfillJson(route, []);
     }
+    if (pathname === "/libraries/library-smoke") {
+      return fulfillJson(route, smokeLibrary());
+    }
+    if (pathname === "/libraries/library-smoke/articles") {
+      return fulfillJson(route, [
+        smokeArticleListItem(
+          "revision-smoke",
+          "family-smoke",
+          "A Playwright Parsed Paper",
+          "2401.00001"
+        ),
+        smokeArticleListItem(
+          "revision-alt",
+          "family-alt",
+          "A Switchable Library Paper",
+          "2401.00002"
+        )
+      ]);
+    }
     if (pathname.endsWith("/articles/revision-smoke/document")) {
       return fulfillJson(route, smokeDocument());
+    }
+    if (pathname.endsWith("/articles/revision-alt/document")) {
+      return fulfillJson(
+        route,
+        smokeDocument("revision-alt", "family-alt", "A Switchable Library Paper", "2401.00002v1")
+      );
     }
     if (pathname.endsWith("/articles/revision-smoke/translations")) {
       return fulfillJson(route, {
@@ -126,6 +162,13 @@ async function mockArticleApi(page: Page) {
         ]
       });
     }
+    if (pathname.endsWith("/articles/revision-alt/translations")) {
+      return fulfillJson(route, {
+        article_revision_id: "revision-alt",
+        target_language: url.searchParams.get("target_language") ?? "zh-CN",
+        variants: []
+      });
+    }
     if (pathname.endsWith("/articles/revision-smoke/glossary")) {
       return fulfillJson(route, {
         article_revision_id: "revision-smoke",
@@ -135,8 +178,20 @@ async function mockArticleApi(page: Page) {
         terms: []
       });
     }
+    if (pathname.endsWith("/articles/revision-alt/glossary")) {
+      return fulfillJson(route, {
+        article_revision_id: "revision-alt",
+        target_language: url.searchParams.get("target_language") ?? "zh-CN",
+        active_version: "glossary:none",
+        affected_block_uids: [],
+        terms: []
+      });
+    }
     if (pathname.endsWith("/articles/revision-smoke/chat")) {
       return fulfillJson(route, { article_revision_id: "revision-smoke", messages: [] });
+    }
+    if (pathname.endsWith("/articles/revision-alt/chat")) {
+      return fulfillJson(route, { article_revision_id: "revision-alt", messages: [] });
     }
     if (pathname.endsWith("/articles/revision-smoke/notes/templates")) {
       return fulfillJson(route, [
@@ -147,8 +202,20 @@ async function mockArticleApi(page: Page) {
         }
       ]);
     }
+    if (pathname.endsWith("/articles/revision-alt/notes/templates")) {
+      return fulfillJson(route, [
+        {
+          id: "deep_reading",
+          name: "精读模板",
+          description: "Switch note template."
+        }
+      ]);
+    }
     if (pathname.endsWith("/articles/revision-smoke/notes/patches")) {
       return fulfillJson(route, { article_revision_id: "revision-smoke", patches: [] });
+    }
+    if (pathname.endsWith("/articles/revision-alt/notes/patches")) {
+      return fulfillJson(route, { article_revision_id: "revision-alt", patches: [] });
     }
     return fulfillJson(route, []);
   });
@@ -180,6 +247,9 @@ async function mockLongArticleApi(page: Page) {
     }
     if (pathname === "/jobs") {
       return fulfillJson(route, []);
+    }
+    if (pathname === "/libraries/library-smoke") {
+      return fulfillJson(route, smokeLibrary());
     }
     if (pathname.endsWith("/articles/revision-long/document")) {
       return fulfillJson(route, longSmokeDocument());
@@ -225,6 +295,18 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
     contentType: "application/json",
     body: JSON.stringify(body)
   });
+}
+
+function smokeLibrary() {
+  return {
+    id: "library-smoke",
+    name: "Papers",
+    path: "/tmp/library",
+    status: "active",
+    metadata: {},
+    created_at: timestamp,
+    updated_at: timestamp
+  };
 }
 
 function longSmokeDocument() {
@@ -291,11 +373,78 @@ function longSmokeDocument() {
   };
 }
 
-function smokeDocument() {
+function smokeArticleListItem(
+  revisionId: string,
+  familyId: string,
+  title: string,
+  externalId: string
+) {
   return {
     article_revision: {
-      id: "revision-smoke",
-      family_id: "family-smoke",
+      id: revisionId,
+      family_id: familyId,
+      version: "v1",
+      bundle_path: `/tmp/library/articles/arxiv/${externalId}/v1`,
+      status: "parsed",
+      manifest_version: 1,
+      metadata: {},
+      created_at: timestamp,
+      updated_at: timestamp
+    },
+    family: {
+      id: familyId,
+      library_id: "library-smoke",
+      source: "arxiv",
+      external_id: externalId,
+      title,
+      metadata: {},
+      created_at: timestamp,
+      updated_at: timestamp
+    },
+    manifest: {
+      schema_version: 1,
+      article_revision_id: revisionId,
+      arxiv_id: `${externalId}v1`,
+      source: "arxiv",
+      arxiv_metadata: { title },
+      parse_status: "parsed",
+      errors: [],
+      metadata: {}
+    },
+    block_count: 2,
+    asset_count: 0,
+    translation_status: {
+      target_language: "zh-CN",
+      status: revisionId === "revision-smoke" ? "translated" : "not_started",
+      translatable_blocks: 1,
+      translated_blocks: revisionId === "revision-smoke" ? 1 : 0,
+      queued_jobs: 0,
+      running_jobs: 0,
+      paused_jobs: 0,
+      failed_jobs: 0
+    },
+    reading_progress: {
+      article_revision_id: revisionId,
+      active_block_uid: "p-smoke",
+      active_segment_index: revisionId === "revision-smoke" ? 1 : 0,
+      segment_count: 2,
+      total_seconds: revisionId === "revision-smoke" ? 180 : 0,
+      segments: revisionId === "revision-smoke" ? [20, 160] : [0, 0],
+      updated_at: timestamp
+    }
+  };
+}
+
+function smokeDocument(
+  revisionId = "revision-smoke",
+  familyId = "family-smoke",
+  title = "A Playwright Parsed Paper",
+  arxivId = "2401.00001v1"
+) {
+  return {
+    article_revision: {
+      id: revisionId,
+      family_id: familyId,
       version: "v1",
       bundle_path: "/tmp/library/articles/arxiv/2401.00001/v1",
       status: "parsed",
@@ -306,10 +455,10 @@ function smokeDocument() {
     },
     manifest: {
       schema_version: 1,
-      article_revision_id: "revision-smoke",
-      arxiv_id: "2401.00001v1",
+      article_revision_id: revisionId,
+      arxiv_id: arxivId,
       source: "arxiv",
-      arxiv_metadata: { title: "A Playwright Parsed Paper" },
+      arxiv_metadata: { title },
       parse_status: "parsed",
       errors: [],
       metadata: {}
@@ -317,7 +466,7 @@ function smokeDocument() {
     blocks: [
       {
         id: "block-sec-smoke",
-        article_revision_id: "revision-smoke",
+        article_revision_id: revisionId,
         block_uid: "sec-smoke",
         structural_path: "00001",
         block_type: "section",
@@ -332,7 +481,7 @@ function smokeDocument() {
       },
       {
         id: "block-p-smoke",
-        article_revision_id: "revision-smoke",
+        article_revision_id: revisionId,
         block_uid: "p-smoke",
         structural_path: "00002",
         block_type: "paragraph",

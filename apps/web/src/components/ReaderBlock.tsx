@@ -230,9 +230,13 @@ export const ReaderBlock = memo(function ReaderBlock({
       />
     ) : null;
   const environmentTranslation = environmentTranslationForReader(displayBlock, translation);
-  const sentenceHighlightPlan = sentenceHoverAccentEnabled
-    ? createSentenceHighlightPlan(displayBlock, translationText, viewMode)
-    : undefined;
+  const sentenceHighlightPlan = useMemo(
+    () =>
+      sentenceHoverAccentEnabled
+        ? createSentenceHighlightPlan(displayBlock, translationText, viewMode)
+        : undefined,
+    [displayBlock, sentenceHoverAccentEnabled, translationText, viewMode]
+  );
   const lastPointerToggleAt = useRef(0);
   const showEnvironmentTranslation =
     Boolean(environmentTranslation) && displayBlock.block_type !== "equation";

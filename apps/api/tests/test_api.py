@@ -88,6 +88,23 @@ def test_library_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path:
     assert missing_response.status_code == 404
 
 
+def test_library_update_api_renames_library(bilin_home: Path, tmp_path: Path) -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/libraries",
+            json={"name": "Local", "path": str(tmp_path / "local-library")},
+        )
+        library_id = create_response.json()["id"]
+        update_response = client.put(f"/libraries/{library_id}", json={"name": "Reading List"})
+        get_response = client.get(f"/libraries/{library_id}")
+
+    assert create_response.status_code == 201
+    assert update_response.status_code == 200
+    assert update_response.json()["name"] == "Reading List"
+    assert update_response.json()["path"] == str(tmp_path / "local-library")
+    assert get_response.json()["name"] == "Reading List"
+
+
 def test_arxiv_import_api_enqueues_background_job(bilin_home: Path, tmp_path: Path) -> None:
     with TestClient(app) as client:
         library_response = client.post(
@@ -198,6 +215,57 @@ def test_article_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path:
     assert delete_response.json()["deleted_cache"] is True
     assert not bundle_path.exists()
     assert articles_response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_reading_progress_api_merges_time_and_feeds_article_list(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(LibraryCreate(name="Reading", path=str(tmp_path / "library")))
+    bundle_path = Path(library.path) / "articles" / "arxiv" / "2401.00001" / "v1"
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00001",
+        version="v1",
+        title="Reading Progress API",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    manifest = empty_manifest(revision)
+    blocks = [
+        make_block(revision.id, "sec-0001", "00001", "section", "Introduction"),
+        make_block(revision.id, "p-0001", "00002", "paragraph", "First paragraph."),
+        make_block(revision.id, "p-0002", "00003", "paragraph", "Second paragraph."),
+    ]
+    await replace_document(library, revision, manifest, blocks, [], source_md="")
+
+    with TestClient(app) as client:
+        first_response = client.put(
+            f"/libraries/{library.id}/articles/{revision.id}/reading-progress",
+            json={
+                "active_block_uid": "p-0001",
+                "block_seconds": {"sec-0001": 10, "p-0001": 20, "missing": 99},
+            },
+        )
+        second_response = client.put(
+            f"/libraries/{library.id}/articles/{revision.id}/reading-progress",
+            json={"active_block_uid": "p-0002", "block_seconds": {"p-0001": 5}},
+        )
+        progress_response = client.get(
+            f"/libraries/{library.id}/articles/{revision.id}/reading-progress"
+        )
+        articles_response = client.get(f"/libraries/{library.id}/articles")
+
+    assert first_response.status_code == 200
+    assert first_response.json()["segments"] == [10, 20, 0]
+    assert second_response.status_code == 200
+    assert second_response.json()["active_block_uid"] == "p-0002"
+    assert second_response.json()["active_segment_index"] == 2
+    assert second_response.json()["segments"] == [10, 25, 0]
+    assert second_response.json()["total_seconds"] == 35
+    assert progress_response.json()["segments"] == [10, 25, 0]
+    assert articles_response.json()[0]["reading_progress"]["segments"] == [10, 25, 0]
 
 
 def test_export_api_returns_metadata_and_queues_job(bilin_home: Path, tmp_path: Path) -> None:
@@ -370,6 +438,31 @@ def test_provider_model_discovery_does_not_save_api_key(
     assert payload["models"][0]["display_name"] == "Embedding Model"
     assert "secret-value" not in response.text
     assert providers_response.json() == []
+
+
+def test_provider_presets_api_returns_editable_endpoint_defaults(bilin_home: Path) -> None:
+    with TestClient(app) as client:
+        response = client.get("/providers/presets")
+
+    assert response.status_code == 200
+    presets = {item["id"]: item for item in response.json()}
+    assert presets["openai"]["base_url"] == "https://api.openai.com/v1"
+    assert presets["anthropic"]["protocol"] == "anthropic-compatible"
+    assert presets["deepseek"]["base_url"] == "https://api.deepseek.com"
+    assert (
+        presets["gemini"]["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    assert presets["qwen-dashscope-cn"]["base_url"] == (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    assert presets["qwen-dashscope-us"]["base_url"] == (
+        "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+    )
+    assert presets["qwen-dashscope-intl"]["base_url"] == (
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    )
+    assert presets["kimi-cn"]["base_url"] == "https://api.moonshot.cn/v1"
+    assert presets["kimi-global"]["base_url"] == "https://api.moonshot.ai/v1"
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,6 @@ import {
   Button,
   Group,
   Select,
-  SegmentedControl,
   Stack,
   Table,
   Tabs,
@@ -18,12 +17,14 @@ import {
   useCreateProvider,
   useDiscoverProviderModels,
   useDoctor,
+  useProviderPresets,
   useProviders,
   useTranslationMemoryEntries,
   useUpdateTranslationMemoryEntry
 } from "../api/hooks";
 import type {
   ProviderModelInfo,
+  ProviderPreset,
   ProviderProtocol,
   TranslationMemoryReviewStatus
 } from "../api/types";
@@ -32,14 +33,13 @@ import { SUPPORTED_LOCALES, type AppLocale } from "../product";
 import { useUiStore } from "../state/ui";
 import { ReaderPreferencesPanel } from "../components/ReaderPreferencesPanel";
 
-type SettingsMode = "user" | "developer";
-
 export function SettingsPage() {
   const t = useT();
   const productName = useProductName();
   const locale = useUiStore((state) => state.locale);
   const setLocale = useUiStore((state) => state.setLocale);
   const doctor = useDoctor();
+  const providerPresets = useProviderPresets();
   const providers = useProviders();
   const createProvider = useCreateProvider();
   const discoverModels = useDiscoverProviderModels();
@@ -48,18 +48,21 @@ export function SettingsPage() {
     useState<TranslationMemoryReviewStatus>("pending");
   const memory = useTranslationMemoryEntries(memoryTargetLanguage, memoryReviewStatus, null);
   const updateMemory = useUpdateTranslationMemoryEntry(memoryTargetLanguage);
-  const [mode, setMode] = useState<SettingsMode>("user");
+  const [activePresetId, setActivePresetId] = useState("openai");
   const [providerName, setProviderName] = useState("");
   const [protocol, setProtocol] = useState<ProviderProtocol>("openai-compatible");
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [selectedModelId, setSelectedModelId] = useState("");
   const [maxConcurrentRequests, setMaxConcurrentRequests] = useState("1");
   const [requestsPerMinute, setRequestsPerMinute] = useState("");
+  const providerPresetOptions = providerPresets.data ?? [];
+  const activePreset = providerPresetOptions.find((preset) => preset.id === activePresetId) ?? null;
   const discoveredModels = discoverModels.data?.models ?? [];
   const selectedModel = discoveredModels.find((model) => model.id === selectedModelId) ?? null;
   const selectedModelCanRun = selectedModel ? isRunnableModel(selectedModel) : false;
   const runnableModelCount = discoveredModels.filter(isRunnableModel).length;
+  const savedProviderCount = providers.data?.length ?? 0;
 
   useEffect(() => {
     if (discoverModels.data?.default_model) {
@@ -72,25 +75,37 @@ export function SettingsPage() {
     discoverModels.mutate({
       protocol,
       api_key: apiKey,
-      base_url: mode === "developer" && baseUrl ? baseUrl : null
+      base_url: baseUrl.trim() || null
     });
+  };
+
+  const applyProviderPreset = (preset: ProviderPreset) => {
+    setActivePresetId(preset.id);
+    setProtocol(preset.protocol);
+    setBaseUrl(preset.base_url);
+    setMaxConcurrentRequests(String(preset.default_max_concurrent_requests));
+    setRequestsPerMinute(
+      preset.default_requests_per_minute ? String(preset.default_requests_per_minute) : ""
+    );
+    setSelectedModelId("");
+    discoverModels.reset();
   };
 
   const submitProvider = () => {
     if (!selectedModel || !selectedModelCanRun) return;
     const capabilities = selectedModel.capabilities ?? {};
     createProvider.mutate({
-      name: providerName.trim() || automaticProviderName(protocol, selectedModel),
+      name: providerName.trim() || automaticProviderName(protocol, selectedModel, activePreset),
       protocol,
       api_key: apiKey || null,
-      base_url: discoverModels.data?.base_url ?? (mode === "developer" && baseUrl ? baseUrl : null),
+      base_url: discoverModels.data?.base_url ?? (baseUrl.trim() || null),
       default_model: selectedModel.id,
       max_concurrent_requests: parseBoundedInteger(maxConcurrentRequests, 1, 32, 1),
-      requests_per_minute:
-        mode === "developer" ? parseOptionalBoundedInteger(requestsPerMinute, 1, 6000) : null,
+      requests_per_minute: parseOptionalBoundedInteger(requestsPerMinute, 1, 6000),
       capabilities: {
-        mode,
         model_discovery: true,
+        provider_preset_id: activePresetId || null,
+        provider_preset_name: activePreset?.name ?? null,
         selected_model_id: selectedModel.id,
         selected_model_display_name: selectedModel.display_name,
         selected_model_capabilities: capabilities,
@@ -103,11 +118,38 @@ export function SettingsPage() {
   };
 
   return (
-    <Stack gap="lg">
-      <div>
-        <Title order={1}>{t("settings.title")}</Title>
-        <Text c="dimmed">{t("settings.subtitle")}</Text>
-      </div>
+    <Stack gap="lg" className="app-page settings-page">
+      <Group justify="space-between" align="flex-end" className="page-hero">
+        <div>
+          <Text className="page-eyebrow">{t("settings.workspaceControl")}</Text>
+          <Title order={1} className="page-title">
+            {t("settings.title")}
+          </Title>
+          <Text c="dimmed" className="page-subtitle">
+            {t("settings.subtitle")}
+          </Text>
+        </div>
+        <div className="page-metrics" aria-label={t("settings.savedProviders")}>
+          <div className="metric-tile">
+            <Text size="xs" c="dimmed">
+              {t("settings.savedProviders")}
+            </Text>
+            <Text fw={750}>{savedProviderCount}</Text>
+          </div>
+          <div className="metric-tile">
+            <Text size="xs" c="dimmed">
+              {t("settings.providerPresets")}
+            </Text>
+            <Text fw={750}>{providerPresetOptions.length}</Text>
+          </div>
+          <div className="metric-tile">
+            <Text size="xs" c="dimmed">
+              {t("settings.ready")}
+            </Text>
+            <Text fw={750}>{runnableModelCount}</Text>
+          </div>
+        </div>
+      </Group>
 
       <Tabs defaultValue="models" keepMounted={false} className="settings-tabs">
         <Tabs.List>
@@ -126,30 +168,45 @@ export function SettingsPage() {
                   {t("settings.connectModelHelp", { product: productName })}
                 </Text>
               </div>
-              <SegmentedControl
-                value={mode}
-                onChange={(value) => setMode(value as SettingsMode)}
-                data={[
-                  { label: t("settings.simple"), value: "user" },
-                  { label: t("settings.advanced"), value: "developer" }
-                ]}
-              />
             </Group>
 
+            {providerPresetOptions.length > 0 ? (
+              <div className="provider-preset-grid" aria-label={t("settings.providerPresets")}>
+                {providerPresetOptions.map((preset) => {
+                  const selected = preset.id === activePresetId;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`provider-preset-choice ${
+                        selected ? "provider-preset-choice-selected" : ""
+                      }`}
+                      aria-label={preset.name}
+                      onClick={() => applyProviderPreset(preset)}
+                    >
+                      <Text fw={650}>{preset.name}</Text>
+                      <Text size="xs" c="dimmed">
+                        {preset.protocol}
+                      </Text>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
             <div className="provider-form-grid">
-              {mode === "developer" ? (
-                <TextInput
-                  label={t("settings.profileLabel")}
-                  placeholder={t("settings.optional")}
-                  value={providerName}
-                  onChange={(event) => setProviderName(event.target.value)}
-                />
-              ) : null}
+              <TextInput
+                label={t("settings.profileLabel")}
+                placeholder={activePreset?.name ?? t("settings.optional")}
+                value={providerName}
+                onChange={(event) => setProviderName(event.target.value)}
+              />
               <Select
                 label={t("settings.providerType")}
                 value={protocol}
                 onChange={(value) => {
                   if (value === "openai-compatible" || value === "anthropic-compatible") {
+                    setActivePresetId("");
                     setProtocol(value);
                     setSelectedModelId("");
                     discoverModels.reset();
@@ -172,32 +229,30 @@ export function SettingsPage() {
                   discoverModels.reset();
                 }}
               />
-              {mode === "developer" ? (
-                <>
-                  <TextInput
-                    label={t("settings.baseUrl")}
-                    placeholder="https://api.example.com/v1"
-                    value={baseUrl}
-                    onChange={(event) => {
-                      setBaseUrl(event.target.value);
-                      setSelectedModelId("");
-                      discoverModels.reset();
-                    }}
-                  />
-                  <TextInput
-                    label={t("settings.concurrency")}
-                    placeholder="1"
-                    value={maxConcurrentRequests}
-                    onChange={(event) => setMaxConcurrentRequests(event.target.value)}
-                  />
-                  <TextInput
-                    label={t("settings.requestsPerMinute")}
-                    placeholder={t("settings.optional")}
-                    value={requestsPerMinute}
-                    onChange={(event) => setRequestsPerMinute(event.target.value)}
-                  />
-                </>
-              ) : null}
+              <TextInput
+                className="provider-base-url-input"
+                label={t("settings.baseUrl")}
+                placeholder="https://api.example.com/v1"
+                value={baseUrl}
+                onChange={(event) => {
+                  setActivePresetId("");
+                  setBaseUrl(event.target.value);
+                  setSelectedModelId("");
+                  discoverModels.reset();
+                }}
+              />
+              <TextInput
+                label={t("settings.concurrency")}
+                placeholder="1"
+                value={maxConcurrentRequests}
+                onChange={(event) => setMaxConcurrentRequests(event.target.value)}
+              />
+              <TextInput
+                label={t("settings.requestsPerMinute")}
+                placeholder={t("settings.optional")}
+                value={requestsPerMinute}
+                onChange={(event) => setRequestsPerMinute(event.target.value)}
+              />
             </div>
 
             <Group mt="md">
@@ -284,7 +339,7 @@ export function SettingsPage() {
 
             <div className="saved-provider-section">
               <Title order={4}>{t("settings.savedProviders")}</Title>
-              {(providers.data ?? []).length === 0 ? (
+              {savedProviderCount === 0 ? (
                 <Text c="dimmed" size="sm" mt="xs">
                   {t("settings.noProviders")}
                 </Text>
@@ -386,89 +441,91 @@ export function SettingsPage() {
                 {t("settings.noMemory")}
               </Text>
             ) : (
-              <Table mt="md" verticalSpacing="sm" className="memory-review-table">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t("settings.source")}</Table.Th>
-                    <Table.Th>{t("settings.translation")}</Table.Th>
-                    <Table.Th>{t("library.status")}</Table.Th>
-                    <Table.Th>{t("library.updated")}</Table.Th>
-                    <Table.Th>{t("settings.actions")}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {(memory.data?.entries ?? []).map((entry) => (
-                    <Table.Tr key={entry.id}>
-                      <Table.Td>
-                        <Text size="sm" lineClamp={3}>
-                          {entry.source_markdown}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" lineClamp={3}>
-                          {entry.raw_markdown}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Stack gap={4}>
-                          <Badge color={memoryStatusColor(entry.review_status)} variant="light">
-                            {entry.review_status}
-                          </Badge>
-                          <Badge color={entry.reuse_enabled ? "green" : "gray"} variant="light">
-                            {entry.reuse_enabled ? "reuse on" : "reuse off"}
-                          </Badge>
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c="dimmed">
-                          {new Date(entry.updated_at).toLocaleString()}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="light"
-                            onClick={() =>
-                              updateMemory.mutate({
-                                entryId: entry.id,
-                                payload: { review_status: "approved", reuse_enabled: true }
-                              })
-                            }
-                          >
-                            {t("settings.approve")}
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() =>
-                              updateMemory.mutate({
-                                entryId: entry.id,
-                                payload: { reuse_enabled: false }
-                              })
-                            }
-                          >
-                            {t("settings.disable")}
-                          </Button>
-                          <Button
-                            size="xs"
-                            color="red"
-                            variant="subtle"
-                            onClick={() =>
-                              updateMemory.mutate({
-                                entryId: entry.id,
-                                payload: { review_status: "rejected", reuse_enabled: false }
-                              })
-                            }
-                          >
-                            {t("settings.reject")}
-                          </Button>
-                        </Group>
-                      </Table.Td>
+              <div className="table-scroll">
+                <Table mt="md" verticalSpacing="sm" className="data-table memory-review-table">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>{t("settings.source")}</Table.Th>
+                      <Table.Th>{t("settings.translation")}</Table.Th>
+                      <Table.Th>{t("library.status")}</Table.Th>
+                      <Table.Th>{t("library.updated")}</Table.Th>
+                      <Table.Th>{t("settings.actions")}</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {(memory.data?.entries ?? []).map((entry) => (
+                      <Table.Tr key={entry.id}>
+                        <Table.Td>
+                          <Text size="sm" lineClamp={3}>
+                            {entry.source_markdown}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" lineClamp={3}>
+                            {entry.raw_markdown}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Stack gap={4}>
+                            <Badge color={memoryStatusColor(entry.review_status)} variant="light">
+                              {entry.review_status}
+                            </Badge>
+                            <Badge color={entry.reuse_enabled ? "green" : "gray"} variant="light">
+                              {entry.reuse_enabled ? "reuse on" : "reuse off"}
+                            </Badge>
+                          </Stack>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed">
+                            {new Date(entry.updated_at).toLocaleString()}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs">
+                            <Button
+                              size="xs"
+                              variant="light"
+                              onClick={() =>
+                                updateMemory.mutate({
+                                  entryId: entry.id,
+                                  payload: { review_status: "approved", reuse_enabled: true }
+                                })
+                              }
+                            >
+                              {t("settings.approve")}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              onClick={() =>
+                                updateMemory.mutate({
+                                  entryId: entry.id,
+                                  payload: { reuse_enabled: false }
+                                })
+                              }
+                            >
+                              {t("settings.disable")}
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="subtle"
+                              onClick={() =>
+                                updateMemory.mutate({
+                                  entryId: entry.id,
+                                  payload: { review_status: "rejected", reuse_enabled: false }
+                                })
+                              }
+                            >
+                              {t("settings.reject")}
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </div>
             )}
           </div>
         </Tabs.Panel>
@@ -484,30 +541,32 @@ export function SettingsPage() {
                 {t("settings.toolsApiError")}
               </Alert>
             ) : null}
-            <Table mt="md">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>{t("settings.tool")}</Table.Th>
-                  <Table.Th>{t("library.status")}</Table.Th>
-                  <Table.Th>{t("settings.level")}</Table.Th>
-                  <Table.Th>{t("library.path")}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {(doctor.data?.capabilities ?? []).map((capability) => (
-                  <Table.Tr key={capability.tool_name}>
-                    <Table.Td>{capability.tool_name}</Table.Td>
-                    <Table.Td>
-                      <Badge color={capability.status === "available" ? "green" : "gray"}>
-                        {capability.status}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>{capability.level}</Table.Td>
-                    <Table.Td>{capability.path ?? "-"}</Table.Td>
+            <div className="table-scroll">
+              <Table mt="md" className="data-table">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t("settings.tool")}</Table.Th>
+                    <Table.Th>{t("library.status")}</Table.Th>
+                    <Table.Th>{t("settings.level")}</Table.Th>
+                    <Table.Th>{t("library.path")}</Table.Th>
                   </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
+                </Table.Thead>
+                <Table.Tbody>
+                  {(doctor.data?.capabilities ?? []).map((capability) => (
+                    <Table.Tr key={capability.tool_name}>
+                      <Table.Td>{capability.tool_name}</Table.Td>
+                      <Table.Td>
+                        <Badge color={capability.status === "available" ? "green" : "gray"}>
+                          {capability.status}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>{capability.level}</Table.Td>
+                      <Table.Td>{capability.path ?? "-"}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </div>
           </div>
         </Tabs.Panel>
       </Tabs>
@@ -515,9 +574,14 @@ export function SettingsPage() {
   );
 }
 
-function automaticProviderName(protocol: ProviderProtocol, model: ProviderModelInfo): string {
+function automaticProviderName(
+  protocol: ProviderProtocol,
+  model: ProviderModelInfo,
+  preset: ProviderPreset | null
+): string {
   const provider =
-    protocol === "anthropic-compatible" ? "Anthropic-compatible" : "OpenAI-compatible";
+    preset?.name ??
+    (protocol === "anthropic-compatible" ? "Anthropic-compatible" : "OpenAI-compatible");
   return `${provider} · ${model.display_name || model.id}`;
 }
 

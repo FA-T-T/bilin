@@ -12,8 +12,8 @@ import { router } from "./router";
 
 const queryClient = new QueryClient();
 const theme = createTheme({
-  defaultRadius: "md",
-  primaryColor: "blue",
+  defaultRadius: "sm",
+  primaryColor: "teal",
   fontFamily:
     '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
   fontFamilyMonospace:
@@ -28,7 +28,7 @@ const theme = createTheme({
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <MantineProvider defaultColorScheme="auto" theme={theme}>
+      <MantineProvider defaultColorScheme="dark" theme={theme}>
         <RouterProvider router={router} />
       </MantineProvider>
     </QueryClientProvider>

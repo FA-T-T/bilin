@@ -11,13 +11,10 @@ import {
   Modal,
   Select,
   Stack,
-  Tabs,
   Text,
   Textarea,
   TextInput,
-  Title,
-  useComputedColorScheme,
-  useMantineColorScheme
+  Title
 } from "@mantine/core";
 import {
   BookOpenText,
@@ -32,27 +29,36 @@ import {
   Languages,
   ListTree,
   MessageSquare,
-  Moon,
   RefreshCw,
   Search,
   Send,
   Sparkles,
   StickyNote,
-  Sun,
   TerminalSquare,
   Type,
   X
 } from "lucide-react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { API_BASE_URL } from "../api/client";
+import { API_BASE_URL, apiClient } from "../api/client";
 import {
   useArticleCitations,
   useArticleGlossary,
   useArticleChat,
   useArticleDocument,
+  useArticleReadingProgress,
   useArticleTranslations,
+  useArticles,
   useAskArticleQuestion,
   useAskArticleQuestionStream,
   useCreateNotePatchFromChat,
@@ -67,6 +73,8 @@ import {
   useGenerateReaderCard,
   useGenerateNotePatch,
   useImportCitationArxiv,
+  useJobSummary,
+  useLibrary,
   useNotePatches,
   useNoteTemplates,
   useProviders,
@@ -84,6 +92,7 @@ import type {
   ArticleDocument,
   ArticleExportKind,
   ArticleExportResult,
+  ArticleListItem,
   AssetRecord,
   ChatMessage,
   CitationEntry,
@@ -115,6 +124,8 @@ import { type ReaderPreferences, type ReaderViewMode, useUiStore } from "../stat
 
 const emptyReaderAssetFiles: ReaderAssetFile[] = [];
 const emptyCitationLookup: CitationLookup = {};
+const READING_PROGRESS_RECORD_INTERVAL_MS = 10_000;
+const READING_PROGRESS_MAX_IDLE_MS = 60_000;
 
 interface ReaderCardDraft {
   cardId?: string;
@@ -124,14 +135,10 @@ interface ReaderCardDraft {
   bodyMarkdown: string;
 }
 
-type ReaderToolTab = "translate" | "glossary" | "chat" | "notes" | "export";
-
 export function ReaderPage() {
   const t = useT();
   const { articleId } = useParams();
   const navigate = useNavigate();
-  const { setColorScheme } = useMantineColorScheme();
-  const colorScheme = useComputedColorScheme("light", { getInitialValueInEffect: true });
   const [searchParams] = useSearchParams();
   const libraryId = searchParams.get("libraryId") ?? undefined;
   const hasArticleContext = Boolean(libraryId && articleId);
@@ -148,9 +155,21 @@ export function ReaderPage() {
     (state) => state.setAutoTranslateOnLanguageSwitch
   );
   const providers = useProviders();
+  const jobSummary = useJobSummary();
+  const libraryArticles = useArticles(libraryId, targetLanguage);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [chatBlockUid, setChatBlockUid] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
+  const [readerArticleSearchQuery, setReaderArticleSearchQuery] = useState("");
+  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(true);
+  const [readerRightRailOpen, setReaderRightRailOpen] = useState(true);
+  const [readerTasksOpen, setReaderTasksOpen] = useState(false);
+  const [readerProvidersOpen, setReaderProvidersOpen] = useState(false);
+  const [readerAskOpen, setReaderAskOpen] = useState(true);
+  const [readerTranslateOpen, setReaderTranslateOpen] = useState(false);
+  const [readerGlossaryOpen, setReaderGlossaryOpen] = useState(false);
+  const [readerNotesOpen, setReaderNotesOpen] = useState(false);
+  const [readerExportOpen, setReaderExportOpen] = useState(false);
   const [nativeSearch, setNativeSearch] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("deep_reading");
   const [exportKind, setExportKind] = useState<ArticleExportKind>("bilingual_markdown");
@@ -170,20 +189,23 @@ export function ReaderPage() {
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [readerPreferencesOpen, setReaderPreferencesOpen] = useState(false);
   const [termWikiEnabled, setTermWikiEnabled] = useState(false);
-  const [readerToolTab, setReaderToolTab] = useState<ReaderToolTab>("translate");
-  const [readerWorkbenchOpen, setReaderWorkbenchOpen] = useState(false);
   const [readerModeMenuOpen, setReaderModeMenuOpen] = useState(false);
-  const [readerToolMenuOpen, setReaderToolMenuOpen] = useState(false);
   const [expandedReaderCardByBlock, setExpandedReaderCardByBlock] = useState<
     Record<string, string | null>
   >({});
   const [quickAskBlockUid, setQuickAskBlockUid] = useState<string | null>(null);
   const [readerCardDraft, setReaderCardDraft] = useState<ReaderCardDraft | null>(null);
-  const readerSearchInputRef = useRef<HTMLInputElement | null>(null);
   const lastExportDownloadKey = useRef<string | null>(null);
   const lastInitialHashNavigation = useRef<string | null>(null);
+  const lastSavedProgressNavigation = useRef<string | null>(null);
+  const activeBlockUidRef = useRef<string | null>(null);
+  const lastReaderActivityAt = useRef(Date.now());
+  const lastReadingProgressSampleAt = useRef(Date.now());
+  const pendingReadingProgressDeltas = useRef<Record<string, number>>({});
   const previousTargetLanguage = useRef(targetLanguage);
   const document = useArticleDocument(libraryId, articleId);
+  const library = useLibrary(libraryId);
+  const readingProgress = useArticleReadingProgress(libraryId, articleId);
   const citations = useArticleCitations(libraryId, articleId);
   const exportArticle = useExportArticle(libraryId, articleId);
   const saveObsidianClip = useSaveObsidianClip(libraryId, articleId);
@@ -218,16 +240,29 @@ export function ReaderPage() {
   const blocks = useMemo(() => document.data?.blocks ?? [], [document.data?.blocks]);
   const assets = useMemo(() => document.data?.assets ?? [], [document.data?.assets]);
   const title = articleTitle(document.data, t);
-  const navBlocks = blocks.filter((block) => block.block_type === "section");
-  const activeNavBlockUid = useMemo(
-    () => navBlockUidForActiveBlock(blocks, navBlocks, activeBlockUid),
-    [activeBlockUid, blocks, navBlocks]
+  const readerArticleItems = useMemo(() => libraryArticles.data ?? [], [libraryArticles.data]);
+  const visibleReaderArticleItems = useMemo(
+    () => filterReaderArticleItems(readerArticleItems, readerArticleSearchQuery),
+    [readerArticleItems, readerArticleSearchQuery]
   );
+  const currentArticleItem = useMemo(
+    () => readerArticleItems.find((item) => item.article_revision.id === articleId) ?? null,
+    [articleId, readerArticleItems]
+  );
+  const blockIndexByUid = useMemo(() => blockIndexMapForBlocks(blocks), [blocks]);
+  const navBlocks = useMemo(
+    () => blocks.filter((block) => block.block_type === "section"),
+    [blocks]
+  );
+  const navBlockUidByBlockUid = useMemo(() => navBlockUidMapForBlocks(blocks), [blocks]);
+  const activeNavBlockUid = activeBlockUid
+    ? (navBlockUidByBlockUid.get(activeBlockUid) ?? null)
+    : null;
   const activeBlockIndex = useMemo(() => {
     if (!activeBlockUid) return blocks.length > 0 ? 0 : -1;
-    const index = blocks.findIndex((block) => block.block_uid === activeBlockUid);
+    const index = blockIndexByUid.get(activeBlockUid) ?? -1;
     return index >= 0 ? index : blocks.length > 0 ? 0 : -1;
-  }, [activeBlockUid, blocks]);
+  }, [activeBlockUid, blockIndexByUid, blocks.length]);
   const activeBlockOrdinal = activeBlockIndex >= 0 ? activeBlockIndex + 1 : 0;
   const readerProgress =
     blocks.length > 0 ? Math.round((activeBlockOrdinal / blocks.length) * 100) : 0;
@@ -340,13 +375,10 @@ export function ReaderPage() {
         : block.source_markdown,
     [translationByBlockUid, viewMode]
   );
-  const readerSearchIndex = useMemo(
-    () => buildReaderSearchIndex(blocks, translationByBlockUid),
-    [blocks, translationByBlockUid]
-  );
+  const deferredReaderSearchQuery = useDeferredValue(readerSearchQuery);
   const readerSearchMatches = useMemo(
-    () => searchReaderIndex(readerSearchIndex, readerSearchQuery),
-    [readerSearchIndex, readerSearchQuery]
+    () => searchReaderBlocks(blocks, translationByBlockUid, deferredReaderSearchQuery),
+    [blocks, deferredReaderSearchQuery, translationByBlockUid]
   );
   const currentSearchMatch =
     readerSearchMatches.length > 0
@@ -391,13 +423,69 @@ export function ReaderPage() {
   );
   const currentReaderModeLabel =
     readerModeOptions.find((option) => option.value === viewMode)?.label ?? t("reader.modeMenu");
-  const currentReaderToolLabel = useMemo(() => {
-    if (readerToolTab === "translate") return t("reader.translate");
-    if (readerToolTab === "glossary") return t("reader.terms");
-    if (readerToolTab === "chat") return t("reader.ask");
-    if (readerToolTab === "notes") return t("reader.notes");
-    return t("reader.export");
-  }, [readerToolTab, t]);
+  const readerLibraryName = useMemo(() => {
+    const libraryName = library.data?.name?.trim();
+    return libraryName ? libraryName : t("nav.library");
+  }, [library.data?.name, t]);
+
+  const markReaderActivity = useCallback(() => {
+    lastReaderActivityAt.current = Date.now();
+  }, []);
+
+  const mergePendingReadingDeltas = useCallback((deltas: Record<string, number>) => {
+    for (const [blockUid, seconds] of Object.entries(deltas)) {
+      pendingReadingProgressDeltas.current[blockUid] =
+        (pendingReadingProgressDeltas.current[blockUid] ?? 0) + seconds;
+    }
+  }, []);
+
+  const collectReadingProgressSample = useCallback(
+    (force = false) => {
+      const now = Date.now();
+      const elapsedMs = now - lastReadingProgressSampleAt.current;
+      if (!force && elapsedMs < READING_PROGRESS_RECORD_INTERVAL_MS) return false;
+      lastReadingProgressSampleAt.current = now;
+      if (typeof globalThis.document !== "undefined" && globalThis.document.hidden && !force) {
+        return false;
+      }
+      if (now - lastReaderActivityAt.current > READING_PROGRESS_MAX_IDLE_MS) return false;
+      const blockUid = activeBlockUidRef.current;
+      if (!blockUid) return false;
+      const seconds = Math.max(
+        1,
+        Math.min(READING_PROGRESS_RECORD_INTERVAL_MS / 1000, Math.round(elapsedMs / 1000))
+      );
+      mergePendingReadingDeltas({ [blockUid]: seconds });
+      return true;
+    },
+    [mergePendingReadingDeltas]
+  );
+
+  const flushReadingProgress = useCallback(
+    (keepalive = false, collectPartialSample = false) => {
+      if (!libraryId || !articleId) return;
+      if (collectPartialSample) collectReadingProgressSample(true);
+      const blockSeconds = pendingReadingProgressDeltas.current;
+      const hasDeltas = Object.keys(blockSeconds).length > 0;
+      const activeBlockUid = activeBlockUidRef.current;
+      if (!hasDeltas && !activeBlockUid) return;
+      pendingReadingProgressDeltas.current = {};
+      void apiClient
+        .updateReadingProgress(
+          libraryId,
+          articleId,
+          {
+            active_block_uid: activeBlockUid,
+            block_seconds: blockSeconds
+          },
+          keepalive
+        )
+        .catch(() => {
+          if (!keepalive) mergePendingReadingDeltas(blockSeconds);
+        });
+    },
+    [articleId, collectReadingProgressSample, libraryId, mergePendingReadingDeltas]
+  );
 
   useEffect(() => {
     if (!selectedProviderId && providers.data?.[0]) {
@@ -410,6 +498,25 @@ export function ReaderPage() {
     setChaptersOpen(false);
     setReaderPreferencesOpen(false);
   }, [readerFeaturePreferences.termCardsEnabled, termWikiEnabled]);
+
+  useEffect(() => {
+    activeBlockUidRef.current = activeBlockUid;
+  }, [activeBlockUid]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mark = () => markReaderActivity();
+    window.addEventListener("scroll", mark, { passive: true });
+    window.addEventListener("pointermove", mark, { passive: true });
+    window.addEventListener("keydown", mark);
+    window.addEventListener("focus", mark);
+    return () => {
+      window.removeEventListener("scroll", mark);
+      window.removeEventListener("pointermove", mark);
+      window.removeEventListener("keydown", mark);
+      window.removeEventListener("focus", mark);
+    };
+  }, [markReaderActivity]);
 
   useEffect(() => {
     const templates = noteTemplates.data ?? [];
@@ -426,20 +533,43 @@ export function ReaderPage() {
     setReaderSearchCursor(0);
     setExpandedReaderCardByBlock({});
     lastInitialHashNavigation.current = null;
+    lastSavedProgressNavigation.current = null;
+    lastReadingProgressSampleAt.current = Date.now();
+    pendingReadingProgressDeltas.current = {};
   }, [articleId, targetLanguage]);
 
   useEffect(() => {
     if (blocks.length === 0 || typeof window === "undefined") return;
     const hashBlockUid = decodeURIComponent(window.location.hash.replace(/^#/, ""));
     if (!hashBlockUid) return;
-    if (!blocks.some((block) => block.block_uid === hashBlockUid)) return;
+    if (!blockIndexByUid.has(hashBlockUid)) return;
     const navigationKey = `${articleId ?? "mock"}:${hashBlockUid}`;
     if (lastInitialHashNavigation.current === navigationKey) return;
     lastInitialHashNavigation.current = navigationKey;
     setForcedBlockUid(hashBlockUid);
     setActiveBlockUid(hashBlockUid);
     setPendingNavigationBlockUid(hashBlockUid);
-  }, [articleId, blocks]);
+  }, [articleId, blockIndexByUid, blocks.length]);
+
+  useEffect(() => {
+    if (blocks.length === 0 || typeof window === "undefined") return;
+    if (window.location.hash) return;
+    const savedBlockUid = readingProgress.data?.active_block_uid;
+    if (!savedBlockUid) return;
+    if (!blockIndexByUid.has(savedBlockUid)) return;
+    const navigationKey = `${articleId ?? "mock"}:${savedBlockUid}:${readingProgress.data?.updated_at ?? ""}`;
+    if (lastSavedProgressNavigation.current === navigationKey) return;
+    lastSavedProgressNavigation.current = navigationKey;
+    setForcedBlockUid(savedBlockUid);
+    setActiveBlockUid(savedBlockUid);
+    setPendingNavigationBlockUid(savedBlockUid);
+  }, [
+    articleId,
+    blockIndexByUid,
+    blocks.length,
+    readingProgress.data?.active_block_uid,
+    readingProgress.data?.updated_at
+  ]);
 
   useEffect(() => {
     setReaderSearchCursor(0);
@@ -489,10 +619,45 @@ export function ReaderPage() {
       setActiveBlockUid(null);
       return;
     }
-    if (!activeBlockUid || !blocks.some((block) => block.block_uid === activeBlockUid)) {
+    if (!activeBlockUid || !blockIndexByUid.has(activeBlockUid)) {
       setActiveBlockUid(blocks[0].block_uid);
     }
-  }, [activeBlockUid, blocks]);
+  }, [activeBlockUid, blockIndexByUid, blocks]);
+
+  useEffect(() => {
+    if (!libraryId || !articleId || blocks.length === 0 || typeof window === "undefined") {
+      return undefined;
+    }
+    lastReadingProgressSampleAt.current = Date.now();
+    const interval = window.setInterval(() => {
+      if (collectReadingProgressSample(false)) flushReadingProgress(false);
+    }, READING_PROGRESS_RECORD_INTERVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+      flushReadingProgress(true, true);
+    };
+  }, [articleId, blocks.length, collectReadingProgressSample, flushReadingProgress, libraryId]);
+
+  useEffect(() => {
+    if (!libraryId || !articleId || typeof window === "undefined") return undefined;
+    const flushOnExit = () => flushReadingProgress(true, true);
+    const handleVisibilityChange = () => {
+      if (globalThis.document?.hidden) {
+        flushReadingProgress(true, true);
+      } else {
+        markReaderActivity();
+        lastReadingProgressSampleAt.current = Date.now();
+      }
+    };
+    window.addEventListener("pagehide", flushOnExit);
+    window.addEventListener("beforeunload", flushOnExit);
+    globalThis.document?.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushOnExit);
+      window.removeEventListener("beforeunload", flushOnExit);
+      globalThis.document?.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [articleId, flushReadingProgress, libraryId, markReaderActivity]);
 
   const translationPayload = useMemo(
     () => ({
@@ -512,15 +677,19 @@ export function ReaderPage() {
     ]
   );
 
-  const navigateToBlock = useCallback((blockUid: string) => {
-    setForcedBlockUid(blockUid);
-    setActiveBlockUid(blockUid);
-    setPendingNavigationBlockUid(blockUid);
-    if (typeof window !== "undefined") {
-      const nextUrl = `${window.location.pathname}${window.location.search}#${encodeURIComponent(blockUid)}`;
-      window.history.replaceState(null, "", nextUrl);
-    }
-  }, []);
+  const navigateToBlock = useCallback(
+    (blockUid: string) => {
+      markReaderActivity();
+      setForcedBlockUid(blockUid);
+      setActiveBlockUid(blockUid);
+      setPendingNavigationBlockUid(blockUid);
+      if (typeof window !== "undefined") {
+        const nextUrl = `${window.location.pathname}${window.location.search}#${encodeURIComponent(blockUid)}`;
+        window.history.replaceState(null, "", nextUrl);
+      }
+    },
+    [markReaderActivity]
+  );
 
   const moveReaderSearch = useCallback(
     (delta: number) => {
@@ -533,26 +702,20 @@ export function ReaderPage() {
     [navigateToBlock, readerSearchCursor, readerSearchMatches]
   );
 
-  const jumpToCurrentReaderSearchMatch = useCallback(() => {
-    if (!currentSearchMatch) return;
-    navigateToBlock(currentSearchMatch.blockUid);
-  }, [currentSearchMatch, navigateToBlock]);
-
-  const clearReaderSearch = useCallback(() => {
-    setReaderSearchQuery("");
-    setReaderSearchCursor(0);
-    setForcedBlockUid(null);
-  }, []);
-
   const openCurrentLibrary = useCallback(() => {
     navigate(libraryId ? `/libraries/${libraryId}` : "/");
   }, [libraryId, navigate]);
 
-  const openReaderTool = useCallback((tab: ReaderToolTab) => {
-    setReaderToolTab(tab);
-    setReaderWorkbenchOpen(true);
-    setReaderToolMenuOpen(false);
-  }, []);
+  const switchReaderArticle = useCallback(
+    (item: ArticleListItem) => {
+      if (!libraryId) return;
+      const nextArticleId = item.article_revision.id;
+      if (nextArticleId === articleId) return;
+      flushReadingProgress(true, true);
+      navigate(`/articles/${nextArticleId}?libraryId=${libraryId}`);
+    },
+    [articleId, flushReadingProgress, libraryId, navigate]
+  );
 
   const openTaskDrawerForBackgroundWork = useCallback(() => {
     if (readerFeaturePreferences.taskNotificationsEnabled) {
@@ -560,9 +723,13 @@ export function ReaderPage() {
     }
   }, [openTaskDrawer, readerFeaturePreferences.taskNotificationsEnabled]);
 
-  const handleActiveBlockChange = useCallback((blockUid: string) => {
-    setActiveBlockUid((current) => (current === blockUid ? current : blockUid));
-  }, []);
+  const handleActiveBlockChange = useCallback(
+    (blockUid: string) => {
+      markReaderActivity();
+      setActiveBlockUid((current) => (current === blockUid ? current : blockUid));
+    },
+    [markReaderActivity]
+  );
 
   const queueArticleTranslation = useCallback(() => {
     if (!selectedProviderId) return;
@@ -1329,9 +1496,6 @@ export function ReaderPage() {
       </Modal>
       <main className="reader-main">
         <section className="reader-command-center" aria-label={t("reader.readingControls")}>
-          <div className="reader-command-title" aria-hidden="true">
-            Ilios / 衔牍 · Research Paper Reader
-          </div>
           <div className="reader-command-actions">
             <div className="reader-command-zone reader-command-left">
               <Button
@@ -1341,158 +1505,44 @@ export function ReaderPage() {
                 leftSection={<BookMarked size={15} aria-hidden="true" />}
                 onClick={openCurrentLibrary}
               >
-                {t("nav.library")}
+                {readerLibraryName}
               </Button>
-              <div className="reader-search-dock" role="search">
-                <TextInput
-                  ref={readerSearchInputRef}
-                  className="reader-search-input"
-                  aria-label={t("reader.searchPaper")}
-                  placeholder={t("reader.searchPlaceholder")}
-                  value={readerSearchQuery}
-                  leftSection={<Search size={14} aria-hidden="true" />}
-                  rightSection={
-                    readerSearchQuery ? (
-                      <ActionIcon
-                        aria-label={t("reader.searchClear")}
-                        size="sm"
-                        variant="subtle"
-                        onClick={clearReaderSearch}
-                      >
-                        <X size={13} aria-hidden="true" />
-                      </ActionIcon>
-                    ) : null
-                  }
-                  onChange={(event) => setReaderSearchQuery(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    if (event.shiftKey) {
-                      moveReaderSearch(-1);
-                    } else {
-                      jumpToCurrentReaderSearchMatch();
-                    }
-                  }}
-                />
-                {readerSearchQuery ? (
-                  <Group gap={4} wrap="nowrap" className="reader-search-actions">
-                    <ActionIcon
-                      aria-label={t("reader.searchPrevious")}
-                      size="sm"
-                      variant="subtle"
-                      disabled={readerSearchMatches.length === 0}
-                      onClick={() => moveReaderSearch(-1)}
-                    >
-                      <ChevronLeft size={13} aria-hidden="true" />
-                    </ActionIcon>
-                    <ActionIcon
-                      aria-label={t("reader.searchNext")}
-                      size="sm"
-                      variant="subtle"
-                      disabled={readerSearchMatches.length === 0}
-                      onClick={() => moveReaderSearch(1)}
-                    >
-                      <ChevronRight size={13} aria-hidden="true" />
-                    </ActionIcon>
-                  </Group>
-                ) : null}
-              </div>
             </div>
-            <div
-              data-testid="reader-view-mode"
-              className="reader-mode-list"
-              aria-label={t("reader.readingControls")}
-            >
-              <Button
-                aria-label={t("reader.modeMenu")}
-                aria-expanded={readerModeMenuOpen}
-                className="reader-mode-trigger"
-                leftSection={<BookOpenText size={15} aria-hidden="true" />}
-                rightSection={<ChevronDown size={14} aria-hidden="true" />}
-                size="xs"
-                variant="subtle"
-                onClick={() => setReaderModeMenuOpen((open) => !open)}
-              >
-                {currentReaderModeLabel}
-              </Button>
-              <Collapse className="reader-mode-popover" in={readerModeMenuOpen}>
-                <div className="reader-mode-options">
-                  {readerModeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={viewMode === option.value}
-                      onClick={() => {
-                        setReaderViewMode(option.value);
-                        setReaderModeMenuOpen(false);
-                      }}
-                    >
-                      {option.icon}
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </Collapse>
-            </div>
+            <div className="reader-command-title">Ilios / 衔牍 · Research Paper Reader</div>
             <div className="reader-command-zone reader-command-right">
-              <div className="reader-tool-menu" aria-label={t("reader.readerTools")}>
+              <div
+                data-testid="reader-view-mode"
+                className="reader-mode-list"
+                aria-label={t("reader.readingControls")}
+              >
                 <Button
-                  aria-expanded={readerToolMenuOpen}
-                  className="reader-chrome-button reader-tool-button"
-                  variant={readerToolMenuOpen || readerWorkbenchOpen ? "light" : "subtle"}
-                  size="xs"
-                  leftSection={<Sparkles size={15} aria-hidden="true" />}
+                  aria-label={t("reader.modeMenu")}
+                  aria-expanded={readerModeMenuOpen}
+                  className="reader-mode-trigger"
+                  leftSection={<BookOpenText size={15} aria-hidden="true" />}
                   rightSection={<ChevronDown size={14} aria-hidden="true" />}
-                  onClick={() => setReaderToolMenuOpen((open) => !open)}
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => setReaderModeMenuOpen((open) => !open)}
                 >
-                  {t("reader.readerTools")}
+                  {currentReaderModeLabel}
                 </Button>
-                <Collapse className="reader-tool-popover" in={readerToolMenuOpen}>
-                  <div className="reader-tool-options">
-                    <button type="button" onClick={() => openReaderTool("chat")}>
-                      <MessageSquare size={15} aria-hidden="true" />
-                      <span>{t("reader.ask")}</span>
-                    </button>
-                    <button type="button" onClick={() => openReaderTool("translate")}>
-                      <Languages size={15} aria-hidden="true" />
-                      <span>{t("reader.translate")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={readerFeaturePreferences.termCardsEnabled}
-                      onClick={() => {
-                        const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
-                        setReaderFeaturePreference("termCardsEnabled", nextEnabled);
-                        setTermWikiEnabled(nextEnabled);
-                        setReaderToolMenuOpen(false);
-                      }}
-                    >
-                      <StickyNote size={15} aria-hidden="true" />
-                      <span>{t("reader.termWiki")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!hasArticleContext || extractReaderCards.isPending}
-                      onClick={() => {
-                        runCardExtraction();
-                        setReaderToolMenuOpen(false);
-                      }}
-                    >
-                      <Sparkles size={15} aria-hidden="true" />
-                      <span>{t("reader.extractCards")}</span>
-                    </button>
-                    <button type="button" onClick={() => openReaderTool("glossary")}>
-                      <BookMarked size={15} aria-hidden="true" />
-                      <span>{t("reader.terms")}</span>
-                    </button>
-                    <button type="button" onClick={() => openReaderTool("notes")}>
-                      <FileText size={15} aria-hidden="true" />
-                      <span>{t("reader.notes")}</span>
-                    </button>
-                    <button type="button" onClick={() => openReaderTool("export")}>
-                      <Download size={15} aria-hidden="true" />
-                      <span>{t("reader.export")}</span>
-                    </button>
+                <Collapse className="reader-mode-popover" in={readerModeMenuOpen}>
+                  <div className="reader-mode-options">
+                    {readerModeOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={viewMode === option.value}
+                        onClick={() => {
+                          setReaderViewMode(option.value);
+                          setReaderModeMenuOpen(false);
+                        }}
+                      >
+                        {option.icon}
+                        <span>{option.label}</span>
+                      </button>
+                    ))}
                   </div>
                 </Collapse>
               </div>
@@ -1508,28 +1558,6 @@ export function ReaderPage() {
               >
                 {t("reader.preferences")}
               </Button>
-              <ActionIcon
-                aria-label={t("nav.openTasks")}
-                className="reader-more-button"
-                variant="subtle"
-                size="sm"
-                onClick={openTaskDrawer}
-              >
-                <TerminalSquare size={16} aria-hidden="true" />
-              </ActionIcon>
-              <ActionIcon
-                aria-label={t("nav.toggleTheme")}
-                className="reader-more-button"
-                variant="subtle"
-                size="sm"
-                onClick={() => setColorScheme(colorScheme === "dark" ? "light" : "dark")}
-              >
-                {colorScheme === "dark" ? (
-                  <Sun size={16} aria-hidden="true" />
-                ) : (
-                  <Moon size={16} aria-hidden="true" />
-                )}
-              </ActionIcon>
             </div>
           </div>
           <Collapse className="reader-preferences-flyout" in={readerPreferencesOpen}>
@@ -1537,250 +1565,479 @@ export function ReaderPage() {
           </Collapse>
         </section>
         <section
-          className={`reader-workbench${readerWorkbenchOpen ? " reader-workbench-open" : ""}`}
-          aria-label={currentReaderToolLabel}
+          className={`reader-mosaic${readerArticleRailOpen ? "" : " reader-mosaic-left-collapsed"}${
+            readerRightRailOpen ? "" : " reader-mosaic-right-collapsed"
+          }`}
         >
-          <Tabs
-            value={readerToolTab}
-            onChange={(value) => {
-              if (!value) return;
-              setReaderToolTab(value as ReaderToolTab);
-              setReaderWorkbenchOpen(true);
-            }}
-            keepMounted={false}
+          <aside
+            className={`reader-side-rail reader-article-rail${
+              readerArticleRailOpen ? "" : " reader-side-rail-collapsed"
+            }`}
+            aria-label={t("reader.articleSwitcher")}
           >
-            {readerWorkbenchOpen ? (
-              <div className="reader-workbench-header">
-                <Text size="sm" fw={650}>
-                  {currentReaderToolLabel}
-                </Text>
-                <ActionIcon
-                  aria-label={t("reader.closeToolPanel")}
-                  variant="subtle"
-                  size="sm"
-                  onClick={() => setReaderWorkbenchOpen(false)}
-                >
-                  <X size={15} aria-hidden="true" />
-                </ActionIcon>
+            {readerArticleRailOpen ? (
+              <>
+                <div className="reader-rail-header">
+                  <div>
+                    <Text fw={720} size="sm">
+                      {t("reader.articleSwitcher")}
+                    </Text>
+                    <Text c="dimmed" size="xs" lineClamp={1}>
+                      {currentArticleItem
+                        ? readerArticleTitle(currentArticleItem)
+                        : t("reader.noCurrentArticle")}
+                    </Text>
+                  </div>
+                  <ActionIcon
+                    aria-label={t("reader.collapseArticles")}
+                    variant="subtle"
+                    size="sm"
+                    onClick={() => setReaderArticleRailOpen(false)}
+                  >
+                    <ChevronLeft size={15} aria-hidden="true" />
+                  </ActionIcon>
+                </div>
+                <TextInput
+                  className="reader-article-switch-search"
+                  aria-label={t("reader.searchLibraryArticles")}
+                  placeholder={t("reader.searchLibraryArticles")}
+                  value={readerArticleSearchQuery}
+                  leftSection={<Search size={14} aria-hidden="true" />}
+                  onChange={(event) => setReaderArticleSearchQuery(event.currentTarget.value)}
+                />
+                <div className="reader-article-switch-list">
+                  {libraryArticles.isLoading ? (
+                    <Group gap="xs" className="reader-side-loading">
+                      <Loader size="xs" />
+                      <Text c="dimmed" size="xs">
+                        {t("reader.loadingArticles")}
+                      </Text>
+                    </Group>
+                  ) : null}
+                  {visibleReaderArticleItems.map((item) => {
+                    const isActive = item.article_revision.id === articleId;
+                    return (
+                      <button
+                        key={item.article_revision.id}
+                        type="button"
+                        className="reader-article-switch-item"
+                        aria-current={isActive ? "page" : undefined}
+                        data-active={isActive || undefined}
+                        onClick={() => switchReaderArticle(item)}
+                      >
+                        <span className="reader-article-switch-title">
+                          {readerArticleTitle(item)}
+                        </span>
+                        <span className="reader-article-switch-meta">
+                          {readerArticleSourceLabel(item)} · {readerArticleProgressLabel(item)}
+                        </span>
+                        <span className="reader-article-switch-progress" aria-hidden="true">
+                          <span
+                            style={{
+                              width: `${readerArticleProgressPercent(item)}%`
+                            }}
+                          />
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {!libraryArticles.isLoading && visibleReaderArticleItems.length === 0 ? (
+                    <Text c="dimmed" size="xs" className="reader-side-empty">
+                      {t("reader.noLibraryArticles")}
+                    </Text>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="reader-rail-collapsed-button"
+                aria-label={t("reader.expandArticles")}
+                onClick={() => setReaderArticleRailOpen(true)}
+              >
+                <ChevronRight size={16} aria-hidden="true" />
+                <span>{t("reader.articlesShort")}</span>
+              </button>
+            )}
+          </aside>
+          <section className="reader-paper-shell" aria-label={title}>
+            {readerFeaturePreferences.watermarkVisible ? (
+              <p className="reader-content-watermark">{t("reader.contentWatermark")}</p>
+            ) : null}
+            {readerActionMessage ? (
+              <div className="reader-action-status" role="status">
+                <Check size={15} aria-hidden="true" />
+                {readerActionMessage}
               </div>
             ) : null}
-            <Tabs.Panel value="translate">
-              <div className="panel reader-translation-panel">
-                <Group align="end">
-                  <Select
-                    label={t("reader.provider")}
-                    placeholder={t("reader.configureProvider")}
-                    value={selectedProviderId}
-                    onChange={setSelectedProviderId}
-                    data={(providers.data ?? []).map((provider) => ({
-                      label: `${provider.name} · ${provider.default_model ?? t("reader.noModel")}`,
-                      value: provider.id
-                    }))}
-                  />
-                  <Select
-                    label={t("reader.targetLanguage")}
-                    data={TRANSLATION_TARGET_LOCALES.map((item) => ({
-                      value: item.value,
-                      label: item.nativeLabel
-                    }))}
-                    searchable
-                    value={targetLanguage}
-                    onChange={(value) => {
-                      if (value) setTargetLanguage(value);
-                    }}
-                  />
-                  <Button
-                    leftSection={<Languages size={16} />}
-                    onClick={queueArticleTranslation}
-                    loading={translateArticle.isPending}
-                    disabled={!selectedProviderId || !targetLanguage.trim() || blocks.length === 0}
+            {!hasArticleContext ? (
+              <Alert color="yellow" mb="md">
+                {t("reader.noArticleContext")}
+              </Alert>
+            ) : null}
+            {hasArticleContext && document.isLoading ? (
+              <Group>
+                <Loader size="sm" />
+                <Text c="dimmed">{t("reader.loadingDocument")}</Text>
+              </Group>
+            ) : null}
+            {hasArticleContext && document.isError ? (
+              <Alert color="red" mb="md">
+                {t("reader.documentLoadError")}
+              </Alert>
+            ) : null}
+            <ReaderBlockList
+              blocks={blocks}
+              activeBlockUid={activeBlockUid}
+              fontScale={readerPreferences.fontScale}
+              paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
+              forcedBlockUid={forcedBlockUid}
+              searchTargetBlockUid={currentSearchBlockUid}
+              getBlockText={blockTextForPlaceholder}
+              onActiveBlockChange={handleActiveBlockChange}
+              onNavigateToBlock={navigateToBlock}
+              renderBlock={renderReaderBlock}
+            />
+          </section>
+          <aside
+            className={`reader-side-rail reader-right-rail${
+              readerRightRailOpen ? "" : " reader-side-rail-collapsed"
+            }`}
+            aria-label={t("reader.workspaceRail")}
+          >
+            {readerRightRailOpen ? (
+              <>
+                <div className="reader-rail-header">
+                  <div>
+                    <Text fw={720} size="sm">
+                      {t("reader.workspaceRail")}
+                    </Text>
+                    <Text c="dimmed" size="xs">
+                      {t("reader.workspaceRailHelp")}
+                    </Text>
+                  </div>
+                  <ActionIcon
+                    aria-label={t("reader.collapseRightRail")}
+                    variant="subtle"
+                    size="sm"
+                    onClick={() => setReaderRightRailOpen(false)}
                   >
-                    {t("reader.translatePaper")}
-                  </Button>
-                </Group>
-                <Checkbox
-                  mt="sm"
-                  checked={autoTranslateOnLanguageSwitch}
-                  label={t("reader.autoTranslateOnLanguageSwitch")}
-                  onChange={(event) =>
-                    setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)
+                    <ChevronRight size={15} aria-hidden="true" />
+                  </ActionIcon>
+                </div>
+                <ReaderSideTile
+                  title={t("nav.tasks")}
+                  icon={<TerminalSquare size={15} aria-hidden="true" />}
+                  open={readerTasksOpen}
+                  onToggle={() => setReaderTasksOpen((open) => !open)}
+                  badge={
+                    <Badge size="sm" variant="light">
+                      {jobSummary.data?.active ?? 0}
+                    </Badge>
                   }
-                />
-                <Text c="dimmed" size="sm" mt="sm">
-                  {t("reader.translationHelp")}
-                </Text>
-                {translateArticle.data ? (
-                  <Text c="dimmed" size="sm" mt="xs">
-                    {t("reader.translationQueued", {
-                      jobs: translateArticle.data.jobs_created,
-                      cached: translateArticle.data.cached_blocks
-                    })}
-                  </Text>
-                ) : null}
-                {translateArticle.isError || translateBlock.isError ? (
-                  <Text c="red" size="sm" mt="xs">
-                    {t("reader.translationQueueError")}
-                  </Text>
-                ) : null}
-              </div>
-            </Tabs.Panel>
-
-            <Tabs.Panel value="glossary">
-              <GlossaryPanel
-                terms={glossary.data?.terms ?? []}
-                targetLanguage={targetLanguage}
-                activeVersion={glossary.data?.active_version ?? "glossary:none"}
-                affectedBlockUids={glossary.data?.affected_block_uids ?? []}
-                isLoading={glossary.isLoading}
-                isExtracting={extractGlossary.isPending}
-                isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
-                canRetranslate={Boolean(selectedProviderId)}
-                onExtract={() =>
-                  extractGlossary.mutate({
-                    target_language: targetLanguage,
-                    limit: 40
-                  })
-                }
-                onCreate={(sourceTerm, targetTerm) =>
-                  createGlossaryTerm.mutate({
-                    source_term: sourceTerm,
-                    target_term: targetTerm,
-                    language_direction: `en->${targetLanguage}`,
-                    status: "active",
-                    metadata: { target_language: targetLanguage }
-                  })
-                }
-                onConfirm={(term, targetTerm) =>
-                  updateGlossaryTerm.mutate({
-                    termId: term.id,
-                    payload: {
-                      target_term: targetTerm,
-                      status: "active",
-                      metadata: { target_language: targetLanguage }
+                >
+                  <div className="reader-dock-task-grid">
+                    <span>{t("task.statusQueued", { count: jobSummary.data?.queued ?? 0 })}</span>
+                    <span>{t("task.statusRunning", { count: jobSummary.data?.running ?? 0 })}</span>
+                    <span>
+                      {t("task.statusSucceeded", { count: jobSummary.data?.succeeded ?? 0 })}
+                    </span>
+                    <span>{t("task.statusFailed", { count: jobSummary.data?.failed ?? 0 })}</span>
+                  </div>
+                  <Button
+                    fullWidth
+                    size="xs"
+                    variant="light"
+                    leftSection={<TerminalSquare size={14} aria-hidden="true" />}
+                    onClick={openTaskDrawer}
+                  >
+                    {t("reader.manageTasks")}
+                  </Button>
+                </ReaderSideTile>
+                <ReaderSideTile
+                  title={t("reader.providerPanel")}
+                  icon={<Sparkles size={15} aria-hidden="true" />}
+                  open={readerProvidersOpen}
+                  onToggle={() => setReaderProvidersOpen((open) => !open)}
+                  badge={
+                    <Badge size="sm" variant="light">
+                      {providers.data?.length ?? 0}
+                    </Badge>
+                  }
+                >
+                  <Stack gap="xs">
+                    <Select
+                      label={t("reader.provider")}
+                      placeholder={t("reader.configureProvider")}
+                      value={selectedProviderId}
+                      onChange={setSelectedProviderId}
+                      data={(providers.data ?? []).map((provider) => ({
+                        label: `${provider.name} · ${
+                          provider.default_model ?? t("reader.noModel")
+                        }`,
+                        value: provider.id
+                      }))}
+                    />
+                    <Select
+                      label={t("reader.targetLanguage")}
+                      data={TRANSLATION_TARGET_LOCALES.map((item) => ({
+                        value: item.value,
+                        label: item.nativeLabel
+                      }))}
+                      searchable
+                      value={targetLanguage}
+                      onChange={(value) => {
+                        if (value) setTargetLanguage(value);
+                      }}
+                    />
+                    {(providers.data ?? []).slice(0, 3).map((provider) => (
+                      <div
+                        className="reader-provider-row"
+                        data-active={provider.id === selectedProviderId || undefined}
+                        key={provider.id}
+                      >
+                        <Text size="sm" fw={620} lineClamp={1}>
+                          {provider.name}
+                        </Text>
+                        <Text c="dimmed" size="xs" lineClamp={1}>
+                          {provider.default_model ?? t("reader.noModel")}
+                        </Text>
+                      </div>
+                    ))}
+                    {(providers.data ?? []).length === 0 ? (
+                      <Text c="dimmed" size="xs">
+                        {t("library.noProviderConfigured")}
+                      </Text>
+                    ) : null}
+                    <Button size="xs" variant="subtle" onClick={() => navigate("/settings")}>
+                      {t("nav.settings")}
+                    </Button>
+                  </Stack>
+                </ReaderSideTile>
+                <ReaderSideTile
+                  className="reader-ask-tile"
+                  title={t("reader.askPanel")}
+                  icon={<MessageSquare size={15} aria-hidden="true" />}
+                  open={readerAskOpen}
+                  onToggle={() => setReaderAskOpen((open) => !open)}
+                >
+                  <ChatPanel
+                    messages={chat.data?.messages ?? []}
+                    citedBlocks={
+                      streamingCitedBlocks.length > 0
+                        ? streamingCitedBlocks
+                        : (askQuestion.data?.cited_blocks ?? [])
                     }
-                  })
-                }
-                onRetranslateAffected={queueAffectedRetranslation}
-              />
-            </Tabs.Panel>
-
-            <Tabs.Panel value="chat">
-              <ChatPanel
-                messages={chat.data?.messages ?? []}
-                citedBlocks={
-                  streamingCitedBlocks.length > 0
-                    ? streamingCitedBlocks
-                    : (askQuestion.data?.cited_blocks ?? [])
-                }
-                streamingAnswer={streamingAnswer}
-                selectedBlockUid={chatBlockUid}
-                question={question}
-                nativeSearch={nativeSearch}
-                nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
-                isAsking={askQuestion.isPending}
-                isCreatingNotePatch={createNotePatchFromChat.isPending}
-                canAsk={Boolean(selectedProviderId)}
-                canCreateNotePatch={Boolean(selectedProviderId)}
-                error={askQuestion.isError}
-                onQuestionChange={setQuestion}
-                onNativeSearchChange={setNativeSearch}
-                onClearBlock={() => setChatBlockUid(null)}
-                onAsk={submitQuestion}
-                onCreateNotePatch={createNotePatchFromMessage}
-              />
-            </Tabs.Panel>
-
-            <Tabs.Panel value="notes">
-              <NotesPanel
-                templates={noteTemplates.data ?? []}
-                patches={notePatches.data?.patches ?? []}
-                selectedTemplateId={selectedTemplateId}
-                isLoading={noteTemplates.isLoading || notePatches.isLoading}
-                isGenerating={generateNotePatch.isPending}
-                isSavingPatch={updateNotePatch.isPending}
-                isSavingTemplate={createNoteTemplate.isPending}
-                isRejecting={rejectNotePatch.isPending}
-                canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
-                error={
-                  generateNotePatch.isError ||
-                  createNoteTemplate.isError ||
-                  updateNotePatch.isError ||
-                  rejectNotePatch.isError
-                }
-                onTemplateChange={setSelectedTemplateId}
-                onGenerate={queueNoteGeneration}
-                onCreateTemplate={(name, description) =>
-                  createNoteTemplate.mutate(
-                    { name, description, metadata: { source: "reader" } },
-                    { onSuccess: (template) => setSelectedTemplateId(template.id) }
-                  )
-                }
-                onSavePatch={(patchId, payload) => updateNotePatch.mutate({ patchId, payload })}
-                onAcceptEdited={(patchId, payload) =>
-                  updateNotePatch.mutate({
-                    patchId,
-                    payload: {
-                      ...payload,
-                      status: "accepted"
+                    streamingAnswer={streamingAnswer}
+                    selectedBlockUid={chatBlockUid}
+                    question={question}
+                    nativeSearch={nativeSearch}
+                    nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
+                    isAsking={askQuestion.isPending}
+                    isCreatingNotePatch={createNotePatchFromChat.isPending}
+                    canAsk={Boolean(selectedProviderId)}
+                    canCreateNotePatch={Boolean(selectedProviderId)}
+                    error={askQuestion.isError}
+                    onQuestionChange={setQuestion}
+                    onNativeSearchChange={setNativeSearch}
+                    onClearBlock={() => setChatBlockUid(null)}
+                    onAsk={submitQuestion}
+                    onCreateNotePatch={createNotePatchFromMessage}
+                  />
+                </ReaderSideTile>
+                <ReaderSideTile
+                  className="reader-tool-tile"
+                  title={t("reader.translate")}
+                  icon={<Languages size={15} aria-hidden="true" />}
+                  open={readerTranslateOpen}
+                  onToggle={() => setReaderTranslateOpen((open) => !open)}
+                >
+                  <div className="panel reader-translation-panel">
+                    <Stack gap="sm">
+                      <Button
+                        fullWidth
+                        leftSection={<Languages size={16} />}
+                        onClick={queueArticleTranslation}
+                        loading={translateArticle.isPending}
+                        disabled={
+                          !selectedProviderId || !targetLanguage.trim() || blocks.length === 0
+                        }
+                      >
+                        {t("reader.translatePaper")}
+                      </Button>
+                      <Checkbox
+                        checked={autoTranslateOnLanguageSwitch}
+                        label={t("reader.autoTranslateOnLanguageSwitch")}
+                        onChange={(event) =>
+                          setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)
+                        }
+                      />
+                      <Text c="dimmed" size="sm">
+                        {t("reader.translationHelp")}
+                      </Text>
+                      {translateArticle.data ? (
+                        <Text c="dimmed" size="sm">
+                          {t("reader.translationQueued", {
+                            jobs: translateArticle.data.jobs_created,
+                            cached: translateArticle.data.cached_blocks
+                          })}
+                        </Text>
+                      ) : null}
+                      {translateArticle.isError || translateBlock.isError ? (
+                        <Text c="red" size="sm">
+                          {t("reader.translationQueueError")}
+                        </Text>
+                      ) : null}
+                    </Stack>
+                  </div>
+                </ReaderSideTile>
+                <ReaderSideTile
+                  className="reader-tool-tile"
+                  title={t("reader.terms")}
+                  icon={<BookMarked size={15} aria-hidden="true" />}
+                  open={readerGlossaryOpen}
+                  onToggle={() => setReaderGlossaryOpen((open) => !open)}
+                >
+                  <GlossaryPanel
+                    terms={glossary.data?.terms ?? []}
+                    targetLanguage={targetLanguage}
+                    activeVersion={glossary.data?.active_version ?? "glossary:none"}
+                    affectedBlockUids={glossary.data?.affected_block_uids ?? []}
+                    isLoading={glossary.isLoading}
+                    isExtracting={extractGlossary.isPending}
+                    isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
+                    canRetranslate={Boolean(selectedProviderId)}
+                    onExtract={() =>
+                      extractGlossary.mutate({
+                        target_language: targetLanguage,
+                        limit: 40
+                      })
                     }
-                  })
-                }
-                onReject={(patchId) => rejectNotePatch.mutate(patchId)}
-              />
-            </Tabs.Panel>
-
-            <Tabs.Panel value="export">
-              <ExportPanel
-                exportKind={exportKind}
-                targetLanguage={targetLanguage}
-                result={exportResult}
-                isExporting={exportArticle.isPending}
-                error={exportArticle.isError}
-                downloadUrl={currentExportDownloadUrl}
-                onExportKindChange={setExportKind}
-                onExport={queueExport}
-              />
-            </Tabs.Panel>
-          </Tabs>
-        </section>
-        <section className="reader-paper-shell" aria-label={title}>
-          {readerFeaturePreferences.watermarkVisible ? (
-            <p className="reader-content-watermark">{t("reader.contentWatermark")}</p>
-          ) : null}
-          {readerActionMessage ? (
-            <div className="reader-action-status" role="status">
-              <Check size={15} aria-hidden="true" />
-              {readerActionMessage}
-            </div>
-          ) : null}
-          {!hasArticleContext ? (
-            <Alert color="yellow" mb="md">
-              {t("reader.noArticleContext")}
-            </Alert>
-          ) : null}
-          {hasArticleContext && document.isLoading ? (
-            <Group>
-              <Loader size="sm" />
-              <Text c="dimmed">{t("reader.loadingDocument")}</Text>
-            </Group>
-          ) : null}
-          {hasArticleContext && document.isError ? (
-            <Alert color="red" mb="md">
-              {t("reader.documentLoadError")}
-            </Alert>
-          ) : null}
-          <ReaderBlockList
-            blocks={blocks}
-            activeBlockUid={activeBlockUid}
-            fontScale={readerPreferences.fontScale}
-            paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
-            forcedBlockUid={forcedBlockUid}
-            searchTargetBlockUid={currentSearchBlockUid}
-            getBlockText={blockTextForPlaceholder}
-            onActiveBlockChange={handleActiveBlockChange}
-            onNavigateToBlock={navigateToBlock}
-            renderBlock={renderReaderBlock}
-          />
+                    onCreate={(sourceTerm, targetTerm) =>
+                      createGlossaryTerm.mutate({
+                        source_term: sourceTerm,
+                        target_term: targetTerm,
+                        language_direction: `en->${targetLanguage}`,
+                        status: "active",
+                        metadata: { target_language: targetLanguage }
+                      })
+                    }
+                    onConfirm={(term, targetTerm) =>
+                      updateGlossaryTerm.mutate({
+                        termId: term.id,
+                        payload: {
+                          target_term: targetTerm,
+                          status: "active",
+                          metadata: { target_language: targetLanguage }
+                        }
+                      })
+                    }
+                    onRetranslateAffected={queueAffectedRetranslation}
+                  />
+                </ReaderSideTile>
+                <ReaderSideTile
+                  className="reader-tool-tile"
+                  title={t("reader.notes")}
+                  icon={<FileText size={15} aria-hidden="true" />}
+                  open={readerNotesOpen}
+                  onToggle={() => setReaderNotesOpen((open) => !open)}
+                >
+                  <Stack gap="sm">
+                    <Group gap="xs" grow>
+                      <Button
+                        size="xs"
+                        variant={readerFeaturePreferences.termCardsEnabled ? "light" : "subtle"}
+                        leftSection={<StickyNote size={14} aria-hidden="true" />}
+                        onClick={() => {
+                          const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
+                          setReaderFeaturePreference("termCardsEnabled", nextEnabled);
+                          setTermWikiEnabled(nextEnabled);
+                        }}
+                      >
+                        {t("reader.termWiki")}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        leftSection={<Sparkles size={14} aria-hidden="true" />}
+                        disabled={!hasArticleContext || extractReaderCards.isPending}
+                        loading={extractReaderCards.isPending}
+                        onClick={runCardExtraction}
+                      >
+                        {t("reader.extractCards")}
+                      </Button>
+                    </Group>
+                    <NotesPanel
+                      templates={noteTemplates.data ?? []}
+                      patches={notePatches.data?.patches ?? []}
+                      selectedTemplateId={selectedTemplateId}
+                      isLoading={noteTemplates.isLoading || notePatches.isLoading}
+                      isGenerating={generateNotePatch.isPending}
+                      isSavingPatch={updateNotePatch.isPending}
+                      isSavingTemplate={createNoteTemplate.isPending}
+                      isRejecting={rejectNotePatch.isPending}
+                      canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
+                      error={
+                        generateNotePatch.isError ||
+                        createNoteTemplate.isError ||
+                        updateNotePatch.isError ||
+                        rejectNotePatch.isError
+                      }
+                      onTemplateChange={setSelectedTemplateId}
+                      onGenerate={queueNoteGeneration}
+                      onCreateTemplate={(name, description) =>
+                        createNoteTemplate.mutate(
+                          { name, description, metadata: { source: "reader" } },
+                          { onSuccess: (template) => setSelectedTemplateId(template.id) }
+                        )
+                      }
+                      onSavePatch={(patchId, payload) =>
+                        updateNotePatch.mutate({ patchId, payload })
+                      }
+                      onAcceptEdited={(patchId, payload) =>
+                        updateNotePatch.mutate({
+                          patchId,
+                          payload: {
+                            ...payload,
+                            status: "accepted"
+                          }
+                        })
+                      }
+                      onReject={(patchId) => rejectNotePatch.mutate(patchId)}
+                    />
+                  </Stack>
+                </ReaderSideTile>
+                <ReaderSideTile
+                  className="reader-tool-tile"
+                  title={t("reader.export")}
+                  icon={<Download size={15} aria-hidden="true" />}
+                  open={readerExportOpen}
+                  onToggle={() => setReaderExportOpen((open) => !open)}
+                >
+                  <ExportPanel
+                    exportKind={exportKind}
+                    targetLanguage={targetLanguage}
+                    result={exportResult}
+                    isExporting={exportArticle.isPending}
+                    error={exportArticle.isError}
+                    downloadUrl={currentExportDownloadUrl}
+                    onExportKindChange={setExportKind}
+                    onExport={queueExport}
+                  />
+                </ReaderSideTile>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="reader-rail-collapsed-button"
+                aria-label={t("reader.expandRightRail")}
+                onClick={() => setReaderRightRailOpen(true)}
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                <span>{t("reader.workspaceShort")}</span>
+              </button>
+            )}
+          </aside>
         </section>
         {readerFeaturePreferences.bottomProgressVisible ||
         readerFeaturePreferences.chapterIndexVisible ? (
@@ -1814,7 +2071,6 @@ export function ReaderPage() {
                           aria-current={
                             activeNavBlockUid === block.block_uid ? "location" : undefined
                           }
-                          onMouseEnter={() => handleActiveBlockChange(block.block_uid)}
                           onClick={(event) => {
                             event.preventDefault();
                             navigateToBlock(block.block_uid);
@@ -1876,6 +2132,108 @@ export function ReaderPage() {
       </main>
     </div>
   );
+}
+
+interface ReaderSideTileProps {
+  title: string;
+  icon: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  badge?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}
+
+function ReaderSideTile({
+  title,
+  icon,
+  open,
+  onToggle,
+  badge,
+  children,
+  className
+}: ReaderSideTileProps) {
+  const t = useT();
+  return (
+    <section className={`reader-side-tile${className ? ` ${className}` : ""}`}>
+      <button
+        type="button"
+        className="reader-side-tile-toggle"
+        aria-expanded={open}
+        aria-label={t(open ? "reader.collapsePanel" : "reader.expandPanel", { panel: title })}
+        onClick={onToggle}
+      >
+        <span className="reader-side-tile-title">
+          {icon}
+          <span>{title}</span>
+        </span>
+        <span className="reader-side-tile-actions">
+          {badge}
+          <ChevronDown data-open={open || undefined} size={15} aria-hidden="true" />
+        </span>
+      </button>
+      <Collapse in={open}>
+        <div className="reader-side-tile-body">{children}</div>
+      </Collapse>
+    </section>
+  );
+}
+
+function filterReaderArticleItems(items: ArticleListItem[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? items.filter((item) =>
+        [
+          item.family.title,
+          item.family.external_id,
+          item.family.source,
+          item.article_revision.version,
+          item.article_revision.status
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery)
+      )
+    : items;
+  return [...filtered].sort((left, right) =>
+    String(right.article_revision.updated_at).localeCompare(
+      String(left.article_revision.updated_at)
+    )
+  );
+}
+
+function readerArticleTitle(item: ArticleListItem) {
+  return item.family.title || item.family.external_id || item.article_revision.id;
+}
+
+function readerArticleSourceLabel(item: ArticleListItem) {
+  if (item.family.source === "arxiv") return "arXiv";
+  if (item.family.source === "local_file") return "Local";
+  return item.family.source;
+}
+
+function readerArticleProgressPercent(item: ArticleListItem) {
+  const progress = item.reading_progress;
+  if (!progress || progress.segment_count <= 0 || progress.total_seconds <= 0) return 0;
+  if (typeof progress.active_segment_index === "number") {
+    return Math.min(
+      100,
+      Math.round(((progress.active_segment_index + 1) / progress.segment_count) * 100)
+    );
+  }
+  const visitedSegments = (progress.segments ?? []).filter((seconds) => seconds > 0).length;
+  return Math.min(100, Math.round((visitedSegments / progress.segment_count) * 100));
+}
+
+function readerArticleProgressLabel(item: ArticleListItem) {
+  const seconds = item.reading_progress?.total_seconds ?? 0;
+  if (seconds <= 0) return "0m";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest > 0 ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
 function blockColorStorageKey(libraryId: string, articleId: string) {
@@ -2799,14 +3157,6 @@ function isDeltaStreamData(data: unknown): data is { text: string } {
   );
 }
 
-export interface ReaderSearchIndexEntry {
-  blockUid: string;
-  title: string;
-  sourceText: string;
-  translationText: string;
-  haystack: string;
-}
-
 export interface ReaderSearchState {
   query: string;
   cursor: number;
@@ -2819,40 +3169,37 @@ interface ReaderSearchMatch {
   index: number;
 }
 
-function buildReaderSearchIndex(
+function searchReaderBlocks(
   blocks: DocumentBlock[],
-  translationByBlockUid: Map<string, string>
-): ReaderSearchIndexEntry[] {
-  return blocks.map((block) => {
-    const sourceText = plainTextForReaderSearch(block.source_markdown);
-    const translationText = plainTextForReaderSearch(
-      translationByBlockUid.get(block.block_uid) ?? ""
-    );
-    const title = isSearchTitleBlock(block) ? chapterTitle(block) : block.block_uid;
-    return {
-      blockUid: block.block_uid,
-      title,
-      sourceText,
-      translationText,
-      haystack: `${title}\n${sourceText}\n${translationText}`.toLocaleLowerCase()
-    };
-  });
-}
-
-function searchReaderIndex(index: ReaderSearchIndexEntry[], query: string): ReaderSearchMatch[] {
+  translationByBlockUid: Map<string, string>,
+  query: string
+): ReaderSearchMatch[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return [];
-  return index.flatMap((entry) => {
-    const matchIndex = entry.haystack.indexOf(normalizedQuery);
-    if (matchIndex < 0) return [];
-    return [
-      {
-        blockUid: entry.blockUid,
-        label: entry.title,
+  const matches: ReaderSearchMatch[] = [];
+  for (const block of blocks) {
+    const title = isSearchTitleBlock(block) ? chapterTitle(block) : block.block_uid;
+    let matchIndex = title.toLocaleLowerCase().indexOf(normalizedQuery);
+    if (matchIndex < 0) {
+      matchIndex = plainTextForReaderSearch(block.source_markdown)
+        .toLocaleLowerCase()
+        .indexOf(normalizedQuery);
+    }
+    if (matchIndex < 0) {
+      const translation = translationByBlockUid.get(block.block_uid);
+      matchIndex = translation
+        ? plainTextForReaderSearch(translation).toLocaleLowerCase().indexOf(normalizedQuery)
+        : -1;
+    }
+    if (matchIndex >= 0) {
+      matches.push({
+        blockUid: block.block_uid,
+        label: title,
         index: matchIndex
-      }
-    ];
-  });
+      });
+    }
+  }
+  return matches;
 }
 
 function plainTextForReaderSearch(markdown: string) {
@@ -2949,18 +3296,29 @@ function referenceTargetBlockType(block: DocumentBlock): string {
   return block.block_type;
 }
 
-function navBlockUidForActiveBlock(
-  blocks: DocumentBlock[],
-  navBlocks: DocumentBlock[],
-  activeBlockUid: string | null
-): string | null {
-  if (!activeBlockUid) return null;
-  if (navBlocks.some((block) => block.block_uid === activeBlockUid)) return activeBlockUid;
-  const activeIndex = blocks.findIndex((block) => block.block_uid === activeBlockUid);
-  for (let index = activeIndex; index >= 0; index -= 1) {
-    if (blocks[index]?.block_type === "section") return blocks[index].block_uid;
+function blockIndexMapForBlocks(blocks: DocumentBlock[]) {
+  const map = new Map<string, number>();
+  blocks.forEach((block, index) => map.set(block.block_uid, index));
+  return map;
+}
+
+function navBlockUidMapForBlocks(blocks: DocumentBlock[]) {
+  const map = new Map<string, string>();
+  let currentSectionUid: string | null = null;
+  for (const block of blocks) {
+    if (block.block_type === "section") {
+      currentSectionUid = block.block_uid;
+    }
+    if (currentSectionUid) {
+      map.set(block.block_uid, currentSectionUid);
+    }
   }
-  return navBlocks[0]?.block_uid ?? activeBlockUid;
+  const firstSection = blocks.find((block) => block.block_type === "section")?.block_uid;
+  if (!firstSection) return map;
+  for (const block of blocks) {
+    if (!map.has(block.block_uid)) map.set(block.block_uid, firstSection);
+  }
+  return map;
 }
 
 function assetUrl(

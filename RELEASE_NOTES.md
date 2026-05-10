@@ -1,47 +1,39 @@
-# Ilios v0.2.1 更新日志
+# Ilios v0.3.0 更新日志
 
-Ilios v0.2.1 是一次围绕真实论文稳定性的修订发布。v0.2.0 已经把 reader、翻译、问答、Obsidian 和导出主路径接通，这个版本重点修补真实 arXiv 模板、旧式源码包、长 LaTeXML 解析、DeepSeek/OpenAI-compatible 翻译返回、任务队列性能和导出文件可用性。目标很明确：用户导入一批论文后，不应该因为文件名、公式宏、任务数量或导出格式这些工程细节被迫中断阅读。
+Ilios v0.3.0 是一次围绕“研究工作台”重新组织的信息架构发布。v0.2.1 已经修复了真实 arXiv、旧式 TeX、LaTeXML、DeepSeek/OpenAI-compatible provider、任务队列和导出的稳定性问题；这个版本把这些能力重新放回更直接的用户路径里。目标很简单：文库负责处理很多论文，reader 负责读一篇论文，右侧工作块负责把翻译、提问、术语、笔记和导出接到同一个阅读动作上。
 
-## 解析稳定性
+## Workbench 界面
 
-LaTeXML 入口文件识别不再假设源码包里存在 `main.tex`。解析器现在会按内容识别 `.tex`、`.ltx`、`.latex` 和老式无扩展名 arXiv 源码文件，并兼容 `\documentstyle`。这修复了旧 arXiv 包和早期 TeX 风格论文无法找到主文件的问题。
+首页导航被压缩为真正的全局入口。Logo 与文库入口合并，阅读、翻译、笔记和 study 不再作为顶层菜单存在，因为它们已经是论文阅读内部的工作。Settings、任务和主题仍保留为全局控制。
 
-LaTeXML 超时策略从固定硬超时改为按文章规模自适应。较短论文仍会快速失败，长论文会得到更合理的解析时间；只要输出文件或日志仍在持续变化，解析进程不会因为静态时间阈值被过早杀掉。解析失败时仍保持显式错误，不会降级到不可靠的正则解析。
+文库页从列表页变成 article-first 工作台。左侧组织本地文库和状态，主区域展示论文行、搜索、筛选、排序、阅读进度、翻译状态、导入和批量翻译。点击论文行只会选中并预览论文，显式点击 Read 才进入 reader，避免用户在批量管理论文时被页面跳转打断。
 
-LaTeX 和 KaTeX 兼容表继续扩展。v0.2.1 增加了常见旧宏、数学字体、矩阵、`mbox`、`pmatrix`、`textsc`、`vmathbb`、`glossaries` 相关命令和 LaTeXML 输出清理规则，减少公式无法渲染、公式误判表格、`toprule` 出现在表格数据里、算法块被误当正文的问题。公式编号和 label 也进入 reader 显示与跳转路径。
+阅读页不再显示首页菜单。它有自己的阅读 command band：左侧显示当前文库名并返回文库，中间固定显示 `Ilios / 衔牍 · Research Paper Reader`，右侧只放阅读模式和阅读偏好。全文搜索、任务按钮、主题按钮和旧的 Reader tools 下拉从阅读顶部移除。
 
-图片、表格和引用显示继续收敛到学术文章阅读风格。图片默认居中，子图比例尽量保持一致；表格保留接近正文的字号，并允许在必要时超过正文行宽；引用悬浮卡片保留搜索入口，但不默认展示外部搜索结果，避免干扰阅读。
+## Reader 与工具块
 
-## 翻译和模型兼容
+Reader 现在是三栏拼贴式结构。左侧可以在同文库文章之间切换，中间是唯一不可折叠的论文画布，右侧是同层工作区。任务、模型供应商、提问、翻译、术语、笔记和导出都作为右侧块展示；默认只有提问块展开，其余块默认折叠。这个默认值更符合实际阅读：读到问题时先问，只有需要时再展开翻译、术语、笔记或导出。
 
-OpenAI-compatible Provider 对 DeepSeek 等模型的兼容性更稳。v0.2.1 在请求中禁用不适合普通翻译结果读取的 reasoning 输出路径，并在模型返回空文本时给出更明确的错误信息。已完成但没有显示译文的顽固段落会通过更严格的状态检查进入重试路径，而不是让用户反复手动触发却看不到结果。
+Reader 和 Translate 已经合并为一个工作空间。翻译整篇论文、语言切换自动补译、段落重新翻译、术语替换和翻译 variant 选择都在 reader 内完成，不需要离开论文。Note 和 Study 也合并为一个学习工作流：用户可以从提问、段落摘录、术语卡片和讲义 patch 进入同一套可编辑笔记路径。
 
-翻译状态现在进入论文列表和批量操作逻辑。文库可以显示论文是否未翻译、部分翻译、翻译中、已翻译或失败，后续批量翻译缺失块可以以文库为单位启动，而不是要求用户逐篇打开查找。
+新的 logo 已经接入应用 header 和 favicon。图形采用“书牍束与金色夹扣”的抽象标记，不依赖缩小后难以辨识的汉字形状。
 
-## Reader 交互
+## 文库、进度和 provider
 
-Reader 的控制面继续简化。顶部菜单栏负责搜索、模式、阅读工具和阅读偏好；章节索引与进度栏合并为更轻的底部入口；段落工具、颜色标记、术语卡片和提问卡片不再挤占正文行宽。用户可以在阅读偏好中开关章节、底部进度、段落工具、颜色标记、术语卡片、快速提问、句子 hover、引用预览、图片灯箱、水印、任务通知、术语替换和导出 fallback。
+后端增加 library rename API，文库名称可以直接在 UI 中修改。文章列表增加阅读进度数据，reader 会记录当前活跃 block 和阅读时间片段，文库页可以据此展示哪些论文正在读、读到哪里，以及按进度排序。
 
-术语 Wiki 和阅读卡片层进入轻量可用状态。卡片与相关段落绑定，默认以标签形态显示，展开时不改变正文宽度。术语卡片优先使用 Wikipedia/Wikidata，无法自动匹配时可以由模型按论文上下文或模型原生搜索生成。卡片可以编辑、删除、pin，并显式导出到 Obsidian。
+Provider 设置页增加 provider preset。OpenAI、Anthropic、DeepSeek、Gemini、Qwen DashScope、Kimi、Groq、OpenRouter 和 xAI 可以从预置入口开始配置；高级用户仍然可以直接编辑 protocol、base URL、并发和 rate limit。API 同步提供 `/providers/presets`，前端生成 schema 已更新。
 
-图片支持点击放大查看，再次点击或关闭后返回正文。段落操作栏的 hover 判定更稳定，鼠标从段落移动到操作区时不会立刻消失。
+## 解析与渲染继续加固
 
-## 文库、任务和导出
+LaTeXML 解析兼容继续扩展，尤其是旧式 arXiv 源码和数学宏处理。Reader 渲染层继续减少大文档 DOM 压力，长论文采用渐进式 block 渲染，搜索入口从阅读顶部移除后仍保留阅读进度和章节跳转，避免工具栏挤占正文。
 
-文库和论文都增加 archive/delete 语义。Archive 保留缓存和本地文件，只改变显示状态；Delete 需要二次确认，并删除对应缓存或 bundle。论文标题现在可以直接打开 reader，不再强迫用户找一个单独的打开图标。
+## 文档和设计契约
 
-任务抽屉针对大量任务做了性能修复。打开任务队列时优先显示汇总，详细行延迟加载；用户可以一键清理已完成、已取消或失败任务，清理任务历史不会删除论文数据。
-
-导出现在更接近用户正在阅读的内容。Markdown 导出会移除内部 anchor、article revision 等后台信息，按 `paper-mode-language.md` 命名，并将图片复制到同名 `.assets` 文件夹后打包成 zip 下载。导出仍保留不可见内容声明水印，用来提醒用户不要二次发布无权再分发的论文内容。
-
-## 文档和维护
-
-新增 `DESIGN.md` 作为产品交互和工程约束的共同契约。后续重构必须遵守本地优先、TeX-first、reader 不被工具栏挤压、批量操作优先、可配置但默认简单、导出可用且不泄漏后台信息这些规则。
-
-新增多语言入口说明和示例 locale 文件，方便社区贡献界面语言。简体中文和 English 仍是核心维护语言，日本語和其他语言保持社区友好路径。
+`DESIGN.md` 已更新为当前 workbench 设计契约，明确首页导航、文库工作台、reader command band、右侧工具块默认折叠、提问默认展开、Reader/Translate 合并、Note/Study 合并等行为。README 已同步到 v0.3.0，面向普通用户解释现在的文库、reader、provider 和本地数据路径；发布细节继续保留在 `docs/github-release.md` 和 `AGENT_GUIDE.md`。
 
 ## 质量验证
 
-本版本在发布前运行了后端 ruff、basedpyright、解析器 pytest、版本检查和 git diff 检查。前端 API schema 已随后端 schema 更新，release 包通过 source archive 脚本生成，并附带 SHA-256 校验文件。
+本版本发布前运行了前端 `typecheck`、`lint`、`prettier --check`、`build`、Vitest 56 个测试和 Playwright 2 个 e2e 测试。发布前还应运行后端 ruff、basedpyright、pytest、release archive 打包和 SHA-256 校验。
 
-源码发布包可以通过 `./scripts/package-release.sh 0.2.1` 生成。v0.2.1 release assets 包含 `bilin-v0.2.1-source.tar.gz`、`bilin-v0.2.1-source.zip` 和对应的 SHA-256 校验文件。
+源码发布包可以通过 `./scripts/package-release.sh 0.3.0` 生成。v0.3.0 release assets 包含 `bilin-v0.3.0-source.tar.gz`、`bilin-v0.3.0-source.zip` 和对应的 SHA-256 校验文件。

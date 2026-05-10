@@ -14,6 +14,7 @@ import type {
   ImportArxivRequest,
   ImportLocalKind,
   LibraryCreate,
+  LibraryUpdate,
   NotePatchGenerateRequest,
   NotePatchUpdate,
   NoteTemplateCreate,
@@ -27,6 +28,7 @@ import type {
   ReaderCardGenerationRequest,
   ReaderCardObsidianExportRequest,
   ReaderCardUpdate,
+  ReadingProgressUpdate,
   TranslationBatchRequest,
   TranslationMemoryEntryUpdate,
   TranslationMemoryReviewStatus
@@ -34,6 +36,7 @@ import type {
 
 export const queryKeys = {
   doctor: ["doctor"] as const,
+  providerPresets: ["provider-presets"] as const,
   providers: ["providers"] as const,
   libraries: ["libraries"] as const,
   library: (libraryId: string) => ["library", libraryId] as const,
@@ -43,6 +46,8 @@ export const queryKeys = {
       : (["articles", libraryId] as const),
   articleDocument: (libraryId: string, revisionId: string) =>
     ["article-document", libraryId, revisionId] as const,
+  articleReadingProgress: (libraryId: string, revisionId: string) =>
+    ["article-reading-progress", libraryId, revisionId] as const,
   articleCitations: (libraryId: string, revisionId: string) =>
     ["article-citations", libraryId, revisionId] as const,
   citationScholar: (libraryId: string, revisionId: string, citationId: string) =>
@@ -116,6 +121,14 @@ export function useProviders() {
   });
 }
 
+export function useProviderPresets() {
+  return useQuery({
+    queryKey: queryKeys.providerPresets,
+    queryFn: apiClient.listProviderPresets,
+    retry: false
+  });
+}
+
 export function useCreateProvider() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -154,6 +167,18 @@ export function useCreateLibrary() {
   return useMutation({
     mutationFn: (payload: LibraryCreate) => apiClient.createLibrary(payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.libraries })
+  });
+}
+
+export function useUpdateLibrary() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ libraryId, payload }: { libraryId: string; payload: LibraryUpdate }) =>
+      apiClient.updateLibrary(libraryId, payload),
+    onSuccess: (library) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.libraries });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.library(library.id) });
+    }
   });
 }
 
@@ -223,6 +248,29 @@ export function useArticleDocument(libraryId?: string, revisionId?: string) {
     queryFn: () => apiClient.getArticleDocument(libraryId ?? "", revisionId ?? ""),
     enabled: Boolean(libraryId && revisionId),
     retry: false
+  });
+}
+
+export function useArticleReadingProgress(libraryId?: string, revisionId?: string) {
+  return useQuery({
+    queryKey: queryKeys.articleReadingProgress(libraryId ?? "", revisionId ?? ""),
+    queryFn: () => apiClient.getReadingProgress(libraryId ?? "", revisionId ?? ""),
+    enabled: Boolean(libraryId && revisionId),
+    retry: false
+  });
+}
+
+export function useUpdateReadingProgress(libraryId?: string, revisionId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReadingProgressUpdate) =>
+      apiClient.updateReadingProgress(libraryId ?? "", revisionId ?? "", payload),
+    onSuccess: (progress) => {
+      if (libraryId && revisionId) {
+        queryClient.setQueryData(queryKeys.articleReadingProgress(libraryId, revisionId), progress);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.articles(libraryId) });
+      }
+    }
   });
 }
 

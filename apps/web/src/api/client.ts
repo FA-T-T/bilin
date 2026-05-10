@@ -9,6 +9,7 @@ import type {
   ArticleCitations,
   ArticleListItem,
   ArticleNotePatches,
+  ArticleReadingProgress,
   ArticleTranslations,
   ChatAskRequest,
   ChatAskResult,
@@ -33,6 +34,7 @@ import type {
   Library,
   LibraryCreate,
   LibraryDeleteResult,
+  LibraryUpdate,
   LibraryTranslationBatchResult,
   NotePatch,
   NotePatchGenerateRequest,
@@ -45,6 +47,7 @@ import type {
   ObsidianClipResult,
   ProviderModelDiscoveryRequest,
   ProviderModelDiscoveryResult,
+  ProviderPreset,
   ProviderProfile,
   ProviderProfileCreate,
   ProviderProfileUpdate,
@@ -58,6 +61,7 @@ import type {
   ReaderCardObsidianExportResult,
   ReaderCards,
   ReaderCardUpdate,
+  ReadingProgressUpdate,
   TranslationBatchRequest,
   TranslationBatchResult,
   TranslationMemoryEntry,
@@ -181,6 +185,7 @@ function parseSseText(text: string, onMessage: (message: SseMessage) => void) {
 
 export const apiClient = {
   getDoctor: () => request<DoctorReport>("/doctor"),
+  listProviderPresets: () => request<ProviderPreset[]>("/providers/presets"),
   listProviders: () => request<ProviderProfile[]>("/providers"),
   createProvider: (payload: ProviderProfileCreate) =>
     request<ProviderProfile>("/providers", {
@@ -204,6 +209,11 @@ export const apiClient = {
       body: JSON.stringify(payload)
     }),
   getLibrary: (libraryId: string) => request<Library>(`/libraries/${libraryId}`),
+  updateLibrary: (libraryId: string, payload: LibraryUpdate) =>
+    request<Library>(`/libraries/${encodeURIComponent(libraryId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
   archiveLibrary: (libraryId: string) =>
     request<Library>(`/libraries/${encodeURIComponent(libraryId)}/archive`, { method: "POST" }),
   deleteLibrary: (libraryId: string) =>
@@ -231,6 +241,24 @@ export const apiClient = {
   getArticleDocument: (libraryId: string, revisionId: string) =>
     request<ArticleDocument>(
       `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/document`
+    ),
+  getReadingProgress: (libraryId: string, revisionId: string) =>
+    request<ArticleReadingProgress>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/reading-progress`
+    ),
+  updateReadingProgress: (
+    libraryId: string,
+    revisionId: string,
+    payload: ReadingProgressUpdate,
+    keepalive = false
+  ) =>
+    request<ArticleReadingProgress>(
+      `/libraries/${encodeURIComponent(libraryId)}/articles/${encodeURIComponent(revisionId)}/reading-progress`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+        keepalive
+      }
     ),
   getArticleCitations: (libraryId: string, revisionId: string) =>
     request<ArticleCitations>(

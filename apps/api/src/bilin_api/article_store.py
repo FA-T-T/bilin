@@ -21,6 +21,7 @@ from bilin_api.schemas import (
     ArticleFamily,
     ArticleListItem,
     ArticleManifest,
+    ArticleReadingProgress,
     ArticleRevision,
     ArticleTranslationState,
     ArticleTranslationStatus,
@@ -37,6 +38,7 @@ from bilin_api.schemas import (
     ReaderCardSourceType,
     ReaderCardStatus,
     ReaderCardType,
+    ReadingProgressUpdate,
     TranslationVariant,
 )
 
@@ -293,6 +295,7 @@ async def list_article_items(
         revision_ids,
         target_language,
     )
+    reading_progresses = await article_reading_progresses(library, revision_ids)
     items: list[ArticleListItem] = []
     for row in rows:
         revision = _revision_from_row(row)
@@ -316,6 +319,7 @@ async def list_article_items(
                     revision.id,
                     ArticleTranslationStatus(target_language=target_language),
                 ),
+                reading_progress=reading_progresses.get(revision.id),
             )
         )
     return items
@@ -376,6 +380,137 @@ async def article_translation_statuses(
             job_counts=counts,
         )
     return statuses
+
+
+async def article_reading_progresses(
+    library: Library,
+    revision_ids: list[str],
+) -> dict[str, ArticleReadingProgress]:
+    if not revision_ids:
+        return {}
+    placeholders = ",".join("?" for _ in revision_ids)
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            f"""
+            SELECT * FROM reading_progress
+            WHERE article_revision_id IN ({placeholders})
+            """,
+            tuple(revision_ids),
+        )
+        progress_rows = await cursor.fetchall()
+        cursor = await conn.execute(
+            f"""
+            SELECT article_revision_id, block_uid
+            FROM blocks
+            WHERE article_revision_id IN ({placeholders})
+            ORDER BY article_revision_id, structural_path
+            """,
+            tuple(revision_ids),
+        )
+        block_rows = await cursor.fetchall()
+
+    block_uids_by_revision: dict[str, list[str]] = {revision_id: [] for revision_id in revision_ids}
+    for row in block_rows:
+        block_uids_by_revision[row["article_revision_id"]].append(row["block_uid"])
+    return {
+        row["article_revision_id"]: _reading_progress_from_row(
+            row,
+            block_uids_by_revision.get(row["article_revision_id"], []),
+        )
+        for row in progress_rows
+    }
+
+
+async def get_article_reading_progress(
+    library: Library,
+    revision_id: str,
+) -> ArticleReadingProgress | None:
+    revision = await get_article_revision(library, revision_id)
+    if revision is None:
+        return None
+    blocks = await list_blocks(library, revision_id)
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM reading_progress WHERE article_revision_id = ?",
+            (revision_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return _empty_reading_progress(revision_id, [block.block_uid for block in blocks])
+    return _reading_progress_from_row(row, [block.block_uid for block in blocks])
+
+
+async def update_article_reading_progress(
+    library: Library,
+    revision_id: str,
+    payload: ReadingProgressUpdate,
+) -> ArticleReadingProgress | None:
+    revision = await get_article_revision(library, revision_id)
+    if revision is None:
+        return None
+    blocks = await list_blocks(library, revision_id)
+    block_uids = [block.block_uid for block in blocks]
+    valid_block_uids = set(block_uids)
+    active_block_uid = payload.active_block_uid
+    if active_block_uid is not None and active_block_uid not in valid_block_uids:
+        msg = f"Block not found: {active_block_uid}"
+        raise ValueError(msg)
+
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM reading_progress WHERE article_revision_id = ?",
+            (revision_id,),
+        )
+        current = await cursor.fetchone()
+
+    seconds_by_block = _reading_seconds_from_row(current) if current is not None else {}
+    for block_uid, seconds in payload.block_seconds.items():
+        if block_uid not in valid_block_uids:
+            continue
+        seconds_by_block[block_uid] = seconds_by_block.get(block_uid, 0) + _clean_delta_seconds(
+            seconds
+        )
+    seconds_by_block = {
+        block_uid: seconds
+        for block_uid, seconds in seconds_by_block.items()
+        if block_uid in valid_block_uids and seconds > 0
+    }
+    if active_block_uid is None and current is not None:
+        current_active = current["active_block_uid"]
+        active_block_uid = current_active if current_active in valid_block_uids else None
+    total_seconds = sum(seconds_by_block.values())
+    now = utc_now()
+    created_at = current["created_at"] if current is not None else now
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            """
+            INSERT INTO reading_progress(
+              article_revision_id, active_block_uid, segment_count, block_seconds_json,
+              total_seconds, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(article_revision_id) DO UPDATE SET
+              active_block_uid = excluded.active_block_uid,
+              segment_count = excluded.segment_count,
+              block_seconds_json = excluded.block_seconds_json,
+              total_seconds = excluded.total_seconds,
+              updated_at = excluded.updated_at
+            """,
+            (
+                revision_id,
+                active_block_uid,
+                len(block_uids),
+                json.dumps(seconds_by_block),
+                total_seconds,
+                created_at,
+                now,
+            ),
+        )
+        await conn.commit()
+    return await get_article_reading_progress(library, revision_id)
 
 
 def _build_article_translation_status(
@@ -522,6 +657,9 @@ async def delete_article_revision(library: Library, revision_id: str) -> Article
         await conn.execute(
             "DELETE FROM block_embeddings WHERE article_revision_id = ?",
             (revision_id,),
+        )
+        await conn.execute(
+            "DELETE FROM reading_progress WHERE article_revision_id = ?", (revision_id,)
         )
         await conn.execute("DELETE FROM assets WHERE article_revision_id = ?", (revision_id,))
         await conn.execute(
@@ -1919,6 +2057,70 @@ def _reader_card_from_row(row: aiosqlite.Row) -> ReaderCard:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _empty_reading_progress(
+    revision_id: str,
+    block_uids: list[str],
+) -> ArticleReadingProgress:
+    return ArticleReadingProgress(
+        article_revision_id=revision_id,
+        segment_count=len(block_uids),
+        segments=[0 for _ in block_uids],
+        total_seconds=0,
+    )
+
+
+def _reading_progress_from_row(
+    row: aiosqlite.Row,
+    block_uids: list[str],
+) -> ArticleReadingProgress:
+    seconds_by_block = _reading_seconds_from_row(row)
+    segments = [seconds_by_block.get(block_uid, 0) for block_uid in block_uids]
+    index_by_uid = {block_uid: index for index, block_uid in enumerate(block_uids)}
+    active_block_uid = row["active_block_uid"]
+    active_segment_index = (
+        index_by_uid[active_block_uid]
+        if active_block_uid is not None and active_block_uid in index_by_uid
+        else None
+    )
+    return ArticleReadingProgress(
+        article_revision_id=row["article_revision_id"],
+        active_block_uid=active_block_uid if active_segment_index is not None else None,
+        active_segment_index=active_segment_index,
+        segment_count=len(block_uids),
+        segments=segments,
+        total_seconds=sum(segments),
+        updated_at=row["updated_at"],
+    )
+
+
+def _reading_seconds_from_row(row: aiosqlite.Row | None) -> dict[str, int]:
+    if row is None:
+        return {}
+    raw = _loads(row["block_seconds_json"], {})
+    if not isinstance(raw, dict):
+        return {}
+    seconds_by_block: dict[str, int] = {}
+    for block_uid, seconds in raw.items():
+        if not isinstance(block_uid, str):
+            continue
+        seconds_by_block[block_uid] = _clean_stored_seconds(seconds)
+    return seconds_by_block
+
+
+def _clean_stored_seconds(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _clean_delta_seconds(value: Any) -> int:
+    try:
+        return max(0, min(int(value), 3600))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _loads(value: str | None, fallback: Any) -> Any:

@@ -27,15 +27,13 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 ## 衔牍是什么
 
-衔牍是一个本地论文阅读工具，为非英语母语的研究者设计。
+衔牍是一个本地优先的论文阅读工作台，为需要跨语言理解英文论文的研究者设计。
 
-衔牍把英文论文整理成更容易理解的阅读对象：章节、段落、公式、图、表和 caption 都保留为可引用的结构化 block。
+它不是一个云端文档库，也不是普通 PDF 阅读器。衔牍从 arXiv source package 或本地 LaTeX 源码包开始，把论文整理成章节、段落、公式、图、表、caption、引用、译文、问答和笔记都能对齐的结构化阅读对象。
 
 可以通过 OpenAI 或者 Anthropic 形式的 API 和 Base URL 提供多语言翻译服务. (我们的测试中使用的是 Deepseek V4 Flash, 经测试10篇论文, 累计240页内容, 开销2元)
 
-读者可以先用母语理解论文，再回到英文原文校准术语和表达。
-
-衔牍从 arXiv source package 或本地 LaTeX 源码包开始工作，减少截图识别和 OCR 带来的结构丢失。
+读者可以先用母语理解论文，再回到英文原文校准术语和表达。文库页负责批量管理论文、导入、筛选、翻译状态和阅读进度；阅读页负责同文库文章切换、原文与译文阅读、模型供应商、翻译任务、论文提问、术语、笔记和导出。
 
 也可以通过 LLM 问答文章中相关内容，回答会保留引用到的 block id，方便回到原文验证。
 
@@ -45,10 +43,12 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 | 范围 | 衔牍提供什么 |
 | --- | --- |
-| 导入与解析 | 输入 arXiv ID 下载 source package 和 PDF，或导入本地 TeX archive；安装 LaTeXML 后可解析出章节、段落、公式、图和表；Markdown 可作为弱结构文档导入，PDF 可作为源文件保存进 bundle。 |
-| 阅读模式 | Study 以英文原文为主并逐段展开译文；Bilingual 并排校准原文和译文；Translation 用母语通读；Source 回到原文和 LaTeX 源码。 |
+| 文库工作台 | 首页把文库、论文列表、搜索、筛选、排序、阅读进度、翻译状态、导入和批量翻译放在一个工作台里；点击论文行只选中论文，Read 才进入 reader。 |
+| 导入与解析 | 输入 arXiv ID 下载 source package 和 PDF，或导入本地 TeX archive；安装 LaTeXML 后可解析出章节、段落、公式、图和表；旧式 arXiv 源码、`.ltx`、无扩展名 TeX 和常见宏会尽量兼容。 |
+| 阅读模式 | Study 以英文原文为主并逐段展开译文；Bilingual 并排校准原文和译文；Translation 用母语通读；Source 回到原文和 LaTeX 源码。阅读页左侧可切换同文库文章，右侧是可折叠任务、provider、提问、翻译、术语、笔记和导出块。 |
 | 段落工作流 | 每个 block 可以标色、复制、查看源码、重新翻译、针对当前段落提问，并把中英文摘录保存到 Obsidian。 |
-| 问答与笔记 | 在文章证据范围内提问，保留引用 block id；可以生成可编辑的讲义笔记 patch，使用精读、组会、快速扫读和复现导向模板。 |
+| 问答与笔记 | 提问块在 reader 右侧默认展开，回答限定在文章证据范围内并保留引用 block id；笔记和 study 合并为同一学习工作流，可以生成可编辑讲义 patch、术语卡片和 Obsidian 摘录。 |
+| 模型供应商 | Settings 提供 OpenAI、Anthropic、DeepSeek、Gemini、Qwen DashScope、Kimi、Groq、OpenRouter、xAI 等 provider preset，也可以手动配置 OpenAI-compatible 或 Anthropic-compatible endpoint。 |
 | 本地数据 | 一个 library 是可携带文件夹，包含 SQLite、源码包、解析结果、assets、翻译缓存、笔记、导出物和 bundle manifests；你可以用 iCloud、OneDrive 或 Syncthing 管理同步，但冲突处理交给外部工具。 |
 | 导出 | 支持 source、translated、bilingual、lecture-note 和完整 bundle artifact。导出的 Markdown 和讲义会带有不可见内容来源提示，提醒使用者遵守原论文许可。 |
 
@@ -85,11 +85,11 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
   <tr>
     <td width="33.33%">
       <img src="docs/screenshots/readme/01-library-and-article-list.png" alt="本地文库和论文列表">
-      <br><sub>本地文库：论文、解析状态、翻译进度和打开入口集中在一个可携带文件夹中。</sub>
+      <br><sub>本地文库：论文、解析状态、翻译进度、阅读进度和显式 Read 入口集中在一个工作台中。</sub>
     </td>
     <td width="33.33%">
       <img src="docs/screenshots/readme/05-side-ask-panel.png" alt="侧边栏提问">
-      <br><sub>论文问答：回答限定在本地文章证据内，并保留引用到的 block id。</sub>
+      <br><sub>论文问答：右侧提问块默认展开，回答限定在本地文章证据内，并保留引用到的 block id。</sub>
     </td>
     <td width="33.33%">
       <img src="docs/screenshots/readme/04-paragraph-highlight-and-translation.png" alt="段落标色、句子强调和段落提问">
@@ -127,7 +127,7 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 如果你使用上述任何一种agent工具, 那么你只需要新开一个项目, 将本页面的链接甩给agent即可, 它会帮你完成所有依赖的安装,部署和应用启动.
 
-### 普通用户 
+### 普通用户
 
 衔牍需要 Node.js、pnpm、Python 3.13 和 uv。核心应用可以在没有 TeX 工具链的情况下启动，但真实 TeX 解析需要 `latexml` 和 `latexmlpost` 在 `PATH` 上。图像和资产转换建议安装 ImageMagick `magick`、Ghostscript `gs`，以及 `tectonic` 或 `pdflatex`。
 
@@ -160,13 +160,13 @@ make dev
 
 进入 library 后，可以输入 arXiv ID，例如 `1706.03762`。衔牍会下载 source package 和 PDF，创建自包含 article bundle，并在启用 parse 时排队解析任务。本地 TeX archive 复用同样的 bundle 路径。Markdown 会立即导入为弱结构 document。PDF 只保存为源文件。
 
-解析完成后，从 article table 打开 reader。Reader 支持 Study、Focus、Bilingual、Translation 和 Source 视图。章节通过可折叠 Chapters 控件提供。段落 hover 后会显示复制、查看源 LaTeX、针对当前段落提问和重新翻译等操作。图和表在存在真实 asset 时显示 asset；缺失 asset 时保留 caption、label 和结构化 fallback，并明确呈现为未渲染资产。
+解析完成后，在文库工作台选中论文并点击 Read 打开 reader。Reader 支持 Study、Bilingual、Translation 和 Source 视图；左侧可以在同文库文章之间切换，顶部只保留当前文库名、产品标题、阅读模式和阅读偏好，右侧以折叠块展示任务、模型供应商、提问、翻译、术语、笔记和导出。段落 hover 后会显示复制、查看源 LaTeX、针对当前段落提问和重新翻译等操作。图和表在存在真实 asset 时显示 asset；缺失 asset 时保留 caption、label 和结构化 fallback，并明确呈现为未渲染资产。
 
 ## 配置模型
 
 进入 Settings 的 Models 页签。简单模式下粘贴 API key，衔牍会从 OpenAI-compatible 或 Anthropic-compatible endpoint 请求可用模型列表，让你按显示名称选择模型。高级模式下可以设置 profile label、base URL、并发数和每分钟请求数。
 
-**默认请使用高级模式. **
+**默认请使用高级模式。**
 
 Provider key 不会保存到 library 文件夹。macOS 上，衔牍默认把 key 存到 Keychain，全局数据库只保存 `keychain:` 引用。其他平台、CI，或显式设置 `BILIN_CREDENTIAL_STORE=app_settings` 时，会使用 SQLite 开发 fallback。如果你希望 Keychain 失败时直接阻止 provider 创建，可以设置：
 

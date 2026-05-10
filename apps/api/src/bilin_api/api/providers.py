@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from bilin_api.llm import LLMClientError, list_provider_models
+from bilin_api.provider_presets import PROVIDER_PRESETS
 from bilin_api.repositories import (
     create_provider_profile,
     default_provider_base_url,
@@ -13,6 +14,7 @@ from bilin_api.repositories import (
 from bilin_api.schemas import (
     ProviderModelDiscoveryRequest,
     ProviderModelDiscoveryResult,
+    ProviderPreset,
     ProviderProfile,
     ProviderProfileCreate,
     ProviderProfileUpdate,
@@ -56,6 +58,11 @@ async def post_discover_models(
             "chat_model_count": len(chat_models),
         },
     )
+
+
+@router.get("/presets", response_model=list[ProviderPreset])
+async def get_provider_presets() -> list[ProviderPreset]:
+    return list(PROVIDER_PRESETS)
 
 
 @router.get("/{provider_id}", response_model=ProviderProfile)

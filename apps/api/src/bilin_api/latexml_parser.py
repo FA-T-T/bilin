@@ -79,6 +79,26 @@ LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
     "cas-dc",
     "cas-sc",
 }
+LATEXML_LAYOUT_AUTHOR_METADATA_KEYS = frozenset(
+    {
+        "affiliation",
+        "affiliationid",
+        "auid",
+        "bioid",
+        "collab",
+        "corref",
+        "credit",
+        "degree",
+        "ead",
+        "email",
+        "fnref",
+        "orcid",
+        "prefix",
+        "role",
+        "suffix",
+        "type",
+    }
+)
 TEX_MAIN_FILE_SUFFIXES = {".tex", ".ltx", ".latex"}
 TEX_SIDE_FILE_SUFFIXES = {".bbl", ".bib", ".sty", ".cls"}
 TEX_MAIN_FILE_NAME_HINTS = {
@@ -483,6 +503,8 @@ def prepare_latexml_side_sources(unpack_dir: Path, main_tex: Path) -> None:
 def prepare_latexml_source(source: str) -> str:
     source = prepare_latexml_included_source(source)
     source = _replace_latexml_layout_document_classes(source)
+    if "Bilin replaced layout document class for LaTeXML" in source:
+        source = _strip_layout_author_metadata_options(source)
     if source.startswith("% Bilin LaTeXML parser entry"):
         return source
     source = _inject_latexml_compatibility_preamble(source)
@@ -531,6 +553,91 @@ def _replace_latexml_layout_document_classes(source: str) -> str:
         )
 
     return document_class_pattern.sub(replace, source, count=1)
+
+
+def _strip_layout_author_metadata_options(source: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    search_from = 0
+    while True:
+        start = source.find(r"\author", search_from)
+        if start == -1:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        position = _skip_tex_whitespace(source, start + len(r"\author"))
+        if position < len(source) and source[position] == "[":
+            option_end = _find_balanced_optional_end(source, position)
+            if option_end is None:
+                parts.append(source[cursor:])
+                return "".join(parts)
+            position = _skip_tex_whitespace(source, option_end + 1)
+        if position >= len(source) or source[position] != "{":
+            search_from = start + len(r"\author")
+            continue
+        author_end = _find_balanced_group_end(source, position)
+        if author_end is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        metadata_start = _skip_tex_whitespace(source, author_end + 1)
+        if metadata_start >= len(source) or source[metadata_start] != "[":
+            search_from = author_end + 1
+            continue
+        metadata_end = _find_balanced_optional_end(source, metadata_start)
+        if metadata_end is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        metadata = source[metadata_start + 1 : metadata_end]
+        if not _is_layout_author_metadata_option(metadata):
+            search_from = metadata_start + 1
+            continue
+        parts.append(source[cursor:metadata_start])
+        cursor = metadata_end + 1
+        search_from = cursor
+
+
+def _skip_tex_whitespace(source: str, position: int) -> int:
+    while position < len(source) and source[position] in " \t\r\n":
+        position += 1
+    return position
+
+
+def _find_balanced_optional_end(source: str, option_start: int) -> int | None:
+    depth = 0
+    escaped = False
+    for index in range(option_start, len(source)):
+        character = source[index]
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if character == "[":
+            depth += 1
+            continue
+        if character == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _is_layout_author_metadata_option(value: str) -> bool:
+    keys = _layout_author_metadata_keys(value)
+    return keys is not None and keys.issubset(LATEXML_LAYOUT_AUTHOR_METADATA_KEYS)
+
+
+def _layout_author_metadata_keys(value: str) -> set[str] | None:
+    entries = [
+        entry.strip() for entry in re.split(r",\s*(?=[a-zA-Z][\w-]*\s*=)", value) if entry.strip()
+    ]
+    keys: set[str] = set()
+    for entry in entries:
+        match = re.match(r"^(?P<key>[a-zA-Z][\w-]*)\s*=", entry)
+        if not match:
+            return None
+        keys.add(match.group("key").lower())
+    return keys or None
 
 
 def _replace_latexml_code_generated_diagrams(source: str) -> str:
@@ -1123,13 +1230,14 @@ class _DocumentBuilder:
             text = _markdown_text(element)
             if text:
                 self.paragraph_count += 1
-                references = _references(element)
-                self.add_block(
-                    "paragraph",
-                    f"p-{self.paragraph_count:04d}",
-                    text,
-                    metadata={"references": references} if references else None,
-                )
+                if not _is_latexml_metadata_only_paragraph(text):
+                    references = _references(element)
+                    self.add_block(
+                        "paragraph",
+                        f"p-{self.paragraph_count:04d}",
+                        text,
+                        metadata={"references": references} if references else None,
+                    )
             return
         if tag == "math" and element.attrib.get("display") == "block":
             self.add_equation(element)
@@ -1381,6 +1489,15 @@ def _local_name(tag: str) -> str:
 
 def _clean_text(element: Any) -> str:
     return " ".join("".join(element.itertext()).split())
+
+
+def _is_latexml_metadata_only_paragraph(value: str) -> bool:
+    normalized = _collapse_markdown_whitespace(value)
+    groups = re.findall(r"\[\s*([^\[\]]+)\s*\]", normalized)
+    if not groups:
+        return False
+    remainder = re.sub(r"\[\s*[^\[\]]+\s*\]", "", normalized).strip()
+    return not remainder and all(_is_layout_author_metadata_option(group) for group in groups)
 
 
 def _markdown_text(element: Any, *, preserve_blocks: bool = False) -> str:

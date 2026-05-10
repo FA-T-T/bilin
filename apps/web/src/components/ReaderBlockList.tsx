@@ -22,6 +22,7 @@ export interface ReaderVirtualizationOptions {
   overscanBefore?: number;
   overscanAfter?: number;
   forceRenderFirstBlocks?: number;
+  structuralRenderLimit?: number;
 }
 
 export type MeasuredBlockHeights = Record<string, number>;
@@ -45,9 +46,10 @@ const defaultGetBlockText = (block: DocumentBlock) => block.source_markdown;
 
 const defaultVirtualizationOptions: Required<ReaderVirtualizationOptions> = {
   enabled: true,
-  overscanBefore: 20,
-  overscanAfter: 30,
-  forceRenderFirstBlocks: 8
+  overscanBefore: 12,
+  overscanAfter: 18,
+  forceRenderFirstBlocks: 6,
+  structuralRenderLimit: 180
 };
 
 const READER_ESTIMATED_LINE_HEIGHT = 28.5;
@@ -102,6 +104,20 @@ export function ReaderBlockList({
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return undefined;
     const visible = visibleBlocks.current;
+    let frame = 0;
+
+    const publishActiveBlock = () => {
+      frame = 0;
+      const anchorY = window.innerHeight * 0.24;
+      const next = [...visible.values()].sort(
+        (left, right) =>
+          Math.abs(left.top - anchorY) - Math.abs(right.top - anchorY) || right.ratio - left.ratio
+      )[0];
+      if (next && next.uid !== activeBlockUidRef.current) {
+        activeBlockUidRef.current = next.uid;
+        onActiveBlockChange(next.uid);
+      }
+    };
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -118,16 +134,7 @@ export function ReaderBlockList({
             top: entry.boundingClientRect.top
           });
         }
-
-        const anchorY = window.innerHeight * 0.24;
-        const next = [...visible.values()].sort(
-          (left, right) =>
-            Math.abs(left.top - anchorY) - Math.abs(right.top - anchorY) || right.ratio - left.ratio
-        )[0];
-        if (next && next.uid !== activeBlockUidRef.current) {
-          activeBlockUidRef.current = next.uid;
-          onActiveBlockChange(next.uid);
-        }
+        if (!frame) frame = requestAnimationFrame(publishActiveBlock);
       },
       {
         root: null,
@@ -136,16 +143,59 @@ export function ReaderBlockList({
       }
     );
 
-    for (const block of blocks) {
-      const element = blockElements.current.get(block.block_uid);
-      if (element) observer.observe(element);
+    for (const element of blockElements.current.values()) {
+      if (element.dataset.readerBlockRendered === "true") observer.observe(element);
     }
 
     return () => {
+      if (frame) cancelAnimationFrame(frame);
       visible.clear();
       observer.disconnect();
     };
-  }, [blocks, onActiveBlockChange]);
+  }, [materializedBlockUids, onActiveBlockChange]);
+
+  useEffect(() => {
+    const doc = listElement.current?.ownerDocument ?? globalThis.document;
+    if (typeof window === "undefined" || typeof doc?.elementsFromPoint !== "function") {
+      return undefined;
+    }
+    let frame = 0;
+    const syncActiveBlockFromViewport = () => {
+      frame = 0;
+      const root = listElement.current;
+      if (!root) return;
+      const viewportWidth = Math.max(1, window.innerWidth || doc.documentElement.clientWidth || 1);
+      const viewportHeight = Math.max(
+        1,
+        window.innerHeight || doc.documentElement.clientHeight || 1
+      );
+      const anchorX = Math.round(viewportWidth * 0.5);
+      const anchorY = Math.round(viewportHeight * 0.24);
+      const elements = doc.elementsFromPoint(
+        Math.min(viewportWidth - 1, Math.max(0, anchorX)),
+        Math.min(viewportHeight - 1, Math.max(0, anchorY))
+      );
+      const blockElement = elements
+        .map((element) => element.closest<HTMLElement>("[data-reader-block-uid]"))
+        .find((element): element is HTMLElement => Boolean(element && root.contains(element)));
+      const blockUid = blockElement?.dataset.readerBlockUid;
+      if (blockUid && blockUid !== activeBlockUidRef.current) {
+        activeBlockUidRef.current = blockUid;
+        onActiveBlockChange(blockUid);
+      }
+    };
+    const scheduleSync = () => {
+      if (!frame) frame = requestAnimationFrame(syncActiveBlockFromViewport);
+    };
+    window.addEventListener("scroll", scheduleSync, { passive: true });
+    window.addEventListener("resize", scheduleSync, { passive: true });
+    scheduleSync();
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", scheduleSync);
+      window.removeEventListener("resize", scheduleSync);
+    };
+  }, [onActiveBlockChange]);
 
   const navigateToHashTarget = useCallback(
     (blockUid: string) => {
@@ -267,8 +317,10 @@ function materializedUidsForReader({
   for (let index = start; index <= end; index += 1) {
     materialized.add(blocks[index].block_uid);
   }
-  for (const block of blocks) {
-    if (isStructuralBlock(block)) materialized.add(block.block_uid);
+  if (blocks.length <= options.structuralRenderLimit) {
+    for (const block of blocks) {
+      if (isStructuralBlock(block)) materialized.add(block.block_uid);
+    }
   }
   if (activeBlockUid) materialized.add(activeBlockUid);
   if (forcedBlockUid) materialized.add(forcedBlockUid);

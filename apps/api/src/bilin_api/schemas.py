@@ -54,6 +54,10 @@ class LibraryCreate(BaseModel):
     path: str = Field(min_length=1)
 
 
+class LibraryUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class Library(BaseModel):
     id: str
     name: str
@@ -73,6 +77,16 @@ class LibraryDeleteResult(BaseModel):
 class ProviderProtocol(StrEnum):
     openai_compatible = "openai-compatible"
     anthropic_compatible = "anthropic-compatible"
+
+
+class ProviderPreset(BaseModel):
+    id: str
+    name: str
+    protocol: ProviderProtocol
+    base_url: str
+    default_max_concurrent_requests: int = Field(default=1, ge=1, le=32)
+    default_requests_per_minute: int | None = Field(default=None, ge=1, le=6000)
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class ProviderProfile(BaseModel):
@@ -252,6 +266,21 @@ class ArticleTranslationStatus(BaseModel):
     running_jobs: int = 0
     paused_jobs: int = 0
     failed_jobs: int = 0
+
+
+class ArticleReadingProgress(BaseModel):
+    article_revision_id: str
+    active_block_uid: str | None = None
+    active_segment_index: int | None = Field(default=None, ge=0)
+    segment_count: int = Field(default=0, ge=0)
+    segments: list[int] = Field(default_factory=list)
+    total_seconds: int = Field(default=0, ge=0)
+    updated_at: datetime | None = None
+
+
+class ReadingProgressUpdate(BaseModel):
+    active_block_uid: str | None = Field(default=None, max_length=120)
+    block_seconds: dict[str, int] = Field(default_factory=dict)
 
 
 class DocumentBlock(BaseModel):
@@ -848,6 +877,7 @@ class ArticleListItem(BaseModel):
     block_count: int = 0
     asset_count: int = 0
     translation_status: ArticleTranslationStatus = Field(default_factory=ArticleTranslationStatus)
+    reading_progress: ArticleReadingProgress | None = None
 
 
 class ArticleDeleteResult(BaseModel):

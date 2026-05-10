@@ -8,12 +8,14 @@ from bilin_api.repositories import (
     delete_library,
     get_library,
     list_libraries,
+    update_library,
 )
 from bilin_api.schemas import (
     Library,
     LibraryCreate,
     LibraryDeleteResult,
     LibraryTranslationBatchResult,
+    LibraryUpdate,
     TranslationBatchRequest,
 )
 from bilin_api.translation_service import queue_library_missing_translations
@@ -34,6 +36,14 @@ async def post_library(payload: LibraryCreate) -> Library:
 @router.get("/{library_id}", response_model=Library)
 async def get_library_by_id(library_id: str) -> Library:
     library = await get_library(library_id)
+    if library is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library not found")
+    return library
+
+
+@router.put("/{library_id}", response_model=Library)
+async def put_library(library_id: str, payload: LibraryUpdate) -> Library:
+    library = await update_library(library_id, payload)
     if library is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library not found")
     return library

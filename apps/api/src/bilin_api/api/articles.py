@@ -9,10 +9,12 @@ from bilin_api.article_store import (
     archive_article_revision,
     delete_article_revision,
     get_article_item,
+    get_article_reading_progress,
     get_article_revision,
     list_article_items,
     read_article_document,
     resolve_library,
+    update_article_reading_progress,
 )
 from bilin_api.citation_service import (
     get_article_citations,
@@ -71,6 +73,7 @@ from bilin_api.schemas import (
     ArticleGlossary,
     ArticleListItem,
     ArticleNotePatches,
+    ArticleReadingProgress,
     ArticleTranslations,
     ChatAskRequest,
     ChatAskResult,
@@ -105,6 +108,7 @@ from bilin_api.schemas import (
     ReaderCardObsidianExportResult,
     ReaderCards,
     ReaderCardUpdate,
+    ReadingProgressUpdate,
     TranslationBatchRequest,
     TranslationBatchResult,
     TranslationMemoryLookupResult,
@@ -172,6 +176,31 @@ async def get_article_document(library_id: str, revision_id: str) -> ArticleDocu
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
     return document
+
+
+@router.get("/{revision_id}/reading-progress", response_model=ArticleReadingProgress)
+async def get_reading_progress(library_id: str, revision_id: str) -> ArticleReadingProgress:
+    library = await _library_or_404(library_id)
+    progress = await get_article_reading_progress(library, revision_id)
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
+    return progress
+
+
+@router.put("/{revision_id}/reading-progress", response_model=ArticleReadingProgress)
+async def put_reading_progress(
+    library_id: str,
+    revision_id: str,
+    payload: ReadingProgressUpdate,
+) -> ArticleReadingProgress:
+    library = await _library_or_404(library_id)
+    try:
+        progress = await update_article_reading_progress(library, revision_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
+    return progress
 
 
 @router.get("/{revision_id}/citations", response_model=ArticleCitations)

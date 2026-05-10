@@ -153,6 +153,56 @@
           }
         }
       },
+      "put": {
+        "tags": [
+          "libraries"
+        ],
+        "summary": "Put Library",
+        "operationId": "put_library_libraries__library_id__put",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Library"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "libraries"
@@ -386,6 +436,31 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/presets": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Get Provider Presets",
+        "operationId": "get_provider_presets_providers_presets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderPreset"
+                  },
+                  "type": "array",
+                  "title": "Response Get Provider Presets Providers Presets Get"
                 }
               }
             }
@@ -1007,6 +1082,116 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArticleDocument"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/articles/{revision_id}/reading-progress": {
+      "get": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Get Reading Progress",
+        "operationId": "get_reading_progress_libraries__library_id__articles__revision_id__reading_progress_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleReadingProgress"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Put Reading Progress",
+        "operationId": "put_reading_progress_libraries__library_id__articles__revision_id__reading_progress_put",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadingProgressUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleReadingProgress"
                 }
               }
             }
@@ -4343,6 +4528,16 @@
           },
           "translation_status": {
             "$ref": "#/components/schemas/ArticleTranslationStatus"
+          },
+          "reading_progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArticleReadingProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4477,6 +4672,73 @@
           "article_revision_id"
         ],
         "title": "ArticleNotePatches"
+      },
+      "ArticleReadingProgress": {
+        "properties": {
+          "article_revision_id": {
+            "type": "string",
+            "title": "Article Revision Id"
+          },
+          "active_block_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Block Uid"
+          },
+          "active_segment_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Segment Index"
+          },
+          "segment_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Segment Count",
+            "default": 0
+          },
+          "segments": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Segments"
+          },
+          "total_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Seconds",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_revision_id"
+        ],
+        "title": "ArticleReadingProgress"
       },
       "ArticleRevision": {
         "properties": {
@@ -6118,6 +6380,21 @@
         ],
         "title": "LibraryTranslationBatchResult"
       },
+      "LibraryUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "LibraryUpdate"
+      },
       "NotePatch": {
         "properties": {
           "id": {
@@ -6623,6 +6900,58 @@
           "id"
         ],
         "title": "ProviderModelInfo"
+      },
+      "ProviderPreset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProviderProtocol"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "default_max_concurrent_requests": {
+            "type": "integer",
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Default Max Concurrent Requests",
+            "default": 1
+          },
+          "default_requests_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 6000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Requests Per Minute"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "protocol",
+          "base_url"
+        ],
+        "title": "ProviderPreset"
       },
       "ProviderProfile": {
         "properties": {
@@ -7534,6 +7863,31 @@
           "target_language"
         ],
         "title": "ReaderCards"
+      },
+      "ReadingProgressUpdate": {
+        "properties": {
+          "active_block_uid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Block Uid"
+          },
+          "block_seconds": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Block Seconds"
+          }
+        },
+        "type": "object",
+        "title": "ReadingProgressUpdate"
       },
       "RetrievalMode": {
         "type": "string",

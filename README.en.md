@@ -40,9 +40,13 @@ The Chinese name is **衔牍**. The English name is **Ilios**. The Japanese name
 | Cloud upload is unacceptable | Local-first FastAPI + React + SQLite, with no accounts or built-in sync |
 | You use Obsidian or Notion | Export Markdown, lecture notes, and complete bundles |
 
-## Current MVP
+## Current Release
 
-Ilios v0.2.1 can create local libraries, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX with LaTeXML when installed, store structured document blocks and assets, display recovered paper figures and tables, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, preserve translation variants across parser updates, review translation memory, manage article glossary terms, store provider keys in macOS Keychain when available, stream article-grounded Q&A, save bilingual excerpts to Obsidian, create editable lecture-note patches, edit custom note templates, manage lightweight reader cards, and export source, translated, bilingual, lecture-note, or full bundle artifacts through browser downloads.
+Ilios v0.3.0 turns the app into a compact research workbench. The Library surface now keeps papers, search, filters, sorting, reading progress, translation state, import, batch translation, archive, and delete actions in one place. Selecting a row previews the paper; the explicit Read action opens the reader.
+
+The reader no longer uses the home navigation. Its own command band shows the current library on the left, `Ilios / 衔牍 · Research Paper Reader` in the center, and reading mode plus preferences on the right. The left rail switches between papers in the same library. The right rail contains collapsible tiles for tasks, model provider, paper chat, translation, glossary, notes, and export, with only the question tile expanded by default.
+
+The backend can track article reading progress, rename libraries, expose provider presets, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX with LaTeXML when installed, store structured document blocks and assets, display recovered figures and tables, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, preserve translation variants, review translation memory, manage glossary terms, store provider keys in macOS Keychain when available, stream article-grounded Q&A, save bilingual excerpts to Obsidian, create editable lecture-note patches, edit custom note templates, manage lightweight reader cards, and export source, translated, bilingual, lecture-note, or full bundle artifacts through browser downloads.
 
 The project remains local and lightweight. It does not use Docker, Redis, Celery, accounts, a hosted backend, or built-in cloud sync. PDFs can be imported and saved, but this MVP does not parse, open, OCR, translate, or embed PDFs in the reader.
 
