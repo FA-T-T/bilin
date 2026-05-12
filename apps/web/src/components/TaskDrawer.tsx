@@ -25,7 +25,7 @@ export function TaskDrawer() {
   useJobEvents(opened);
   const close = useUiStore((state) => state.closeTaskDrawer);
   const jobs = useJobs({ limit: TASK_DRAWER_LIMIT, enabled: opened });
-  const summary = useJobSummary();
+  const summary = useJobSummary({ enabled: opened });
   const clearJobs = useClearJobs();
   const jobCount = summary.data?.total ?? jobs.data?.length ?? 0;
   const shownJobCount = jobs.data?.length ?? 0;

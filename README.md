@@ -150,6 +150,12 @@ make doctor
 make dev
 ```
 
+在本机固定开发环境里，可以直接用快速启动脚本。它复用 `apps/api/.venv`、当前 `node_modules` 和固定端口，不再经过 `uv run` 的环境探测；如果服务已经在运行，会直接返回状态。
+
+```sh
+./scripts/start-dev.sh
+```
+
 启动后打开 `http://127.0.0.1:5173`。API 默认在 `127.0.0.1:8000`，worker 会处理导入、解析、翻译、问答、笔记和导出任务。也可以分别运行 `make api`、`make worker` 和 `make web` 来调试。
 
 如果没有 LaTeXML，衔牍仍能启动，Markdown 导入、PDF save-only 导入、provider 设置、翻译、笔记、导出和 fixture 测试仍然可用。TeX parse job 会明确失败为 `missing_dependency:latexml`，不会悄悄 fallback 到不稳定的正则解析。

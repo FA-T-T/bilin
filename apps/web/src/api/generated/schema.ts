@@ -985,6 +985,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/libraries/{library_id}/recommendations/arxiv/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Arxiv Categories */
+        get: operations["arxiv_categories_libraries__library_id__recommendations_arxiv_categories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/recommendations/arxiv/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Preferences */
+        get: operations["get_preferences_libraries__library_id__recommendations_arxiv_preferences_get"];
+        /** Put Preferences */
+        put: operations["put_preferences_libraries__library_id__recommendations_arxiv_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/libraries/{library_id}/recommendations/arxiv/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Arxiv Daily */
+        post: operations["arxiv_daily_libraries__library_id__recommendations_arxiv_daily_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs": {
         parameters: {
             query?: never;
@@ -1433,6 +1485,174 @@ export interface components {
             target_language: string;
             /** Variants */
             variants?: components["schemas"]["TranslationVariant"][];
+        };
+        /** ArxivCategory */
+        ArxivCategory: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Group */
+            group: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
+        /** ArxivCategoryListResult */
+        ArxivCategoryListResult: {
+            /** Categories */
+            categories?: components["schemas"]["ArxivCategory"][];
+            /**
+             * Source Url
+             * @default https://arxiv.org/category_taxonomy
+             */
+            source_url: string;
+            /**
+             * Cached
+             * @default false
+             */
+            cached: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * ArxivRecommendationEngine
+         * @enum {string}
+         */
+        ArxivRecommendationEngine: "heuristic" | "provider" | "claude_cli" | "codex_cli";
+        /** ArxivRecommendationItem */
+        ArxivRecommendationItem: {
+            /** Arxiv Id */
+            arxiv_id: string;
+            /** Bare Id */
+            bare_id: string;
+            /** Version */
+            version: string;
+            /** Title */
+            title: string;
+            /** Title Target Language */
+            title_target_language?: string | null;
+            /** Authors */
+            authors?: string[];
+            /** Summary Target Language */
+            summary_target_language?: string | null;
+            /** Recommendation Reason */
+            recommendation_reason?: string | null;
+            /**
+             * Original Summary
+             * @default
+             */
+            original_summary: string;
+            /** Primary Category */
+            primary_category?: string | null;
+            /** Categories */
+            categories?: string[];
+            /** Published */
+            published?: string | null;
+            /** Updated */
+            updated?: string | null;
+            /** Abs Url */
+            abs_url: string;
+            /** Pdf Url */
+            pdf_url: string;
+            /** Source Url */
+            source_url: string;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /** Score Reasons */
+            score_reasons?: string[];
+            /**
+             * Status
+             * @default new
+             */
+            status: string;
+            /**
+             * Is In Library
+             * @default false
+             */
+            is_in_library: boolean;
+        };
+        /** ArxivRecommendationPreferences */
+        ArxivRecommendationPreferences: {
+            /** Library Id */
+            library_id: string;
+            /** Categories */
+            categories?: string[];
+            /** Keywords */
+            keywords?: string[];
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** ArxivRecommendationPreferencesUpdate */
+        ArxivRecommendationPreferencesUpdate: {
+            /** Categories */
+            categories?: string[];
+            /** Keywords */
+            keywords?: string[];
+        };
+        /** ArxivRecommendationRequest */
+        ArxivRecommendationRequest: {
+            /**
+             * Target Language
+             * @default zh-CN
+             */
+            target_language: string;
+            /** Submitted On */
+            submitted_on?: string | null;
+            /** Categories */
+            categories?: string[] | null;
+            /** Keywords */
+            keywords?: string[] | null;
+            /**
+             * Max Results
+             * @default 60
+             */
+            max_results: number;
+            /** @default heuristic */
+            engine: components["schemas"]["ArxivRecommendationEngine"];
+            /** Provider Profile Id */
+            provider_profile_id?: string | null;
+            /** Model */
+            model?: string | null;
+            /**
+             * Refresh
+             * @default false
+             */
+            refresh: boolean;
+        };
+        /** ArxivRecommendationResult */
+        ArxivRecommendationResult: {
+            /** Library Id */
+            library_id: string;
+            /** Target Language */
+            target_language: string;
+            /** Submitted On */
+            submitted_on: string;
+            /** Categories */
+            categories?: string[];
+            /** Keywords */
+            keywords?: string[];
+            engine_requested: components["schemas"]["ArxivRecommendationEngine"];
+            engine_used: components["schemas"]["ArxivRecommendationEngine"];
+            /**
+             * Cached
+             * @default false
+             */
+            cached: boolean;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Items */
+            items?: components["schemas"]["ArxivRecommendationItem"][];
+            /** Message */
+            message?: string | null;
         };
         /** AssetRecord */
         AssetRecord: {
@@ -5246,6 +5466,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    arxiv_categories_libraries__library_id__recommendations_arxiv_categories_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArxivCategoryListResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_preferences_libraries__library_id__recommendations_arxiv_preferences_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArxivRecommendationPreferences"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_preferences_libraries__library_id__recommendations_arxiv_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArxivRecommendationPreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArxivRecommendationPreferences"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    arxiv_daily_libraries__library_id__recommendations_arxiv_daily_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArxivRecommendationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArxivRecommendationResult"];
                 };
             };
             /** @description Validation Error */

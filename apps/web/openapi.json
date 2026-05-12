@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "0.2.1"
+    "version": "3.1.0"
   },
   "paths": {
     "/health": {
@@ -3867,6 +3867,202 @@
         }
       }
     },
+    "/libraries/{library_id}/recommendations/arxiv/categories": {
+      "get": {
+        "tags": [
+          "recommendations"
+        ],
+        "summary": "Arxiv Categories",
+        "operationId": "arxiv_categories_libraries__library_id__recommendations_arxiv_categories_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Refresh"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArxivCategoryListResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/recommendations/arxiv/preferences": {
+      "get": {
+        "tags": [
+          "recommendations"
+        ],
+        "summary": "Get Preferences",
+        "operationId": "get_preferences_libraries__library_id__recommendations_arxiv_preferences_get",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArxivRecommendationPreferences"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "recommendations"
+        ],
+        "summary": "Put Preferences",
+        "operationId": "put_preferences_libraries__library_id__recommendations_arxiv_preferences_put",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArxivRecommendationPreferencesUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArxivRecommendationPreferences"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/libraries/{library_id}/recommendations/arxiv/daily": {
+      "post": {
+        "tags": [
+          "recommendations"
+        ],
+        "summary": "Arxiv Daily",
+        "operationId": "arxiv_daily_libraries__library_id__recommendations_arxiv_daily_post",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Library Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArxivRecommendationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArxivRecommendationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/jobs": {
       "get": {
         "tags": [
@@ -4876,6 +5072,458 @@
           "target_language"
         ],
         "title": "ArticleTranslations"
+      },
+      "ArxivCategory": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "group"
+        ],
+        "title": "ArxivCategory"
+      },
+      "ArxivCategoryListResult": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ArxivCategory"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url",
+            "default": "https://arxiv.org/category_taxonomy"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached",
+            "default": false
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "ArxivCategoryListResult"
+      },
+      "ArxivRecommendationEngine": {
+        "type": "string",
+        "enum": [
+          "heuristic",
+          "provider",
+          "claude_cli",
+          "codex_cli"
+        ],
+        "title": "ArxivRecommendationEngine"
+      },
+      "ArxivRecommendationItem": {
+        "properties": {
+          "arxiv_id": {
+            "type": "string",
+            "title": "Arxiv Id"
+          },
+          "bare_id": {
+            "type": "string",
+            "title": "Bare Id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "title_target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Target Language"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "summary_target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Target Language"
+          },
+          "recommendation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Reason"
+          },
+          "original_summary": {
+            "type": "string",
+            "title": "Original Summary",
+            "default": ""
+          },
+          "primary_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Category"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          },
+          "abs_url": {
+            "type": "string",
+            "title": "Abs Url"
+          },
+          "pdf_url": {
+            "type": "string",
+            "title": "Pdf Url"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "default": 0.0
+          },
+          "score_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Score Reasons"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "new"
+          },
+          "is_in_library": {
+            "type": "boolean",
+            "title": "Is In Library",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "arxiv_id",
+          "bare_id",
+          "version",
+          "title",
+          "abs_url",
+          "pdf_url",
+          "source_url"
+        ],
+        "title": "ArxivRecommendationItem"
+      },
+      "ArxivRecommendationPreferences": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id"
+        ],
+        "title": "ArxivRecommendationPreferences"
+      },
+      "ArxivRecommendationPreferencesUpdate": {
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 80,
+            "title": "Categories"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 80,
+            "title": "Keywords"
+          }
+        },
+        "type": "object",
+        "title": "ArxivRecommendationPreferencesUpdate"
+      },
+      "ArxivRecommendationRequest": {
+        "properties": {
+          "target_language": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 2,
+            "title": "Target Language",
+            "default": "zh-CN"
+          },
+          "submitted_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted On"
+          },
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categories"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "max_results": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Max Results",
+            "default": 60
+          },
+          "engine": {
+            "$ref": "#/components/schemas/ArxivRecommendationEngine",
+            "default": "heuristic"
+          },
+          "provider_profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Profile Id"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ArxivRecommendationRequest"
+      },
+      "ArxivRecommendationResult": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id"
+          },
+          "target_language": {
+            "type": "string",
+            "title": "Target Language"
+          },
+          "submitted_on": {
+            "type": "string",
+            "title": "Submitted On"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords"
+          },
+          "engine_requested": {
+            "$ref": "#/components/schemas/ArxivRecommendationEngine"
+          },
+          "engine_used": {
+            "$ref": "#/components/schemas/ArxivRecommendationEngine"
+          },
+          "cached": {
+            "type": "boolean",
+            "title": "Cached",
+            "default": false
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ArxivRecommendationItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id",
+          "target_language",
+          "submitted_on",
+          "engine_requested",
+          "engine_used",
+          "generated_at"
+        ],
+        "title": "ArxivRecommendationResult"
       },
       "AssetRecord": {
         "properties": {

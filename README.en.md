@@ -42,7 +42,7 @@ The Chinese name is **衔牍**. The English name is **Ilios**. The Japanese name
 
 ## Current Release
 
-Ilios v0.3.0 turns the app into a compact research workbench. The Library surface now keeps papers, search, filters, sorting, reading progress, translation state, import, batch translation, archive, and delete actions in one place. Selecting a row previews the paper; the explicit Read action opens the reader.
+Ilios v3.1.0 turns the app into a compact research workbench. The Library surface now keeps papers, search, filters, sorting, reading progress, translation state, import, batch translation, archive, and delete actions in one place. Selecting a row previews the paper; the explicit Read action opens the reader.
 
 The reader no longer uses the home navigation. Its own command band shows the current library on the left, `Ilios / 衔牍 · Research Paper Reader` in the center, and reading mode plus preferences on the right. The left rail switches between papers in the same library. The right rail contains collapsible tiles for tasks, model provider, paper chat, translation, glossary, notes, and export, with only the question tile expanded by default.
 

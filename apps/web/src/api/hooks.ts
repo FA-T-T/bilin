@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { API_BASE_URL, apiClient, type SseMessage } from "./client";
 import type {
   ArticleExportRequest,
+  ArxivRecommendationPreferencesUpdate,
+  ArxivRecommendationRequest,
   ChatAskRequest,
   ChatToNotePatchRequest,
   CitationLibraryImportRequest,
@@ -34,12 +36,22 @@ import type {
   TranslationMemoryReviewStatus
 } from "./types";
 
+const PASSIVE_QUERY_REFETCH_INTERVAL_MS = 30_000;
+const PASSIVE_JOB_SUMMARY_REFETCH_INTERVAL_MS = 15_000;
+const ACTIVE_JOB_REFETCH_INTERVAL_MS = 5_000;
+
 export const queryKeys = {
   doctor: ["doctor"] as const,
   providerPresets: ["provider-presets"] as const,
   providers: ["providers"] as const,
   libraries: ["libraries"] as const,
   library: (libraryId: string) => ["library", libraryId] as const,
+  arxivRecommendationCategories: (libraryId: string) =>
+    ["arxiv-recommendation-categories", libraryId] as const,
+  arxivRecommendationPreferences: (libraryId: string) =>
+    ["arxiv-recommendation-preferences", libraryId] as const,
+  arxivDailyRecommendations: (libraryId: string, payload: ArxivRecommendationRequest) =>
+    ["arxiv-daily-recommendations", libraryId, payload] as const,
   articles: (libraryId: string, targetLanguage?: string) =>
     targetLanguage
       ? (["articles", libraryId, targetLanguage] as const)
@@ -205,12 +217,61 @@ export function useDeleteLibrary() {
   });
 }
 
+export function useArxivRecommendationCategories(libraryId?: string) {
+  return useQuery({
+    queryKey: queryKeys.arxivRecommendationCategories(libraryId ?? ""),
+    queryFn: () => apiClient.getArxivRecommendationCategories(libraryId ?? ""),
+    enabled: Boolean(libraryId),
+    staleTime: 7 * 24 * 60 * 60 * 1000,
+    retry: false
+  });
+}
+
+export function useArxivRecommendationPreferences(libraryId?: string) {
+  return useQuery({
+    queryKey: queryKeys.arxivRecommendationPreferences(libraryId ?? ""),
+    queryFn: () => apiClient.getArxivRecommendationPreferences(libraryId ?? ""),
+    enabled: Boolean(libraryId),
+    retry: false
+  });
+}
+
+export function useUpdateArxivRecommendationPreferences(libraryId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ArxivRecommendationPreferencesUpdate) =>
+      apiClient.updateArxivRecommendationPreferences(libraryId ?? "", payload),
+    onSuccess: () => {
+      if (libraryId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.arxivRecommendationPreferences(libraryId)
+        });
+      }
+    }
+  });
+}
+
+export function useArxivDailyRecommendations(
+  libraryId: string | undefined,
+  payload: ArxivRecommendationRequest,
+  enabled: boolean
+) {
+  return useQuery({
+    queryKey: queryKeys.arxivDailyRecommendations(libraryId ?? "", payload),
+    queryFn: () => apiClient.getArxivDailyRecommendations(libraryId ?? "", payload),
+    enabled: Boolean(enabled && libraryId),
+    placeholderData: (previousData) => previousData,
+    staleTime: 12 * 60 * 60 * 1000,
+    retry: false
+  });
+}
+
 export function useArticles(libraryId?: string, targetLanguage = "zh-CN") {
   return useQuery({
     queryKey: queryKeys.articles(libraryId ?? "", targetLanguage),
     queryFn: () => apiClient.listArticles(libraryId ?? "", targetLanguage),
     enabled: Boolean(libraryId),
-    refetchInterval: 5000,
+    refetchInterval: PASSIVE_QUERY_REFETCH_INTERVAL_MS,
     retry: false
   });
 }
@@ -338,7 +399,7 @@ export function useArticleEmbeddingStatus(libraryId?: string, revisionId?: strin
     queryKey: queryKeys.articleEmbeddingStatus(libraryId ?? "", revisionId ?? ""),
     queryFn: () => apiClient.getArticleEmbeddingStatus(libraryId ?? "", revisionId ?? ""),
     enabled: Boolean(libraryId && revisionId),
-    refetchInterval: 5000,
+    refetchInterval: PASSIVE_QUERY_REFETCH_INTERVAL_MS,
     retry: false
   });
 }
@@ -384,7 +445,7 @@ export function useArticleTranslations(
     queryFn: () =>
       apiClient.getArticleTranslations(libraryId ?? "", revisionId ?? "", targetLanguage),
     enabled: Boolean(libraryId && revisionId),
-    refetchInterval: 5000,
+    refetchInterval: PASSIVE_QUERY_REFETCH_INTERVAL_MS,
     retry: false
   });
 }
@@ -882,11 +943,18 @@ export function useImportLocalFile(libraryId?: string) {
   });
 }
 
-export function useJobSummary() {
+export function useJobSummary(
+  options: { enabled?: boolean; refetchInterval?: number | false } = {}
+) {
+  const enabled = options.enabled ?? true;
   return useQuery({
     queryKey: queryKeys.jobSummary,
     queryFn: apiClient.getJobSummary,
-    refetchInterval: 3000,
+    enabled,
+    refetchInterval:
+      enabled === false
+        ? false
+        : (options.refetchInterval ?? PASSIVE_JOB_SUMMARY_REFETCH_INTERVAL_MS),
     retry: false
   });
 }
@@ -897,7 +965,7 @@ export function useJobs(options: { limit?: number; enabled?: boolean } = {}) {
     queryKey: queryKeys.jobList(limit),
     queryFn: () => apiClient.listJobs(limit),
     enabled: options.enabled ?? true,
-    refetchInterval: options.enabled === false ? false : 5000,
+    refetchInterval: options.enabled === false ? false : ACTIVE_JOB_REFETCH_INTERVAL_MS,
     retry: false
   });
 }

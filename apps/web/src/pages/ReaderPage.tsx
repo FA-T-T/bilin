@@ -124,7 +124,7 @@ import { type ReaderPreferences, type ReaderViewMode, useUiStore } from "../stat
 
 const emptyReaderAssetFiles: ReaderAssetFile[] = [];
 const emptyCitationLookup: CitationLookup = {};
-const READING_PROGRESS_RECORD_INTERVAL_MS = 10_000;
+const READING_PROGRESS_RECORD_INTERVAL_MS = 30_000;
 const READING_PROGRESS_MAX_IDLE_MS = 60_000;
 
 interface ReaderCardDraft {

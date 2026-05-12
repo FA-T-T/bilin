@@ -7,6 +7,7 @@ import {
   FileInput,
   Group,
   Modal,
+  MultiSelect,
   Select,
   SegmentedControl,
   Stack,
@@ -19,14 +20,19 @@ import {
 import {
   Archive,
   BookOpenText,
+  ChevronDown,
   Check,
   Database,
+  ExternalLink,
   FileText,
   Folder,
   Inbox,
   Info,
   Languages,
+  Newspaper,
   Pencil,
+  PlusCircle,
+  RefreshCw,
   Search,
   Star,
   Trash2,
@@ -39,21 +45,34 @@ import { Link, useParams } from "react-router-dom";
 import {
   useArchiveArticle,
   useArticles,
+  useArxivDailyRecommendations,
+  useArxivRecommendationCategories,
+  useArxivRecommendationPreferences,
   useDeleteArticle,
   useImportArxiv,
   useImportLocalFile,
+  useJobSummary,
   useLibrary,
   useProviders,
   useTranslateLibraryMissing,
+  useUpdateArxivRecommendationPreferences,
   useUpdateLibrary
 } from "../api/hooks";
-import type { ArticleListItem, ArticleReadingProgress, ImportLocalKind } from "../api/types";
+import type {
+  ArxivRecommendationEngine,
+  ArxivRecommendationItem,
+  ArxivRecommendationRequest,
+  ArticleListItem,
+  ArticleReadingProgress,
+  ImportLocalKind
+} from "../api/types";
 import { useT } from "../i18n";
 import { TRANSLATION_TARGET_LOCALES } from "../product";
 import { useUiStore } from "../state/ui";
 
 type ArticleFilter = "all" | "reading" | "needs_translation" | "translated";
 type ArticleSort = "updated" | "title" | "progress";
+type LibrarySurface = "articles" | "arxiv_daily";
 
 export function LibraryDetailPage() {
   const t = useT();
@@ -69,10 +88,17 @@ export function LibraryDetailPage() {
   const updateLibrary = useUpdateLibrary();
   const providers = useProviders();
   const translateMissing = useTranslateLibraryMissing(libraryId);
+  const jobs = useJobSummary();
+  const arxivCategories = useArxivRecommendationCategories(libraryId);
+  const arxivPreferences = useArxivRecommendationPreferences(libraryId);
+  const updateArxivPreferences = useUpdateArxivRecommendationPreferences(libraryId);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const taskNotificationsEnabled = useUiStore(
     (state) => state.readerFeaturePreferences.taskNotificationsEnabled
   );
+  const showArxivInlinePanel = useMediaQueryMatch("(max-width: 1180px)");
+  const showArticleInlinePanel = useMediaQueryMatch("(max-width: 1180px)");
+  const activeJobCount = jobs.data?.active ?? 0;
   const [importSource, setImportSource] = useState<"arxiv" | "file">("arxiv");
   const [showImportOptions, setShowImportOptions] = useState(false);
   const [arxivId, setArxivId] = useState("");
@@ -88,6 +114,15 @@ export function LibraryDetailPage() {
   const [articleSearchQuery, setArticleSearchQuery] = useState("");
   const [articleFilter, setArticleFilter] = useState<ArticleFilter>("all");
   const [articleSort, setArticleSort] = useState<ArticleSort>("updated");
+  const [surface, setSurface] = useState<LibrarySurface>("articles");
+  const [recommendationCategories, setRecommendationCategories] = useState<string[]>([]);
+  const [recommendationKeywords, setRecommendationKeywords] = useState("");
+  const [recommendationEngine, setRecommendationEngine] =
+    useState<ArxivRecommendationEngine>("heuristic");
+  const [recommendationRefreshNonce, setRecommendationRefreshNonce] = useState(0);
+  const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
   const [libraryActionMessage, setLibraryActionMessage] = useState<{
     kind: "success" | "error";
@@ -109,6 +144,14 @@ export function LibraryDetailPage() {
           : provider.name
       })),
     [providers.data]
+  );
+  const arxivCategoryOptions = useMemo(
+    () =>
+      (arxivCategories.data?.categories ?? []).map((category) => ({
+        value: category.id,
+        label: `${category.id} · ${category.name} · ${category.group}`
+      })),
+    [arxivCategories.data?.categories]
   );
   const selectedProvider = useMemo(
     () => (providers.data ?? []).find((provider) => provider.id === selectedProviderId),
@@ -143,6 +186,44 @@ export function LibraryDetailPage() {
     () => articleItems.filter((item) => item.article_revision.status === "archived").length,
     [articleItems]
   );
+  const recommendationKeywordList = useMemo(
+    () =>
+      recommendationKeywords
+        .split(",")
+        .map((keyword) => keyword.trim())
+        .filter(Boolean),
+    [recommendationKeywords]
+  );
+  const recommendationRequest = useMemo<ArxivRecommendationRequest>(
+    () => ({
+      target_language: targetLanguage,
+      categories: recommendationCategories,
+      keywords: recommendationKeywordList,
+      max_results: 80,
+      engine: recommendationEngine,
+      provider_profile_id:
+        recommendationEngine === "provider" && selectedProviderId ? selectedProviderId : null,
+      model:
+        recommendationEngine === "provider" && selectedProvider?.default_model
+          ? selectedProvider.default_model
+          : null,
+      refresh: recommendationRefreshNonce > 0
+    }),
+    [
+      recommendationCategories,
+      recommendationEngine,
+      recommendationKeywordList,
+      recommendationRefreshNonce,
+      selectedProvider?.default_model,
+      selectedProviderId,
+      targetLanguage
+    ]
+  );
+  const arxivDaily = useArxivDailyRecommendations(
+    libraryId,
+    recommendationRequest,
+    surface === "arxiv_daily"
+  );
 
   useEffect(() => {
     if (selectedProviderId || providerOptions.length === 0) return;
@@ -152,6 +233,16 @@ export function LibraryDetailPage() {
   useEffect(() => {
     if (!isEditingLibraryName) setLibraryNameDraft(library.data?.name ?? "");
   }, [isEditingLibraryName, library.data?.name]);
+
+  useEffect(() => {
+    if (!arxivPreferences.data) return;
+    setRecommendationCategories((current) =>
+      current.length > 0 ? current : (arxivPreferences.data.categories ?? [])
+    );
+    setRecommendationKeywords((current) =>
+      current.trim() ? current : (arxivPreferences.data.keywords ?? []).join(", ")
+    );
+  }, [arxivPreferences.data]);
 
   useEffect(() => {
     if (visibleArticleItems.length === 0) {
@@ -293,6 +384,227 @@ export function LibraryDetailPage() {
       }
     );
   };
+
+  const saveRecommendationPreferences = () => {
+    updateArxivPreferences.mutate({
+      categories: recommendationCategories,
+      keywords: recommendationKeywordList
+    });
+  };
+
+  const refreshRecommendations = () => {
+    setRecommendationRefreshNonce((value) => value + 1);
+    void arxivDaily.refetch();
+  };
+
+  const toggleRecommendation = (arxivId: string) => {
+    setExpandedRecommendationIds((current) => {
+      const next = new Set(current);
+      if (next.has(arxivId)) next.delete(arxivId);
+      else next.add(arxivId);
+      return next;
+    });
+  };
+
+  const importRecommendation = (item: ArxivRecommendationItem) => {
+    importArxiv.mutate({
+      arxiv_id: item.arxiv_id,
+      version: null,
+      download_pdf: true,
+      parse_after_import: true
+    });
+  };
+
+  const arxivDailyPanelProps: ArxivDailyPanelProps = {
+    categoryOptions: arxivCategoryOptions,
+    categories: recommendationCategories,
+    engine: recommendationEngine,
+    keywords: recommendationKeywords,
+    loading: arxivDaily.isLoading,
+    message: arxivDaily.data?.message ?? null,
+    providerOptions,
+    recommendationCount: arxivDaily.data?.items?.length ?? 0,
+    selectedProviderId,
+    targetLanguage,
+    updatePending: updateArxivPreferences.isPending,
+    onCategoriesChange: setRecommendationCategories,
+    onEngineChange: setRecommendationEngine,
+    onKeywordsChange: setRecommendationKeywords,
+    onProviderChange: setSelectedProviderId,
+    onRefresh: refreshRecommendations,
+    onSavePreferences: saveRecommendationPreferences,
+    onTargetLanguageChange: (value) => setTargetLanguage(value)
+  };
+
+  const articleManagementPanel = (
+    <>
+      <div
+        className="library-import-strip library-rail-action-card"
+        aria-label={t("library.addArticle")}
+      >
+        <Group justify="space-between" align="flex-start" gap="sm">
+          <div>
+            <Title order={3}>{t("library.addArticle")}</Title>
+            <Text c="dimmed" size="sm">
+              {t("library.addArticleHelp")}
+            </Text>
+          </div>
+          <SegmentedControl
+            value={importSource}
+            onChange={(value) => setImportSource(value as "arxiv" | "file")}
+            data={[
+              { label: "arXiv", value: "arxiv" },
+              { label: t("library.localFile"), value: "file" }
+            ]}
+          />
+        </Group>
+
+        {importSource === "arxiv" ? (
+          <>
+            <Group mt="md" align="end" className="add-article-form">
+              <TextInput
+                id="library-arxiv-input"
+                className="grow-input"
+                label={t("library.arxivId")}
+                placeholder={t("library.arxivIdPlaceholder")}
+                value={arxivId}
+                onChange={(event) => setArxivId(event.target.value)}
+              />
+              <Button
+                onClick={submitImport}
+                loading={importArxiv.isPending}
+                disabled={!libraryId || !arxivId.trim()}
+              >
+                {t("library.addArticle")}
+              </Button>
+              <Button variant="subtle" onClick={() => setShowImportOptions((open) => !open)}>
+                {t("library.options")}
+              </Button>
+            </Group>
+            <Collapse in={showImportOptions}>
+              <Group mt="md" className="advanced-options">
+                <TextInput
+                  label={t("library.version")}
+                  placeholder={t("library.versionPlaceholder")}
+                  value={version}
+                  onChange={(event) => setVersion(event.target.value)}
+                />
+                <Switch
+                  label={t("library.downloadPdf")}
+                  checked={downloadPdf}
+                  onChange={(event) => setDownloadPdf(event.currentTarget.checked)}
+                />
+                <Switch
+                  label={t("library.parseAfterImport")}
+                  checked={parseAfterImport}
+                  onChange={(event) => setParseAfterImport(event.currentTarget.checked)}
+                />
+              </Group>
+            </Collapse>
+          </>
+        ) : (
+          <>
+            <Group mt="md" align="end" className="add-article-form">
+              <FileInput
+                className="grow-input"
+                label={t("library.file")}
+                placeholder={t("library.filePlaceholder")}
+                value={localFile}
+                onChange={setLocalFile}
+              />
+              <Select
+                label={t("library.type")}
+                value={localKind}
+                onChange={(value) => {
+                  if (value === "tex_archive" || value === "markdown" || value === "pdf") {
+                    setLocalKind(value);
+                  }
+                }}
+                data={[
+                  { value: "tex_archive", label: t("library.texArchive") },
+                  { value: "markdown", label: t("library.markdown") },
+                  { value: "pdf", label: t("library.pdfSaveOnly") }
+                ]}
+              />
+              <Button
+                onClick={submitLocalImport}
+                loading={importLocalFile.isPending}
+                disabled={!libraryId || !localFile}
+              >
+                {t("library.importFile")}
+              </Button>
+            </Group>
+            <Group mt="md" className="advanced-options">
+              <Switch
+                label={t("library.parseTexArchive")}
+                checked={localParseAfterImport}
+                disabled={localKind !== "tex_archive"}
+                onChange={(event) => setLocalParseAfterImport(event.currentTarget.checked)}
+              />
+            </Group>
+          </>
+        )}
+
+        {importArxiv.isSuccess ? (
+          <Text c="dimmed" size="sm" mt="sm">
+            {t("library.importQueued")}
+          </Text>
+        ) : null}
+        {importArxiv.isError ? (
+          <Text c="red" size="sm" mt="sm">
+            {t("library.importQueueErrorWithMessage", {
+              message: errorMessage(importArxiv.error)
+            })}
+          </Text>
+        ) : null}
+        {importLocalFile.isSuccess ? (
+          <Text c="dimmed" size="sm" mt="sm">
+            {t("library.localImported")}
+          </Text>
+        ) : null}
+        {importLocalFile.isError ? (
+          <Text c="red" size="sm" mt="sm">
+            {t("library.localImportError")}
+          </Text>
+        ) : null}
+      </div>
+
+      <div className="library-batch-strip library-rail-action-card">
+        <Stack gap={2}>
+          <Text fw={650}>{t("library.batchActions")}</Text>
+          <Text c="dimmed" size="sm">
+            {t("library.missingTranslationSummary", {
+              articles: translationSummary.articles,
+              blocks: translationSummary.blocks,
+              active: translationSummary.active
+            })}
+          </Text>
+        </Stack>
+        <Group gap="xs" wrap="nowrap" className="library-batch-controls">
+          <Select
+            aria-label={t("library.provider")}
+            data={providerOptions}
+            disabled={providers.isLoading || providerOptions.length === 0}
+            placeholder={t("library.noProviderConfigured")}
+            searchable
+            value={selectedProviderId || null}
+            onChange={(value) => setSelectedProviderId(value ?? "")}
+          />
+          <Select
+            aria-label={t("library.targetLanguage")}
+            allowDeselect={false}
+            data={TRANSLATION_TARGET_LOCALES.map((item) => ({
+              value: item.value,
+              label: item.nativeLabel
+            }))}
+            searchable
+            value={targetLanguage}
+            onChange={(value) => setTargetLanguage(value ?? "zh-CN")}
+          />
+        </Group>
+      </div>
+    </>
+  );
 
   useEffect(() => {
     const job = importArxiv.data;
@@ -440,18 +752,40 @@ export function LibraryDetailPage() {
 
           <div className="library-rail-section">
             <Text className="library-rail-label">{t("library.sources")}</Text>
-            <div className="library-rail-item library-rail-item-static">
+            <button
+              type="button"
+              className="library-rail-item"
+              data-active={surface === "articles" || undefined}
+              onClick={() => setSurface("articles")}
+            >
+              <FileText size={15} aria-hidden="true" />
               <span>arXiv</span>
               <strong>
                 {articleItems.filter((item) => item.family.source === "arxiv").length}
               </strong>
-            </div>
-            <div className="library-rail-item library-rail-item-static">
+            </button>
+            <button
+              type="button"
+              className="library-rail-item"
+              data-active={surface === "arxiv_daily" || undefined}
+              onClick={() => setSurface("arxiv_daily")}
+            >
+              <Newspaper size={15} aria-hidden="true" />
+              <span>{t("library.arxivDaily")}</span>
+              <strong>{arxivDaily.data?.items?.length ?? "—"}</strong>
+            </button>
+            <button
+              type="button"
+              className="library-rail-item"
+              data-active={surface === "articles" || undefined}
+              onClick={() => setSurface("articles")}
+            >
+              <Folder size={15} aria-hidden="true" />
               <span>{t("library.localFile")}</span>
               <strong>
                 {articleItems.filter((item) => item.family.source !== "arxiv").length}
               </strong>
-            </div>
+            </button>
           </div>
 
           <div className="library-storage-meter">
@@ -474,386 +808,272 @@ export function LibraryDetailPage() {
           </div>
         </aside>
 
-        <main className="library-article-surface">
-          <div className="library-surface-header">
-            <div>
-              <Text className="page-eyebrow">{t("library.localWorkspace")}</Text>
-              <Title order={1} className="library-workbench-title">
-                {t("library.articles")}
-              </Title>
-            </div>
-            <Group gap="xs" className="library-surface-actions">
-              <Button
-                leftSection={<Upload size={16} />}
-                variant="light"
-                onClick={() => {
-                  setImportSource("arxiv");
-                  globalThis.document?.getElementById("library-arxiv-input")?.focus();
-                }}
-              >
-                {t("library.import")}
-              </Button>
-              <Button
-                leftSection={<Languages size={16} />}
-                disabled={
-                  !libraryId ||
-                  !selectedProviderId ||
-                  translationSummary.blocks === 0 ||
-                  translateMissing.isPending
-                }
-                loading={translateMissing.isPending}
-                onClick={queueMissingTranslations}
-              >
-                {t("library.translateMissing")}
-              </Button>
-            </Group>
-          </div>
-
-          <div className="library-toolbar">
-            <TextInput
-              aria-label={t("library.searchPapers")}
-              className="library-search-input"
-              leftSection={<Search size={15} aria-hidden="true" />}
-              placeholder={t("library.searchPapers")}
-              value={articleSearchQuery}
-              onChange={(event) => setArticleSearchQuery(event.currentTarget.value)}
+        <main
+          className={`library-article-surface${
+            surface === "arxiv_daily" ? " library-article-surface-recommendations" : ""
+          }`}
+        >
+          {surface === "arxiv_daily" ? (
+            <ArxivDailySurface
+              expandedIds={expandedRecommendationIds}
+              importPending={importArxiv.isPending}
+              loading={arxivDaily.isLoading}
+              panelProps={arxivDailyPanelProps}
+              recommendations={arxivDaily.data?.items ?? []}
+              showPanel={showArxivInlinePanel}
+              onImport={importRecommendation}
+              onToggle={toggleRecommendation}
             />
-            <Select
-              aria-label={t("library.filter")}
-              allowDeselect={false}
-              data={[
-                { value: "all", label: t("library.allPapers") },
-                { value: "reading", label: t("library.reading") },
-                { value: "needs_translation", label: t("library.needsTranslation") },
-                { value: "translated", label: t("library.translatedPapers") }
-              ]}
-              value={articleFilter}
-              onChange={(value) => setArticleFilter((value ?? "all") as ArticleFilter)}
-            />
-            <Select
-              aria-label={t("library.sort")}
-              allowDeselect={false}
-              data={[
-                { value: "updated", label: t("library.sortUpdated") },
-                { value: "title", label: t("library.sortTitle") },
-                { value: "progress", label: t("library.sortProgress") }
-              ]}
-              value={articleSort}
-              onChange={(value) => setArticleSort((value ?? "updated") as ArticleSort)}
-            />
-          </div>
-
-          <div className="library-import-strip" aria-label={t("library.addArticle")}>
-            <Group justify="space-between" align="flex-start" gap="sm">
-              <div>
-                <Title order={3}>{t("library.addArticle")}</Title>
-                <Text c="dimmed" size="sm">
-                  {t("library.addArticleHelp")}
-                </Text>
-              </div>
-              <SegmentedControl
-                value={importSource}
-                onChange={(value) => setImportSource(value as "arxiv" | "file")}
-                data={[
-                  { label: "arXiv", value: "arxiv" },
-                  { label: t("library.localFile"), value: "file" }
-                ]}
-              />
-            </Group>
-
-            {importSource === "arxiv" ? (
-              <>
-                <Group mt="md" align="end" className="add-article-form">
-                  <TextInput
-                    id="library-arxiv-input"
-                    className="grow-input"
-                    label={t("library.arxivId")}
-                    placeholder={t("library.arxivIdPlaceholder")}
-                    value={arxivId}
-                    onChange={(event) => setArxivId(event.target.value)}
-                  />
-                  <Button
-                    onClick={submitImport}
-                    loading={importArxiv.isPending}
-                    disabled={!libraryId || !arxivId.trim()}
-                  >
-                    {t("library.addArticle")}
-                  </Button>
-                  <Button variant="subtle" onClick={() => setShowImportOptions((open) => !open)}>
-                    {t("library.options")}
-                  </Button>
-                </Group>
-                <Collapse in={showImportOptions}>
-                  <Group mt="md" className="advanced-options">
-                    <TextInput
-                      label={t("library.version")}
-                      placeholder={t("library.versionPlaceholder")}
-                      value={version}
-                      onChange={(event) => setVersion(event.target.value)}
-                    />
-                    <Switch
-                      label={t("library.downloadPdf")}
-                      checked={downloadPdf}
-                      onChange={(event) => setDownloadPdf(event.currentTarget.checked)}
-                    />
-                    <Switch
-                      label={t("library.parseAfterImport")}
-                      checked={parseAfterImport}
-                      onChange={(event) => setParseAfterImport(event.currentTarget.checked)}
-                    />
-                  </Group>
-                </Collapse>
-              </>
-            ) : (
-              <>
-                <Group mt="md" align="end" className="add-article-form">
-                  <FileInput
-                    className="grow-input"
-                    label={t("library.file")}
-                    placeholder={t("library.filePlaceholder")}
-                    value={localFile}
-                    onChange={setLocalFile}
-                  />
-                  <Select
-                    label={t("library.type")}
-                    value={localKind}
-                    onChange={(value) => {
-                      if (value === "tex_archive" || value === "markdown" || value === "pdf") {
-                        setLocalKind(value);
-                      }
-                    }}
-                    data={[
-                      { value: "tex_archive", label: t("library.texArchive") },
-                      { value: "markdown", label: t("library.markdown") },
-                      { value: "pdf", label: t("library.pdfSaveOnly") }
-                    ]}
-                  />
-                  <Button
-                    onClick={submitLocalImport}
-                    loading={importLocalFile.isPending}
-                    disabled={!libraryId || !localFile}
-                  >
-                    {t("library.importFile")}
-                  </Button>
-                </Group>
-                <Group mt="md" className="advanced-options">
-                  <Switch
-                    label={t("library.parseTexArchive")}
-                    checked={localParseAfterImport}
-                    disabled={localKind !== "tex_archive"}
-                    onChange={(event) => setLocalParseAfterImport(event.currentTarget.checked)}
-                  />
-                </Group>
-              </>
-            )}
-
-            {importArxiv.isSuccess ? (
-              <Text c="dimmed" size="sm" mt="sm">
-                {t("library.importQueued")}
-              </Text>
-            ) : null}
-            {importArxiv.isError ? (
-              <Text c="red" size="sm" mt="sm">
-                {t("library.importQueueErrorWithMessage", {
-                  message: errorMessage(importArxiv.error)
-                })}
-              </Text>
-            ) : null}
-            {importLocalFile.isSuccess ? (
-              <Text c="dimmed" size="sm" mt="sm">
-                {t("library.localImported")}
-              </Text>
-            ) : null}
-            {importLocalFile.isError ? (
-              <Text c="red" size="sm" mt="sm">
-                {t("library.localImportError")}
-              </Text>
-            ) : null}
-          </div>
-
-          <div className="library-batch-strip">
-            <Stack gap={2}>
-              <Text fw={650}>{t("library.batchActions")}</Text>
-              <Text c="dimmed" size="sm">
-                {t("library.missingTranslationSummary", {
-                  articles: translationSummary.articles,
-                  blocks: translationSummary.blocks,
-                  active: translationSummary.active
-                })}
-              </Text>
-            </Stack>
-            <Group gap="xs" wrap="nowrap">
-              <Select
-                aria-label={t("library.provider")}
-                data={providerOptions}
-                disabled={providers.isLoading || providerOptions.length === 0}
-                placeholder={t("library.noProviderConfigured")}
-                searchable
-                value={selectedProviderId || null}
-                w={230}
-                onChange={(value) => setSelectedProviderId(value ?? "")}
-              />
-              <Select
-                aria-label={t("library.targetLanguage")}
-                allowDeselect={false}
-                data={TRANSLATION_TARGET_LOCALES.map((item) => ({
-                  value: item.value,
-                  label: item.nativeLabel
-                }))}
-                searchable
-                value={targetLanguage}
-                w={140}
-                onChange={(value) => setTargetLanguage(value ?? "zh-CN")}
-              />
-            </Group>
-          </div>
-
-          {articleActionMessage ? (
-            <div className={`library-inline-message library-inline-${articleActionMessage.kind}`}>
-              {articleActionMessage.text}
-            </div>
-          ) : null}
-          {articles.isError ? (
-            <Alert color="yellow" icon={<Info size={18} />}>
-              {t("library.articleLoadError")}
-            </Alert>
-          ) : null}
-
-          <section className="library-paper-list" aria-label={t("library.articles")}>
-            {articleItems.length === 0 ? (
-              <Text c="dimmed" className="empty-state">
-                {t("library.noArticles")}
-              </Text>
-            ) : visibleArticleItems.length === 0 ? (
-              <Text c="dimmed" className="empty-state">
-                {t("library.noMatchingArticles")}
-              </Text>
-            ) : (
-              visibleArticleItems.map((item) => {
-                const status = articleTranslationStatus(item);
-                const selected = selectedArticle?.article_revision.id === item.article_revision.id;
-                return (
-                  <button
-                    type="button"
-                    key={item.article_revision.id}
-                    className="library-paper-row"
-                    data-selected={selected || undefined}
-                    title={readingProgressTitle(item.reading_progress)}
-                    onClick={() => setSelectedRevisionId(item.article_revision.id)}
-                  >
-                    <span className="library-paper-icon" aria-hidden="true">
-                      <FileText size={16} />
-                    </span>
-                    <span className="library-paper-main">
-                      <span className="library-paper-title">
-                        <ReadingProgressTitleBackground progress={item.reading_progress} />
-                        <span>{item.family.title ?? item.family.external_id}</span>
-                      </span>
-                      <span className="library-paper-meta">
-                        {articleSourceLabel(item)} · {item.family.external_id}
-                        {item.article_revision.version} · {item.block_count} {t("library.blocks")}
-                      </span>
-                    </span>
-                    <span className="library-paper-status">
-                      <Badge color={translationStatusColor(item)} variant="light">
-                        {translationStatusLabel(item, t)}
-                      </Badge>
-                      {status.translatable_blocks > 0 ? (
-                        <small>
-                          {status.translated_blocks}/{status.translatable_blocks}
-                        </small>
-                      ) : null}
-                    </span>
-                    <span className="library-paper-progress">
-                      <span>{articleProgressLabel(item)}</span>
-                      <span className="library-progress-track" aria-hidden="true">
-                        <span style={{ width: `${articleReadProgressPercent(item)}%` }} />
-                      </span>
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </section>
-        </main>
-
-        <aside className="library-right-rail" aria-label={t("library.paperPreview")}>
-          <div className="library-preview-card">
-            {selectedArticle ? (
-              <>
-                <Text className="library-rail-label">{t("library.paperSelected")}</Text>
-                <Title order={3} className="library-preview-title">
-                  {selectedArticle.family.title ?? selectedArticle.family.external_id}
-                </Title>
-                <Text c="dimmed" size="sm">
-                  {selectedArticleSubtitle(selectedArticle)}
-                </Text>
-                <div className="library-preview-stats">
-                  <div>
-                    <span>{t("library.status")}</span>
-                    <strong>{selectedArticle.article_revision.status}</strong>
-                  </div>
-                  <div>
-                    <span>{t("library.translation")}</span>
-                    <strong>{translationStatusLabel(selectedArticle, t)}</strong>
-                  </div>
-                  <div>
-                    <span>{t("library.assets")}</span>
-                    <strong>{selectedArticle.asset_count}</strong>
-                  </div>
-                  <div>
-                    <span>{t("library.updated")}</span>
-                    <strong>
-                      {new Date(selectedArticle.article_revision.updated_at).toLocaleDateString()}
-                    </strong>
-                  </div>
+          ) : (
+            <>
+              <div className="library-surface-header">
+                <div>
+                  <Text className="page-eyebrow">{t("library.localWorkspace")}</Text>
+                  <Title order={1} className="library-workbench-title">
+                    {t("library.articles")}
+                  </Title>
                 </div>
-                <Group grow gap="xs" className="library-preview-actions">
+                <Group gap="xs" className="library-surface-actions">
                   <Button
-                    component={Link}
-                    to={articleRoute(selectedArticle)}
-                    leftSection={<BookOpenText size={16} />}
+                    leftSection={<Upload size={16} />}
+                    variant="light"
+                    onClick={() => {
+                      setImportSource("arxiv");
+                      globalThis.document?.getElementById("library-arxiv-input")?.focus();
+                    }}
                   >
-                    {t("library.read")}
+                    {t("library.import")}
                   </Button>
                   <Button
-                    variant="light"
                     leftSection={<Languages size={16} />}
-                    disabled={!selectedProviderId || translateMissing.isPending}
+                    disabled={
+                      !libraryId ||
+                      !selectedProviderId ||
+                      translationSummary.blocks === 0 ||
+                      translateMissing.isPending
+                    }
+                    loading={translateMissing.isPending}
                     onClick={queueMissingTranslations}
                   >
                     {t("library.translateMissing")}
                   </Button>
                 </Group>
-                <Group grow gap="xs">
-                  <Button
-                    variant="subtle"
-                    leftSection={<Archive size={15} />}
-                    disabled={
-                      selectedArticle.article_revision.status === "archived" ||
-                      archiveArticle.isPending
-                    }
-                    onClick={() => archiveRevision(selectedArticle.article_revision.id)}
-                  >
-                    {t("library.archive")}
-                  </Button>
-                  <Button
-                    color="red"
-                    variant="subtle"
-                    leftSection={<Trash2 size={15} />}
-                    disabled={deleteArticle.isPending}
-                    onClick={() => setPendingDeleteArticle(selectedArticle)}
-                  >
-                    {t("library.delete")}
-                  </Button>
-                </Group>
-              </>
-            ) : (
-              <Text c="dimmed" size="sm">
-                {t("library.noPaperSelected")}
-              </Text>
-            )}
-          </div>
+              </div>
+
+              <div className="library-toolbar">
+                <TextInput
+                  aria-label={t("library.searchPapers")}
+                  className="library-search-input"
+                  leftSection={<Search size={15} aria-hidden="true" />}
+                  placeholder={t("library.searchPapers")}
+                  value={articleSearchQuery}
+                  onChange={(event) => setArticleSearchQuery(event.currentTarget.value)}
+                />
+                <Select
+                  aria-label={t("library.filter")}
+                  allowDeselect={false}
+                  data={[
+                    { value: "all", label: t("library.allPapers") },
+                    { value: "reading", label: t("library.reading") },
+                    { value: "needs_translation", label: t("library.needsTranslation") },
+                    { value: "translated", label: t("library.translatedPapers") }
+                  ]}
+                  value={articleFilter}
+                  onChange={(value) => setArticleFilter((value ?? "all") as ArticleFilter)}
+                />
+                <Select
+                  aria-label={t("library.sort")}
+                  allowDeselect={false}
+                  data={[
+                    { value: "updated", label: t("library.sortUpdated") },
+                    { value: "title", label: t("library.sortTitle") },
+                    { value: "progress", label: t("library.sortProgress") }
+                  ]}
+                  value={articleSort}
+                  onChange={(value) => setArticleSort((value ?? "updated") as ArticleSort)}
+                />
+              </div>
+
+              {showArticleInlinePanel ? articleManagementPanel : null}
+
+              {articleActionMessage ? (
+                <div
+                  className={`library-inline-message library-inline-${articleActionMessage.kind}`}
+                >
+                  {articleActionMessage.text}
+                </div>
+              ) : null}
+              {articles.isError ? (
+                <Alert color="yellow" icon={<Info size={18} />}>
+                  {t("library.articleLoadError")}
+                </Alert>
+              ) : null}
+
+              <section className="library-paper-list" aria-label={t("library.articles")}>
+                {articleItems.length === 0 ? (
+                  <Text c="dimmed" className="empty-state">
+                    {t("library.noArticles")}
+                  </Text>
+                ) : visibleArticleItems.length === 0 ? (
+                  <Text c="dimmed" className="empty-state">
+                    {t("library.noMatchingArticles")}
+                  </Text>
+                ) : (
+                  visibleArticleItems.map((item) => {
+                    const status = articleTranslationStatus(item);
+                    const selected =
+                      selectedArticle?.article_revision.id === item.article_revision.id;
+                    return (
+                      <div
+                        key={item.article_revision.id}
+                        className="library-paper-row"
+                        role="button"
+                        tabIndex={0}
+                        data-selected={selected || undefined}
+                        title={readingProgressTitle(item.reading_progress)}
+                        onClick={() => setSelectedRevisionId(item.article_revision.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          setSelectedRevisionId(item.article_revision.id);
+                        }}
+                      >
+                        <span className="library-paper-icon" aria-hidden="true">
+                          <FileText size={16} />
+                        </span>
+                        <span className="library-paper-main">
+                          <Link
+                            className="library-paper-title library-paper-title-link"
+                            to={articleRoute(item)}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <ReadingProgressTitleBackground progress={item.reading_progress} />
+                            <span>{item.family.title ?? item.family.external_id}</span>
+                          </Link>
+                          <span className="library-paper-meta">
+                            {articleSourceLabel(item)} · {item.family.external_id}
+                            {item.article_revision.version} · {item.block_count}{" "}
+                            {t("library.blocks")}
+                          </span>
+                        </span>
+                        <span className="library-paper-status">
+                          <Badge color={translationStatusColor(item)} variant="light">
+                            {translationStatusLabel(item, t)}
+                          </Badge>
+                          {status.translatable_blocks > 0 ? (
+                            <small>
+                              {status.translated_blocks}/{status.translatable_blocks}
+                            </small>
+                          ) : null}
+                        </span>
+                        <span className="library-paper-progress">
+                          <span>{articleProgressLabel(item)}</span>
+                          <span className="library-progress-track" aria-hidden="true">
+                            <span style={{ width: `${articleReadProgressPercent(item)}%` }} />
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </section>
+            </>
+          )}
+        </main>
+
+        <aside className="library-right-rail" aria-label={t("library.paperPreview")}>
+          {surface === "arxiv_daily" && !showArxivInlinePanel ? (
+            <ArxivDailyRail
+              activeJobCount={activeJobCount}
+              engine={recommendationEngine}
+              importPending={importArxiv.isPending}
+              panelProps={arxivDailyPanelProps}
+              providersConfigured={providerOptions.length}
+              selectedProviderLabel={selectedProvider?.name ?? ""}
+            />
+          ) : surface === "arxiv_daily" ? null : (
+            <div className="library-right-rail-stack">
+              {!showArticleInlinePanel ? articleManagementPanel : null}
+              <div className="library-preview-card">
+                {selectedArticle ? (
+                  <>
+                    <Text className="library-rail-label">{t("library.paperSelected")}</Text>
+                    <Title order={3} className="library-preview-title">
+                      {selectedArticle.family.title ?? selectedArticle.family.external_id}
+                    </Title>
+                    <Text c="dimmed" size="sm">
+                      {selectedArticleSubtitle(selectedArticle)}
+                    </Text>
+                    <div className="library-preview-stats">
+                      <div>
+                        <span>{t("library.status")}</span>
+                        <strong>{selectedArticle.article_revision.status}</strong>
+                      </div>
+                      <div>
+                        <span>{t("library.translation")}</span>
+                        <strong>{translationStatusLabel(selectedArticle, t)}</strong>
+                      </div>
+                      <div>
+                        <span>{t("library.assets")}</span>
+                        <strong>{selectedArticle.asset_count}</strong>
+                      </div>
+                      <div>
+                        <span>{t("library.updated")}</span>
+                        <strong>
+                          {new Date(
+                            selectedArticle.article_revision.updated_at
+                          ).toLocaleDateString()}
+                        </strong>
+                      </div>
+                    </div>
+                    <Group grow gap="xs" className="library-preview-actions">
+                      <Button
+                        component={Link}
+                        to={articleRoute(selectedArticle)}
+                        leftSection={<BookOpenText size={16} />}
+                      >
+                        {t("library.read")}
+                      </Button>
+                      <Button
+                        variant="light"
+                        leftSection={<Languages size={16} />}
+                        disabled={!selectedProviderId || translateMissing.isPending}
+                        onClick={queueMissingTranslations}
+                      >
+                        {t("library.translateMissing")}
+                      </Button>
+                    </Group>
+                    <Group grow gap="xs">
+                      <Button
+                        variant="subtle"
+                        leftSection={<Archive size={15} />}
+                        disabled={
+                          selectedArticle.article_revision.status === "archived" ||
+                          archiveArticle.isPending
+                        }
+                        onClick={() => archiveRevision(selectedArticle.article_revision.id)}
+                      >
+                        {t("library.archive")}
+                      </Button>
+                      <Button
+                        color="red"
+                        variant="subtle"
+                        leftSection={<Trash2 size={15} />}
+                        disabled={deleteArticle.isPending}
+                        onClick={() => setPendingDeleteArticle(selectedArticle)}
+                      >
+                        {t("library.delete")}
+                      </Button>
+                    </Group>
+                  </>
+                ) : (
+                  <Text c="dimmed" size="sm">
+                    {t("library.noPaperSelected")}
+                  </Text>
+                )}
+              </div>
+            </div>
+          )}
         </aside>
       </div>
 
@@ -888,6 +1108,324 @@ export function LibraryDetailPage() {
   );
 }
 
+type ArxivDailyPanelProps = {
+  categoryOptions: { value: string; label: string }[];
+  categories: string[];
+  engine: ArxivRecommendationEngine;
+  keywords: string;
+  loading: boolean;
+  message: string | null;
+  providerOptions: { value: string; label: string }[];
+  recommendationCount: number;
+  selectedProviderId: string;
+  targetLanguage: string;
+  updatePending: boolean;
+  onCategoriesChange: (categories: string[]) => void;
+  onEngineChange: (engine: ArxivRecommendationEngine) => void;
+  onKeywordsChange: (keywords: string) => void;
+  onProviderChange: (providerId: string) => void;
+  onRefresh: () => void;
+  onSavePreferences: () => void;
+  onTargetLanguageChange: (language: string) => void;
+};
+
+function ArxivDailySurface({
+  expandedIds,
+  importPending,
+  loading,
+  panelProps,
+  recommendations,
+  showPanel,
+  onImport,
+  onToggle
+}: {
+  expandedIds: Set<string>;
+  importPending: boolean;
+  loading: boolean;
+  panelProps: ArxivDailyPanelProps;
+  recommendations: ArxivRecommendationItem[];
+  showPanel: boolean;
+  onImport: (item: ArxivRecommendationItem) => void;
+  onToggle: (arxivId: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="arxiv-daily-surface">
+      <div className="library-surface-header">
+        <div>
+          <Text className="page-eyebrow">{t("library.arxivDailyEyebrow")}</Text>
+          <Title order={1} className="library-workbench-title">
+            {t("library.arxivDailyTitle")}
+          </Title>
+        </div>
+      </div>
+
+      {showPanel ? (
+        <div className="arxiv-daily-mobile-panel">
+          <ArxivDailyPanel {...panelProps} />
+        </div>
+      ) : null}
+
+      <section className="arxiv-recommendation-feed" aria-label={t("library.arxivDaily")}>
+        {loading ? (
+          <Text c="dimmed" className="empty-state">
+            {t("library.loadingRecommendations")}
+          </Text>
+        ) : recommendations.length === 0 ? (
+          <Text c="dimmed" className="empty-state">
+            {t("library.noRecommendations")}
+          </Text>
+        ) : (
+          recommendations.map((item) => (
+            <ArxivRecommendationRow
+              expanded={expandedIds.has(item.arxiv_id)}
+              importPending={importPending}
+              item={item}
+              key={item.arxiv_id}
+              onImport={onImport}
+              onToggle={onToggle}
+            />
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ArxivDailyPanel({
+  categoryOptions,
+  categories,
+  engine,
+  keywords,
+  loading,
+  message,
+  providerOptions,
+  recommendationCount,
+  selectedProviderId,
+  targetLanguage,
+  updatePending,
+  onCategoriesChange,
+  onEngineChange,
+  onKeywordsChange,
+  onProviderChange,
+  onRefresh,
+  onSavePreferences,
+  onTargetLanguageChange
+}: ArxivDailyPanelProps) {
+  const t = useT();
+  return (
+    <div className="arxiv-daily-panel">
+      <div className="arxiv-daily-panel-actions">
+        <Button
+          leftSection={<RefreshCw size={16} />}
+          loading={loading}
+          onClick={onRefresh}
+          variant="light"
+        >
+          {t("library.refreshRecommendations")}
+        </Button>
+        <Button
+          leftSection={<Check size={16} />}
+          loading={updatePending}
+          onClick={onSavePreferences}
+          variant="subtle"
+        >
+          {t("library.saveRecommendationPrefs")}
+        </Button>
+      </div>
+
+      <div className="arxiv-daily-controls">
+        <MultiSelect
+          aria-label={t("library.arxivCategories")}
+          className="arxiv-category-picker"
+          data={categoryOptions}
+          disabled={categoryOptions.length === 0}
+          label={t("library.arxivCategories")}
+          maxDropdownHeight={360}
+          onChange={onCategoriesChange}
+          placeholder={t("library.arxivCategoriesPlaceholder")}
+          searchable
+          value={categories}
+        />
+        <TextInput
+          aria-label={t("library.recommendationKeywords")}
+          label={t("library.recommendationKeywords")}
+          onChange={(event) => onKeywordsChange(event.currentTarget.value)}
+          placeholder={t("library.recommendationKeywordsPlaceholder")}
+          value={keywords}
+        />
+        <Select
+          aria-label={t("library.targetLanguage")}
+          allowDeselect={false}
+          data={TRANSLATION_TARGET_LOCALES.map((item) => ({
+            value: item.value,
+            label: item.nativeLabel
+          }))}
+          label={t("library.targetLanguage")}
+          onChange={(value) => onTargetLanguageChange(value ?? "zh-CN")}
+          searchable
+          value={targetLanguage}
+        />
+        <Select
+          aria-label={t("library.recommendationEngine")}
+          allowDeselect={false}
+          data={[
+            { value: "heuristic", label: t("library.recommendationEngineHeuristic") },
+            { value: "provider", label: t("library.recommendationEngineProvider") },
+            { value: "claude_cli", label: "Claude CLI" },
+            { value: "codex_cli", label: "Codex CLI" }
+          ]}
+          label={t("library.recommendationEngine")}
+          onChange={(value) => onEngineChange((value ?? "heuristic") as ArxivRecommendationEngine)}
+          value={engine}
+        />
+        {engine === "provider" ? (
+          <Select
+            aria-label={t("library.provider")}
+            data={providerOptions}
+            disabled={providerOptions.length === 0}
+            label={t("library.provider")}
+            onChange={(value) => onProviderChange(value ?? "")}
+            placeholder={t("library.noProviderConfigured")}
+            searchable
+            value={selectedProviderId || null}
+          />
+        ) : null}
+      </div>
+
+      <div className="arxiv-daily-status-stack">
+        <div className="arxiv-daily-summary-strip">
+          <Text size="sm">{t("library.recommendationCount", { count: recommendationCount })}</Text>
+          <Text c="dimmed" size="sm">
+            {t("library.arxivDailyInteractionHint")}
+          </Text>
+        </div>
+        {message ? (
+          <div className="library-inline-message library-inline-info">{message}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ArxivRecommendationRow({
+  expanded,
+  importPending,
+  item,
+  onImport,
+  onToggle
+}: {
+  expanded: boolean;
+  importPending: boolean;
+  item: ArxivRecommendationItem;
+  onImport: (item: ArxivRecommendationItem) => void;
+  onToggle: (arxivId: string) => void;
+}) {
+  const t = useT();
+  const translatedTitle = item.title_target_language || t("library.titleTranslationPending");
+  const translatedSummary = item.summary_target_language || t("library.summaryTranslationPending");
+  return (
+    <article className="arxiv-recommendation-row" data-expanded={expanded || undefined}>
+      <button
+        type="button"
+        className="arxiv-recommendation-title-button"
+        onClick={() => onToggle(item.arxiv_id)}
+      >
+        <span className="arxiv-recommendation-title-stack">
+          <span className="arxiv-recommendation-title">{item.title}</span>
+          <span className="arxiv-recommendation-title-target">{translatedTitle}</span>
+          <span className="arxiv-recommendation-meta">
+            {item.arxiv_id} · {item.primary_category ?? item.categories?.[0] ?? "arXiv"} ·{" "}
+            {formatRecommendationDate(item.published ?? item.updated)}
+          </span>
+        </span>
+        <span className="arxiv-recommendation-status">
+          <Badge color={item.is_in_library ? "green" : "teal"} variant="light">
+            {item.is_in_library ? t("library.inLibrary") : t("library.newPaper")}
+          </Badge>
+          <ChevronDown size={16} aria-hidden="true" />
+        </span>
+      </button>
+      {expanded ? (
+        <div className="arxiv-recommendation-expanded">
+          <Text className="arxiv-recommendation-abstract">{translatedSummary}</Text>
+          <Text c="dimmed" size="sm">
+            {item.recommendation_reason || recommendationReasonFallback(item, t)}
+          </Text>
+          <Group gap="xs" className="arxiv-recommendation-actions">
+            <Button
+              disabled={item.is_in_library}
+              leftSection={<PlusCircle size={16} />}
+              loading={importPending}
+              onClick={() => onImport(item)}
+            >
+              {item.is_in_library ? t("library.inLibrary") : t("library.addToXiandu")}
+            </Button>
+            <Button
+              component="a"
+              href={item.abs_url}
+              leftSection={<ExternalLink size={15} />}
+              target="_blank"
+              rel="noreferrer"
+              variant="subtle"
+            >
+              {t("library.openArxiv")}
+            </Button>
+          </Group>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ArxivDailyRail({
+  activeJobCount,
+  engine,
+  importPending,
+  panelProps,
+  providersConfigured,
+  selectedProviderLabel
+}: {
+  activeJobCount: number;
+  engine: ArxivRecommendationEngine;
+  importPending: boolean;
+  panelProps: ArxivDailyPanelProps;
+  providersConfigured: number;
+  selectedProviderLabel: string;
+}) {
+  const t = useT();
+  return (
+    <div className="library-preview-card arxiv-daily-rail-card">
+      <Text className="library-rail-label">{t("nav.tasks")}</Text>
+      <Title order={3} className="library-preview-title">
+        {t("library.recommendationRailTitle")}
+      </Title>
+      <ArxivDailyPanel {...panelProps} />
+      <div className="library-preview-stats">
+        <div>
+          <span>{t("library.import")}</span>
+          <strong>{importPending ? t("library.queued") : t("library.ready")}</strong>
+        </div>
+        <div>
+          <span>{t("nav.tasks")}</span>
+          <strong>{activeJobCount}</strong>
+        </div>
+        <div>
+          <span>{t("library.recommendationEngine")}</span>
+          <strong>{engine.replace("_", " ")}</strong>
+        </div>
+        <div>
+          <span>{t("library.provider")}</span>
+          <strong>{selectedProviderLabel || providersConfigured}</strong>
+        </div>
+      </div>
+      <Text c="dimmed" size="sm">
+        {t("library.recommendationRailHelp")}
+      </Text>
+    </div>
+  );
+}
+
 function ReadingProgressTitleBackground({
   progress
 }: {
@@ -909,6 +1447,26 @@ function ReadingProgressTitleBackground({
       ))}
     </span>
   );
+}
+
+function useMediaQueryMatch(query: string) {
+  const [matches, setMatches] = useState(() => mediaQueryMatches(query));
+
+  useEffect(() => {
+    if (typeof globalThis.window === "undefined" || !globalThis.window.matchMedia) return;
+    const media = globalThis.window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
+}
+
+function mediaQueryMatches(query: string) {
+  if (typeof globalThis.window === "undefined" || !globalThis.window.matchMedia) return false;
+  return globalThis.window.matchMedia(query).matches;
 }
 
 function readingProgressOpacityLimit(segments: number[]) {
@@ -1037,6 +1595,18 @@ function articleSourceLabel(item: ArticleListItem) {
   if (item.family.source === "arxiv") return "arXiv";
   if (item.family.source === "local_file") return "Local";
   return item.family.source;
+}
+
+function formatRecommendationDate(value?: string | null) {
+  if (!value) return "recent";
+  return new Date(value).toLocaleDateString();
+}
+
+function recommendationReasonFallback(item: ArxivRecommendationItem, t: ReturnType<typeof useT>) {
+  if (!item.score_reasons || item.score_reasons.length === 0) {
+    return t("library.recommendationReasonFallback");
+  }
+  return item.score_reasons.join(" · ");
 }
 
 function selectedArticleSubtitle(item: ArticleListItem) {

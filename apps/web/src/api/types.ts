@@ -20,6 +20,16 @@ export type ProviderProfileUpdate = components["schemas"]["ProviderProfileUpdate
 export type ProviderModelInfo = components["schemas"]["ProviderModelInfo"];
 export type ProviderModelDiscoveryRequest = components["schemas"]["ProviderModelDiscoveryRequest"];
 export type ProviderModelDiscoveryResult = components["schemas"]["ProviderModelDiscoveryResult"];
+export type ArxivRecommendationEngine = components["schemas"]["ArxivRecommendationEngine"];
+export type ArxivCategory = components["schemas"]["ArxivCategory"];
+export type ArxivCategoryListResult = components["schemas"]["ArxivCategoryListResult"];
+export type ArxivRecommendationPreferences =
+  components["schemas"]["ArxivRecommendationPreferences"];
+export type ArxivRecommendationPreferencesUpdate =
+  components["schemas"]["ArxivRecommendationPreferencesUpdate"];
+export type ArxivRecommendationRequest = components["schemas"]["ArxivRecommendationRequest"];
+export type ArxivRecommendationItem = components["schemas"]["ArxivRecommendationItem"];
+export type ArxivRecommendationResult = components["schemas"]["ArxivRecommendationResult"];
 export type ArticleFamily = components["schemas"]["ArticleFamily"];
 export type ArticleRevision = components["schemas"]["ArticleRevision"];
 export type ArticleListItem = components["schemas"]["ArticleListItem"];

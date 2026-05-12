@@ -325,6 +325,55 @@ def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path:
     assert "$(x_1,\\ldots,x_n)$" in render_source_markdown(blocks)
 
 
+def test_normalize_latexml_html_preserves_missing_citation_brackets(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>
+              VQE is a hybrid quantum-classical algorithm
+              <cite class="ltx_cite ltx_citemacro_cite">[
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  peruzzo2014variational
+                </span>
+              ]</cite>, which is commonly used for ground states
+              <cite class="ltx_cite ltx_citemacro_cite">[
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  peruzzo2014variational
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  mcclean2016theory
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  omalley2016scalable
+                </span>
+              ]</cite>. See
+              <cite class="ltx_cite ltx_citemacro_cite">[
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  gokhale2019_commute
+                </span>, Sec. 10.1
+              ]</cite>.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert blocks[0].source_markdown == (
+        "VQE is a hybrid quantum-classical algorithm [peruzzo2014variational], "
+        "which is commonly used for ground states "
+        "[peruzzo2014variational, mcclean2016theory, omalley2016scalable]. "
+        "See [gokhale2019_commute, Sec. 10.1]."
+    )
+    assert "algorithm peruzzo2014variational" not in blocks[0].source_markdown
+
+
 def test_normalize_latexml_html_inlines_footnote_urls_as_links(tmp_path: Path) -> None:
     html_path = tmp_path / "latexml.html"
     html_path.write_text(
@@ -568,6 +617,35 @@ def test_normalize_latexml_html_cleans_author_year_citation_artifacts(tmp_path: 
     assert blocks[0].source_markdown == (
         "Stabilizer codes follow [Calderbank et al. (1997)](#bib.bib7)."
     )
+
+
+def test_normalize_latexml_html_cleans_undefined_citeauthor_missing_citation_echo(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>
+              VQE follows <span class="ltx_ERROR undefined">\citeauthor</span>
+              mcclean2016theory
+              <cite class="ltx_cite ltx_citemacro_cite">[
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  mcclean2016theory
+                </span>
+              ]</cite>.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert "\\citeauthor" not in blocks[0].source_markdown
+    assert blocks[0].source_markdown == "VQE follows [mcclean2016theory]."
 
 
 def test_normalize_latexml_html_normalizes_custom_math_macros_and_matrix_options(

@@ -691,11 +691,12 @@ def _provider_capabilities_for_update(
 async def create_job(
     job_type: JobType,
     payload: dict[str, Any] | None = None,
-    priority: int = 0,
+    priority: int | None = None,
 ) -> Job:
     db_path = await init_global_db()
     now = utc_now()
     job_id = str(uuid4())
+    effective_priority = default_job_priority(job_type) if priority is None else priority
     async with open_db(db_path) as conn:
         await conn.execute(
             """
@@ -709,7 +710,7 @@ async def create_job(
                 job_id,
                 job_type.value,
                 JobStatus.queued.value,
-                priority,
+                effective_priority,
                 json.dumps(payload or {}),
                 0.0,
                 0,
@@ -723,6 +724,24 @@ async def create_job(
         msg = "Created job could not be read back"
         raise RuntimeError(msg)
     return job
+
+
+def default_job_priority(job_type: JobType) -> int:
+    if job_type == JobType.parse_article:
+        return 100
+    if job_type == JobType.import_arxiv:
+        return 90
+    if job_type == JobType.translate_block:
+        return 50
+    if job_type == JobType.generate_reader_card:
+        return 40
+    if job_type == JobType.export_article:
+        return 30
+    if job_type == JobType.embed_article:
+        return 20
+    if job_type == JobType.extract_reader_cards:
+        return 10
+    return 0
 
 
 async def list_jobs(
@@ -849,19 +868,31 @@ async def _set_job_status(job_id: str, status: JobStatus) -> None:
         await conn.commit()
 
 
-async def claim_next_job(worker_id: str) -> Job | None:
+async def claim_next_job(
+    worker_id: str,
+    job_types: Sequence[JobType] | None = None,
+) -> Job | None:
+    if job_types is not None and not job_types:
+        return None
     db_path = await init_global_db()
     now = utc_now()
+    params: list[object] = [JobStatus.queued.value]
+    type_filter = ""
+    if job_types is not None:
+        placeholders = ", ".join("?" for _ in job_types)
+        type_filter = f" AND type IN ({placeholders})"
+        params.extend(job_type.value for job_type in job_types)
     async with open_db(db_path) as conn:
         await conn.execute("BEGIN IMMEDIATE")
         cursor = await conn.execute(
-            """
+            f"""
             SELECT * FROM jobs
             WHERE status = ?
+            {type_filter}
             ORDER BY priority DESC, created_at ASC
             LIMIT 1
             """,
-            (JobStatus.queued.value,),
+            params,
         )
         row = await cursor.fetchone()
         if row is None:

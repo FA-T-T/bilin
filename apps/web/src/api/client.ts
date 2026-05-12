@@ -11,6 +11,11 @@ import type {
   ArticleNotePatches,
   ArticleReadingProgress,
   ArticleTranslations,
+  ArxivCategoryListResult,
+  ArxivRecommendationPreferences,
+  ArxivRecommendationPreferencesUpdate,
+  ArxivRecommendationRequest,
+  ArxivRecommendationResult,
   ChatAskRequest,
   ChatAskResult,
   ChatToNotePatchRequest,
@@ -220,6 +225,33 @@ export const apiClient = {
     request<LibraryDeleteResult>(`/libraries/${encodeURIComponent(libraryId)}`, {
       method: "DELETE"
     }),
+  getArxivRecommendationCategories: (libraryId: string, refresh = false) =>
+    request<ArxivCategoryListResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/recommendations/arxiv/categories?refresh=${String(refresh)}`
+    ),
+  getArxivRecommendationPreferences: (libraryId: string) =>
+    request<ArxivRecommendationPreferences>(
+      `/libraries/${encodeURIComponent(libraryId)}/recommendations/arxiv/preferences`
+    ),
+  updateArxivRecommendationPreferences: (
+    libraryId: string,
+    payload: ArxivRecommendationPreferencesUpdate
+  ) =>
+    request<ArxivRecommendationPreferences>(
+      `/libraries/${encodeURIComponent(libraryId)}/recommendations/arxiv/preferences`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      }
+    ),
+  getArxivDailyRecommendations: (libraryId: string, payload: ArxivRecommendationRequest) =>
+    request<ArxivRecommendationResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/recommendations/arxiv/daily`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   listArticles: (libraryId: string, targetLanguage = "zh-CN") =>
     request<ArticleListItem[]>(
       `/libraries/${encodeURIComponent(libraryId)}/articles?target_language=${encodeURIComponent(targetLanguage)}`

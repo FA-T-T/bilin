@@ -1600,10 +1600,15 @@ def _clean_latexml_markdown_artifacts(value: str, *, preserve_blocks: bool = Fal
 
 
 def _strip_undefined_citeauthor(value: str) -> str:
-    return re.sub(
+    cleaned = re.sub(
         r"\\citeauthor\*?(?:\s*\[[^\]]*\])*\s*\{?[\w:./-]+\}?\s*",
         "",
         value,
+    )
+    return re.sub(
+        r"\b(?P<key>[A-Za-z0-9][\w:./-]*[0-9][\w:./-]*)\s+\[(?P=key)\]",
+        r"[\g<key>]",
+        cleaned,
     )
 
 
@@ -1685,10 +1690,11 @@ def _prepare_latexml_html_for_markdown(html: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     without_footnote_wrappers = _inline_latexml_footnotes(without_note_marks)
+    normalized_missing_citations = _normalize_missing_latexml_citations(without_footnote_wrappers)
     without_cite_brackets = re.sub(
         r"(<cite\b[^>]*>)\s*\[",
         r"\1",
-        without_footnote_wrappers,
+        normalized_missing_citations,
         flags=re.IGNORECASE,
     )
     without_cite_brackets = re.sub(
@@ -1709,6 +1715,37 @@ def _prepare_latexml_html_for_markdown(html: str) -> str:
         without_link_brackets,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
+
+def _normalize_missing_latexml_citations(html: str) -> str:
+    cite_pattern = re.compile(
+        r"<cite\b(?P<attrs>[^>]*)>(?P<body>.*?)</cite>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        if re.search(r"<a\b[^>]*\bhref=(?P<quote>['\"])#bib\.", body, re.IGNORECASE):
+            return match.group(0)
+        if not re.search(r"\bltx_missing_citation\b|\bltx_ref_self\b", body):
+            return match.group(0)
+        label = _missing_latexml_citation_label(body)
+        if not label:
+            return match.group(0)
+        return f"[{escape(label, quote=False)}]"
+
+    return cite_pattern.sub(replace, html)
+
+
+def _missing_latexml_citation_label(body: str) -> str:
+    text = re.sub(r"<[^>]+>", "", body)
+    text = unescape(text).replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"([,;:])(?=\S)", r"\1 ", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def _inline_latexml_footnotes(html: str) -> str:

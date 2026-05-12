@@ -1607,6 +1607,127 @@ L\eqqcolon \textsc{mask}
     });
   });
 
+  it("renders arXiv Daily recommendations and imports a recommended paper", async () => {
+    const recommendedPaper = {
+      arxiv_id: "2605.07473v1",
+      bare_id: "2605.07473",
+      version: "v1",
+      title: "Breaking QAOA's Fixed Target Hamiltonian Barrier",
+      title_target_language: "打破 QAOA 固定目标哈密顿量限制",
+      authors: ["Ada Lovelace"],
+      summary_target_language: "这篇文章讨论量子优化和哈密顿量建模。",
+      recommendation_reason: "与当前文库的 quant-ph 主题接近。",
+      original_summary: "A compact quantum optimization abstract.",
+      primary_category: "quant-ph",
+      categories: ["quant-ph"],
+      published: "2026-05-08T09:20:33Z",
+      updated: "2026-05-08T09:20:33Z",
+      abs_url: "https://arxiv.org/abs/2605.07473v1",
+      pdf_url: "https://arxiv.org/pdf/2605.07473v1.pdf",
+      source_url: "https://arxiv.org/e-print/2605.07473v1",
+      score: 2.67,
+      score_reasons: ["primary category quant-ph"],
+      status: "new",
+      is_in_library: false
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/providers")) return jsonResponse([provider]);
+      if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
+      if (url.includes("/libraries/library-1/articles?target_language=")) {
+        return jsonResponse([article]);
+      }
+      if (url.endsWith("/libraries/library-1/recommendations/arxiv/categories?refresh=false")) {
+        return jsonResponse({
+          categories: [
+            {
+              id: "quant-ph",
+              name: "Quantum Physics",
+              group: "Physics",
+              description: "Quantum physics papers."
+            }
+          ],
+          source_url: "https://arxiv.org/category_taxonomy",
+          cached: true,
+          updated_at: "2026-05-11T00:00:00Z"
+        });
+      }
+      if (url.endsWith("/libraries/library-1/recommendations/arxiv/preferences")) {
+        return jsonResponse({
+          library_id: "library-1",
+          categories: ["quant-ph"],
+          keywords: ["finite sampling error"],
+          updated_at: "2026-05-11T00:00:00Z"
+        });
+      }
+      if (url.endsWith("/libraries/library-1/recommendations/arxiv/daily")) {
+        return jsonResponse({
+          library_id: "library-1",
+          target_language: "zh-CN",
+          submitted_on: "2026-05-10",
+          categories: ["quant-ph"],
+          keywords: ["finite sampling error"],
+          engine_requested: "heuristic",
+          engine_used: "heuristic",
+          cached: false,
+          generated_at: "2026-05-11T00:00:00Z",
+          items: [recommendedPaper],
+          message:
+            "No arXiv submissions matched the current window around 2026-05-11; showing the latest available window anchored at 2026-05-10."
+        });
+      }
+      if (url.endsWith("/libraries/library-1/imports/arxiv") && init?.method === "POST") {
+        return jsonResponse(
+          {
+            id: "job-1",
+            type: "import_arxiv",
+            status: "queued",
+            priority: 0,
+            payload: {},
+            result: null,
+            error: null,
+            progress: 0,
+            attempts: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            started_at: null,
+            finished_at: null,
+            lease_owner: null
+          },
+          201
+        );
+      }
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderRoute("/libraries/library-1", "/libraries/:libraryId", <LibraryDetailPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /arXiv Daily/ }));
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Breaking QAOA's Fixed Target Hamiltonian Barrier/
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByText("打破 QAOA 固定目标哈密顿量限制")).toBeInTheDocument();
+    expect(screen.getByText(/No arXiv submissions matched/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Breaking QAOA/ }));
+    expect(screen.getByText("这篇文章讨论量子优化和哈密顿量建模。")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add to 衔牍" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/libraries/library-1/imports/arxiv") &&
+            init?.method === "POST" &&
+            String(init.body).includes("2605.07473v1")
+        )
+      ).toBe(true);
+    });
+  });
+
   it("renders reading progress as a style-like title heatmap", async () => {
     const articleWithProgress = {
       ...article,

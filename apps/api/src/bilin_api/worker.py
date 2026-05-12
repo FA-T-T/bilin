@@ -41,16 +41,79 @@ from bilin_api.translation_service import (
     run_translate_block_job,
 )
 
+LOCAL_PREPARATION_JOB_TYPES = (
+    JobType.import_arxiv,
+    JobType.parse_article,
+    JobType.embed_article,
+    JobType.export_article,
+    JobType.extract_reader_cards,
+)
+MODEL_JOB_TYPES = (
+    JobType.translate_block,
+    JobType.generate_reader_card,
+)
 
-async def run_worker(poll_interval: float = 0.5, once: bool = False) -> None:
+
+async def run_worker(
+    poll_interval: float = 0.5,
+    max_poll_interval: float | None = None,
+    once: bool = False,
+    stop_event: asyncio.Event | None = None,
+) -> None:
     worker_id = f"worker-{uuid4()}"
-    while True:
-        job = await claim_next_job(worker_id)
-        if job is None:
-            if once:
+    if max_poll_interval is None:
+        max_poll_interval = max(poll_interval, min(5.0, poll_interval * 10))
+    if once:
+        while True:
+            job = await claim_next_job(worker_id)
+            if job is None:
                 return
-            await asyncio.sleep(poll_interval)
+            await run_job(job)
+
+    await asyncio.gather(
+        run_worker_lane(
+            worker_id=f"{worker_id}-local",
+            poll_interval=poll_interval,
+            max_poll_interval=max_poll_interval,
+            job_types=LOCAL_PREPARATION_JOB_TYPES,
+            stop_event=stop_event,
+        ),
+        run_worker_lane(
+            worker_id=f"{worker_id}-model",
+            poll_interval=poll_interval,
+            max_poll_interval=max_poll_interval,
+            job_types=MODEL_JOB_TYPES,
+            stop_event=stop_event,
+        ),
+    )
+
+
+async def run_worker_lane(
+    *,
+    worker_id: str,
+    poll_interval: float,
+    max_poll_interval: float,
+    job_types: tuple[JobType, ...],
+    stop_event: asyncio.Event | None = None,
+) -> None:
+    idle_interval = poll_interval
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            return
+        job = await claim_next_job(worker_id, job_types)
+        if job is None:
+            if stop_event is None:
+                await asyncio.sleep(idle_interval)
+            else:
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=idle_interval)
+                except TimeoutError:
+                    idle_interval = min(max_poll_interval, max(poll_interval, idle_interval * 1.5))
+                    continue
+                return
+            idle_interval = min(max_poll_interval, max(poll_interval, idle_interval * 1.5))
             continue
+        idle_interval = poll_interval
         await run_job(job)
 
 

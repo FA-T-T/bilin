@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-0.3.0}"
+VERSION="${1:-3.1.0}"
 PACKAGE_NAME="bilin-v${VERSION}-source"
 RELEASE_DIR="${ROOT_DIR}/release"
 STAGING_ROOT="${RELEASE_DIR}/.staging"
@@ -21,6 +21,7 @@ rsync -a "${ROOT_DIR}/" "${STAGING_DIR}/" \
   --exclude "*.pyc" \
   --exclude ".pytest_cache/" \
   --exclude ".ruff_cache/" \
+  --exclude ".logs/" \
   --exclude ".mypy_cache/" \
   --exclude ".pyright/" \
   --exclude "*.tsbuildinfo" \

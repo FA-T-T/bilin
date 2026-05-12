@@ -148,6 +148,88 @@ class ProviderModelDiscoveryResult(BaseModel):
     capabilities: JsonDict = Field(default_factory=dict)
 
 
+class ArxivRecommendationEngine(StrEnum):
+    heuristic = "heuristic"
+    provider = "provider"
+    claude_cli = "claude_cli"
+    codex_cli = "codex_cli"
+
+
+class ArxivCategory(BaseModel):
+    id: str
+    name: str
+    group: str
+    description: str = ""
+
+
+class ArxivCategoryListResult(BaseModel):
+    categories: list[ArxivCategory] = Field(default_factory=list)
+    source_url: str = "https://arxiv.org/category_taxonomy"
+    cached: bool = False
+    updated_at: datetime | None = None
+
+
+class ArxivRecommendationPreferences(BaseModel):
+    library_id: str
+    categories: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class ArxivRecommendationPreferencesUpdate(BaseModel):
+    categories: list[str] = Field(default_factory=list, max_length=80)
+    keywords: list[str] = Field(default_factory=list, max_length=80)
+
+
+class ArxivRecommendationRequest(BaseModel):
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=40)
+    submitted_on: str | None = Field(default=None, max_length=10)
+    categories: list[str] | None = Field(default=None, max_length=80)
+    keywords: list[str] | None = Field(default=None, max_length=80)
+    max_results: int = Field(default=60, ge=1, le=200)
+    engine: ArxivRecommendationEngine = ArxivRecommendationEngine.heuristic
+    provider_profile_id: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+    refresh: bool = False
+
+
+class ArxivRecommendationItem(BaseModel):
+    arxiv_id: str
+    bare_id: str
+    version: str
+    title: str
+    title_target_language: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    summary_target_language: str | None = None
+    recommendation_reason: str | None = None
+    original_summary: str = ""
+    primary_category: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    published: str | None = None
+    updated: str | None = None
+    abs_url: str
+    pdf_url: str
+    source_url: str
+    score: float = 0.0
+    score_reasons: list[str] = Field(default_factory=list)
+    status: str = "new"
+    is_in_library: bool = False
+
+
+class ArxivRecommendationResult(BaseModel):
+    library_id: str
+    target_language: str
+    submitted_on: str
+    categories: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    engine_requested: ArxivRecommendationEngine
+    engine_used: ArxivRecommendationEngine
+    cached: bool = False
+    generated_at: datetime
+    items: list[ArxivRecommendationItem] = Field(default_factory=list)
+    message: str | None = None
+
+
 class JobStatus(StrEnum):
     queued = "queued"
     running = "running"

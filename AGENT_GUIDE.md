@@ -142,6 +142,14 @@ The normal development startup command launches API, worker, and web together.
 make dev
 ```
 
+On this fixed local checkout, prefer the fast starter because the environment is already prepared and `uv` may not be on the shell PATH.
+
+```sh
+./scripts/start-dev.sh
+./scripts/start-dev.sh status
+./scripts/start-dev.sh stop
+```
+
 This is a long-running command. If the agent environment needs separate controllable processes, start each service in its own terminal session.
 
 ```sh
@@ -233,9 +241,9 @@ Create source archives with the release script.
 Verify checksums and inspect that forbidden local artifacts were excluded.
 
 ```sh
-shasum -a 256 -c release/bilin-v0.3.0-source.tar.gz.sha256
-shasum -a 256 -c release/bilin-v0.3.0-source.zip.sha256
-tar -tzf release/bilin-v0.3.0-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
+shasum -a 256 -c release/bilin-v3.1.0-source.tar.gz.sha256
+shasum -a 256 -c release/bilin-v3.1.0-source.zip.sha256
+tar -tzf release/bilin-v3.1.0-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
 ```
 
 The final archive should include `README.md`, `README.en.md`, localized README files such as `README.ja.md`, `README.ko.md`, `README.es.md`, `README.fr.md`, and `README.de.md`, `AGENT_GUIDE.md`, `LICENSE`, `NOTICE`, `RELEASE_NOTES.md`, `docs/`, `fixtures/`, `apps/`, root package files, and release scripts.

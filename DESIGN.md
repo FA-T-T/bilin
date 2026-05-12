@@ -48,6 +48,8 @@ Study artifacts must stay compact. Cards are paragraph-anchored and expandable, 
 
 Tasks are visible product state. The right rail summarizes queued, running, paused, completed, and failed work, then shows recent task rows lazily. Pause, resume, cancel, retry, and clear actions must be explicit. Clearing task history must not delete papers, translations, notes, or exports.
 
+Task scheduling reflects the actual resource boundary. Article preparation is first priority: arXiv source acquisition, TeX parsing, local embedding refresh, local export, and automatic reader-card extraction run in the local preparation lane. Model work is second priority: block translation and generated reader-card work run in the model lane. A translation batch with many queued blocks must never prevent a newly requested article parse from starting; at most, the currently running model call continues while the local lane parses the new article.
+
 Provider status belongs near tasks because both define whether work can proceed. The rail may show configured local or API providers, current model labels, running state when known, and rate-limit hints. It should never imply that a missing provider is ready. Provider setup remains in Settings.
 
 ## Visual System

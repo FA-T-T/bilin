@@ -17,6 +17,7 @@ from bilin_api.api import (
     jobs,
     libraries,
     providers,
+    recommendations,
     translation_memory,
 )
 from bilin_api.branding import PRODUCT_NAME_EN
@@ -37,6 +38,13 @@ from bilin_api.schemas import (
     ArticleRevision,
     ArticleTranslations,
     ArticleTranslationStatus,
+    ArxivCategory,
+    ArxivCategoryListResult,
+    ArxivRecommendationItem,
+    ArxivRecommendationPreferences,
+    ArxivRecommendationPreferencesUpdate,
+    ArxivRecommendationRequest,
+    ArxivRecommendationResult,
     AssetRecord,
     BlockEmbedding,
     ChatAskRequest,
@@ -117,7 +125,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
         "http://localhost:5173",
+        "http://localhost:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -131,6 +141,7 @@ app.include_router(providers.router)
 app.include_router(translation_memory.router)
 app.include_router(imports.router)
 app.include_router(articles.router)
+app.include_router(recommendations.router)
 app.include_router(jobs.router)
 app.include_router(events.router)
 
@@ -152,6 +163,13 @@ def custom_openapi() -> dict:
         ProviderModelInfo,
         ProviderModelDiscoveryRequest,
         ProviderModelDiscoveryResult,
+        ArxivCategory,
+        ArxivCategoryListResult,
+        ArxivRecommendationPreferences,
+        ArxivRecommendationPreferencesUpdate,
+        ArxivRecommendationRequest,
+        ArxivRecommendationItem,
+        ArxivRecommendationResult,
         Library,
         LibraryDeleteResult,
         ArticleFamily,
