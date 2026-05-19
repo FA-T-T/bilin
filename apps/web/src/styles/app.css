@@ -129,7 +129,7 @@ a {
 
 .brand-home-link[data-variant="page"] {
   padding-block: 2px;
-  background: light-dark(transparent, rgba(255, 250, 241, 0.9));
+  background: light-dark(transparent, rgba(255, 255, 255, 0.05));
   box-shadow: light-dark(none, 0 10px 24px rgba(0, 0, 0, 0.22));
 }
 
@@ -143,7 +143,7 @@ a {
 .brand-home-link[data-variant="page"]:hover,
 .brand-home-link[data-variant="page"]:focus-visible,
 .brand-home-link[data-variant="page"][data-active="true"] {
-  background: light-dark(var(--bilin-accent-soft), rgba(255, 250, 241, 0.94));
+  background: light-dark(var(--bilin-accent-soft), rgba(95, 229, 255, 0.12));
 }
 
 .brand-mark {
@@ -156,7 +156,7 @@ a {
   border: 0;
   border-radius: 10px;
   background: transparent;
-  box-shadow: 0 10px 24px light-dark(rgba(114, 97, 255, 0.18), rgba(124, 107, 255, 0.24));
+  box-shadow: 0 10px 24px light-dark(rgba(52, 123, 221, 0.2), rgba(78, 229, 255, 0.22));
 }
 
 .brand-mark-image {
@@ -166,10 +166,175 @@ a {
   object-fit: contain;
 }
 
+.bilin-logo {
+  --bilin-logo-field-a: #fffaf0;
+  --bilin-logo-field-b: #e8fbff;
+  --bilin-logo-field-c: #fff0f4;
+  --bilin-logo-aurora-a: #ffcf4a;
+  --bilin-logo-aurora-b: #ff5f9b;
+  --bilin-logo-aurora-c: #4fd7ff;
+  --bilin-logo-prism-a: #13c9e8;
+  --bilin-logo-prism-b: #7860ff;
+  --bilin-logo-prism-c: #f44e98;
+  --bilin-logo-prism-d: #f0b72f;
+  --bilin-logo-page-a: rgba(255, 255, 255, 0.74);
+  --bilin-logo-page-b: rgba(244, 254, 255, 0.5);
+  --bilin-logo-page-c: rgba(255, 246, 223, 0.6);
+  --bilin-logo-frame-stroke: rgba(0, 0, 0, 0.1);
+  --bilin-logo-cast: rgba(48, 66, 103, 0.18);
+  --bilin-logo-symbol: #ffffff;
+  --bilin-logo-symbol-stroke: rgba(255, 255, 255, 0.88);
+  --bilin-logo-word: var(--bilin-text);
+  --bilin-logo-sun-opacity: 1;
+  --bilin-logo-moon-opacity: 0;
+  display: block;
+  overflow: visible;
+  flex: 0 0 auto;
+  transition:
+    filter 180ms ease,
+    transform 180ms ease;
+}
+
+html[data-mantine-color-scheme="dark"] .bilin-logo {
+  --bilin-logo-field-a: #06111f;
+  --bilin-logo-field-b: #18143e;
+  --bilin-logo-field-c: #341331;
+  --bilin-logo-aurora-a: #29f0ff;
+  --bilin-logo-aurora-b: #a575ff;
+  --bilin-logo-aurora-c: #ff64c7;
+  --bilin-logo-prism-a: #48f4ff;
+  --bilin-logo-prism-b: #8d7bff;
+  --bilin-logo-prism-c: #ff68c9;
+  --bilin-logo-prism-d: #ffd15b;
+  --bilin-logo-page-a: rgba(255, 255, 255, 0.13);
+  --bilin-logo-page-b: rgba(78, 244, 255, 0.13);
+  --bilin-logo-page-c: rgba(255, 104, 201, 0.15);
+  --bilin-logo-frame-stroke: rgba(255, 255, 255, 0.2);
+  --bilin-logo-cast: rgba(0, 0, 0, 0.36);
+  --bilin-logo-symbol: #fff7cc;
+  --bilin-logo-symbol-stroke: rgba(255, 241, 183, 0.94);
+  --bilin-logo-word: #f7fbff;
+  --bilin-logo-sun-opacity: 0;
+  --bilin-logo-moon-opacity: 1;
+}
+
+.bilin-logo__cast {
+  fill: var(--bilin-logo-cast);
+}
+
+.bilin-logo__frame {
+  stroke: var(--bilin-logo-frame-stroke);
+  stroke-width: 1;
+}
+
+.bilin-logo__aurora {
+  mix-blend-mode: screen;
+}
+
+.bilin-logo__sun,
+.bilin-logo__moon,
+.bilin-logo__letter,
+.bilin-logo__page-ridge,
+.bilin-logo__wordmark-line {
+  transition:
+    opacity 180ms ease,
+    stroke 180ms ease,
+    fill 180ms ease;
+}
+
+.bilin-logo__sun {
+  opacity: var(--bilin-logo-sun-opacity);
+}
+
+.bilin-logo__sun circle {
+  fill: var(--bilin-logo-symbol);
+}
+
+.bilin-logo__sun path {
+  fill: none;
+  stroke: var(--bilin-logo-symbol-stroke);
+  stroke-linecap: round;
+  stroke-width: 1.9;
+}
+
+.bilin-logo__moon {
+  opacity: var(--bilin-logo-moon-opacity);
+}
+
+.bilin-logo__moon path,
+.bilin-logo__moon circle {
+  fill: var(--bilin-logo-symbol);
+}
+
+.bilin-logo__page-fill {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 0.8;
+}
+
+.bilin-logo__page-ridge {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.6;
+}
+
+.bilin-logo__page-ridge--inner {
+  stroke-width: 2;
+  opacity: 0.72;
+}
+
+.bilin-logo__letter-spine,
+.bilin-logo__letter-loop {
+  fill: none;
+  stroke: var(--bilin-logo-prism-b);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5.2;
+}
+
+.bilin-logo__letter-spine {
+  stroke: var(--bilin-logo-prism-a);
+}
+
+.bilin-logo__letter-loop--upper {
+  stroke: var(--bilin-logo-prism-c);
+}
+
+.bilin-logo__letter-loop--lower {
+  stroke: var(--bilin-logo-prism-d);
+}
+
+.bilin-logo__wordmark {
+  color: var(--bilin-logo-word);
+}
+
+.bilin-logo__wordmark-text {
+  fill: currentColor;
+  font-family:
+    "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC",
+    "Microsoft YaHei UI", sans-serif;
+  font-size: 29px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.bilin-logo__wordmark-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 2.8;
+  opacity: 0.82;
+}
+
+.brand-home-link:hover .bilin-logo,
+.brand-home-link:focus-visible .bilin-logo {
+  filter: saturate(1.1);
+  transform: translateY(-1px);
+}
+
 .brand-page-logo {
   display: block;
   width: auto;
-  max-width: min(152px, 24vw);
+  max-width: min(164px, 24vw);
   height: 40px;
   object-fit: contain;
 }
@@ -231,7 +396,7 @@ a {
   }
 
   .brand-page-logo {
-    max-width: 122px;
+    max-width: min(126px, 22vw);
     height: 36px;
   }
 
@@ -242,6 +407,17 @@ a {
 
   .app-nav .mantine-Button-label {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bilin-logo,
+  .bilin-logo__sun,
+  .bilin-logo__moon,
+  .bilin-logo__letter,
+  .bilin-logo__page-ridge,
+  .bilin-logo__wordmark-line {
+    transition: none;
   }
 }
 
@@ -1069,7 +1245,12 @@ a {
   color: var(--bilin-muted);
   font-size: 0.9rem;
   line-height: 1.34;
-  min-height: 1.34em;
+}
+
+.arxiv-recommendation-title p,
+.arxiv-recommendation-title-target p {
+  display: inline;
+  margin: 0;
 }
 
 .arxiv-recommendation-meta {
@@ -1107,6 +1288,22 @@ a {
 .arxiv-recommendation-abstract {
   max-width: 880px;
   line-height: 1.62;
+}
+
+.arxiv-recommendation-abstract p {
+  margin: 0 0 0.55em;
+}
+
+.arxiv-recommendation-abstract p:last-child {
+  margin-bottom: 0;
+}
+
+.arxiv-recommendation-abstract-source {
+  color: var(--bilin-text);
+}
+
+.arxiv-recommendation-abstract-target {
+  color: var(--bilin-muted);
 }
 
 .arxiv-recommendation-actions {
@@ -2278,6 +2475,30 @@ a {
 
 .chat-message-assistant {
   background: light-dark(rgba(255, 250, 241, 0.6), rgba(255, 255, 255, 0.045));
+}
+
+.chat-message-markdown {
+  font-size: var(--mantine-font-size-sm);
+  line-height: 1.55;
+}
+
+.chat-message-markdown p,
+.chat-message-markdown ul,
+.chat-message-markdown ol {
+  margin: 0;
+}
+
+.chat-message-markdown ul,
+.chat-message-markdown ol {
+  padding-left: 1.15rem;
+}
+
+.chat-message-markdown li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-message-markdown .inline-math {
+  white-space: normal;
 }
 
 .source-ref {
@@ -3692,8 +3913,8 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
   }
 
   .brand-page-logo {
-    max-width: 96px;
-    height: 31px;
+    max-width: min(88px, 22vw);
+    height: 30px;
   }
 
   .app-nav {

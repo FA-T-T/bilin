@@ -496,16 +496,17 @@ async def _search_daily_candidates(
     client: httpx.AsyncClient | None,
 ) -> tuple[str, list[ArxivMetadata]]:
     requested_day = date.fromisoformat(submitted_on)
-    candidate_days = [requested_day]
-    if allow_fallback:
-        candidate_days.extend(
-            requested_day - timedelta(days=offset) for offset in range(1, DAILY_FALLBACK_DAYS + 1)
-        )
-    for candidate_day in candidate_days:
-        query = _build_arxiv_query(categories, keywords, candidate_day.isoformat())
-        candidates = await search_arxiv(query, max_results=max_results, client=client)
-        if candidates or not allow_fallback:
-            return candidate_day.isoformat(), candidates
+    query = _build_arxiv_query(categories, keywords, requested_day.isoformat())
+    candidates = await search_arxiv(query, max_results=max_results, client=client)
+    if candidates or not allow_fallback:
+        return requested_day.isoformat(), candidates
+
+    fallback_start = requested_day - timedelta(days=DAILY_FALLBACK_DAYS)
+    fallback_end = requested_day - timedelta(days=1)
+    query = _build_arxiv_range_query(categories, keywords, fallback_start, fallback_end)
+    candidates = await search_arxiv(query, max_results=max_results, client=client)
+    if candidates:
+        return _candidate_submission_date(candidates[0], fallback_end), candidates
     return submitted_on, []
 
 
@@ -940,6 +941,15 @@ def _build_arxiv_query(categories: list[str], keywords: list[str], submitted_on:
     day = date.fromisoformat(submitted_on)
     start = day - timedelta(days=2)
     end = day + timedelta(days=1)
+    return _build_arxiv_range_query(categories, keywords, start, end)
+
+
+def _build_arxiv_range_query(
+    categories: list[str],
+    keywords: list[str],
+    start: date,
+    end: date,
+) -> str:
     parts = [f"submittedDate:[{start:%Y%m%d}0000 TO {end:%Y%m%d}2359]"]
     if categories:
         category_query = " OR ".join(f"cat:{category}" for category in categories)
@@ -950,6 +960,13 @@ def _build_arxiv_query(categories: list[str], keywords: list[str], submitted_on:
         keyword_query = " OR ".join(f'all:"{keyword}"' for keyword in clean_keywords[:12])
         parts.append(f"({keyword_query})")
     return " AND ".join(parts)
+
+
+def _candidate_submission_date(candidate: ArxivMetadata, fallback: date) -> str:
+    for value in (candidate.published, candidate.updated):
+        if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}.*", value):
+            return value[:10]
+    return fallback.isoformat()
 
 
 def _recommendation_cache_key(

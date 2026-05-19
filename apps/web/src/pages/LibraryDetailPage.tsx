@@ -54,6 +54,7 @@ import {
   useJobSummary,
   useLibrary,
   useProviders,
+  useRefreshArxivDailyRecommendations,
   useTranslateLibraryMissing,
   useUpdateArxivRecommendationPreferences,
   useUpdateLibrary
@@ -66,6 +67,7 @@ import type {
   ArticleReadingProgress,
   ImportLocalKind
 } from "../api/types";
+import { MarkdownContent, type ReferenceTargets } from "../components/ReaderBlock";
 import { useT } from "../i18n";
 import { TRANSLATION_TARGET_LOCALES } from "../product";
 import { useUiStore } from "../state/ui";
@@ -73,6 +75,7 @@ import { useUiStore } from "../state/ui";
 type ArticleFilter = "all" | "reading" | "needs_translation" | "translated";
 type ArticleSort = "updated" | "title" | "progress";
 type LibrarySurface = "articles" | "arxiv_daily";
+const emptyRecommendationReferenceTargets: ReferenceTargets = {};
 
 export function LibraryDetailPage() {
   const t = useT();
@@ -92,6 +95,7 @@ export function LibraryDetailPage() {
   const arxivCategories = useArxivRecommendationCategories(libraryId);
   const arxivPreferences = useArxivRecommendationPreferences(libraryId);
   const updateArxivPreferences = useUpdateArxivRecommendationPreferences(libraryId);
+  const refreshArxivDaily = useRefreshArxivDailyRecommendations(libraryId);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const taskNotificationsEnabled = useUiStore(
     (state) => state.readerFeaturePreferences.taskNotificationsEnabled
@@ -119,7 +123,6 @@ export function LibraryDetailPage() {
   const [recommendationKeywords, setRecommendationKeywords] = useState("");
   const [recommendationEngine, setRecommendationEngine] =
     useState<ArxivRecommendationEngine>("heuristic");
-  const [recommendationRefreshNonce, setRecommendationRefreshNonce] = useState(0);
   const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -207,13 +210,12 @@ export function LibraryDetailPage() {
         recommendationEngine === "provider" && selectedProvider?.default_model
           ? selectedProvider.default_model
           : null,
-      refresh: recommendationRefreshNonce > 0
+      refresh: false
     }),
     [
       recommendationCategories,
       recommendationEngine,
       recommendationKeywordList,
-      recommendationRefreshNonce,
       selectedProvider?.default_model,
       selectedProviderId,
       targetLanguage
@@ -224,11 +226,40 @@ export function LibraryDetailPage() {
     recommendationRequest,
     surface === "arxiv_daily"
   );
+  const lastAutoProviderEnrichmentKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (selectedProviderId || providerOptions.length === 0) return;
     setSelectedProviderId(providerOptions[0].value);
   }, [providerOptions, selectedProviderId]);
+
+  useEffect(() => {
+    if (surface !== "arxiv_daily") return;
+    if (recommendationEngine !== "provider") return;
+    if (!selectedProviderId) return;
+    const key = [
+      libraryId,
+      targetLanguage,
+      selectedProviderId,
+      selectedProvider?.default_model ?? "",
+      recommendationCategories.join(","),
+      recommendationKeywordList.join(",")
+    ].join("|");
+    if (lastAutoProviderEnrichmentKey.current === key) return;
+    lastAutoProviderEnrichmentKey.current = key;
+    if (arxivDaily.isFetching) return;
+    void arxivDaily.refetch();
+  }, [
+    arxivDaily,
+    libraryId,
+    recommendationCategories,
+    recommendationEngine,
+    recommendationKeywordList,
+    selectedProvider?.default_model,
+    selectedProviderId,
+    surface,
+    targetLanguage
+  ]);
 
   useEffect(() => {
     if (!isEditingLibraryName) setLibraryNameDraft(library.data?.name ?? "");
@@ -393,8 +424,7 @@ export function LibraryDetailPage() {
   };
 
   const refreshRecommendations = () => {
-    setRecommendationRefreshNonce((value) => value + 1);
-    void arxivDaily.refetch();
+    refreshArxivDaily.mutate(recommendationRequest);
   };
 
   const toggleRecommendation = (arxivId: string) => {
@@ -420,7 +450,7 @@ export function LibraryDetailPage() {
     categories: recommendationCategories,
     engine: recommendationEngine,
     keywords: recommendationKeywords,
-    loading: arxivDaily.isLoading,
+    loading: arxivDaily.isLoading || refreshArxivDaily.isPending,
     message: arxivDaily.data?.message ?? null,
     providerOptions,
     recommendationCount: arxivDaily.data?.items?.length ?? 0,
@@ -1322,23 +1352,37 @@ function ArxivRecommendationRow({
   onToggle: (arxivId: string) => void;
 }) {
   const t = useT();
-  const translatedTitle = item.title_target_language || t("library.titleTranslationPending");
-  const translatedSummary = item.summary_target_language || t("library.summaryTranslationPending");
+  const translatedTitle = item.title_target_language?.trim() || "";
+  const translatedSummary = item.summary_target_language?.trim() || "";
+  const originalSummary = item.original_summary.trim();
   return (
     <article className="arxiv-recommendation-row" data-expanded={expanded || undefined}>
       <button
         type="button"
         className="arxiv-recommendation-title-button"
+        aria-label={`${item.title} ${item.arxiv_id}`}
         onClick={() => onToggle(item.arxiv_id)}
       >
-        <span className="arxiv-recommendation-title-stack">
-          <span className="arxiv-recommendation-title">{item.title}</span>
-          <span className="arxiv-recommendation-title-target">{translatedTitle}</span>
+        <div className="arxiv-recommendation-title-stack">
+          <div className="arxiv-recommendation-title">
+            <MarkdownContent
+              content={item.title}
+              referenceTargets={emptyRecommendationReferenceTargets}
+            />
+          </div>
+          {translatedTitle ? (
+            <div className="arxiv-recommendation-title-target">
+              <MarkdownContent
+                content={translatedTitle}
+                referenceTargets={emptyRecommendationReferenceTargets}
+              />
+            </div>
+          ) : null}
           <span className="arxiv-recommendation-meta">
             {item.arxiv_id} · {item.primary_category ?? item.categories?.[0] ?? "arXiv"} ·{" "}
             {formatRecommendationDate(item.published ?? item.updated)}
           </span>
-        </span>
+        </div>
         <span className="arxiv-recommendation-status">
           <Badge color={item.is_in_library ? "green" : "teal"} variant="light">
             {item.is_in_library ? t("library.inLibrary") : t("library.newPaper")}
@@ -1348,7 +1392,26 @@ function ArxivRecommendationRow({
       </button>
       {expanded ? (
         <div className="arxiv-recommendation-expanded">
-          <Text className="arxiv-recommendation-abstract">{translatedSummary}</Text>
+          {translatedSummary ? (
+            <div className="arxiv-recommendation-abstract arxiv-recommendation-abstract-target">
+              <MarkdownContent
+                content={translatedSummary}
+                referenceTargets={emptyRecommendationReferenceTargets}
+              />
+            </div>
+          ) : null}
+          {originalSummary ? (
+            <div className="arxiv-recommendation-abstract arxiv-recommendation-abstract-source">
+              <MarkdownContent
+                content={originalSummary}
+                referenceTargets={emptyRecommendationReferenceTargets}
+              />
+            </div>
+          ) : (
+            <Text c="dimmed" size="sm">
+              {t("library.summaryTranslationPending")}
+            </Text>
+          )}
           <Text c="dimmed" size="sm">
             {item.recommendation_reason || recommendationReasonFallback(item, t)}
           </Text>

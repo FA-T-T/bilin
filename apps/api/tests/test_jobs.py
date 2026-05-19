@@ -210,6 +210,45 @@ async def test_parse_job_missing_latexml_surfaces_structured_error(
 
 
 @pytest.mark.asyncio
+async def test_worker_surfaces_empty_exception_messages(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyMessageError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    library = await create_library(
+        LibraryCreate(name="Import Failure", path=str(tmp_path / "library"))
+    )
+
+    async def broken_import_arxiv(_library: object, _request: object) -> object:
+        raise EmptyMessageError()
+
+    monkeypatch.setattr(worker_module, "import_arxiv", broken_import_arxiv)
+    job = await create_job(
+        JobType.import_arxiv,
+        {
+            "library_id": library.id,
+            "arxiv_id": "2208.06563",
+            "version": None,
+            "download_pdf": True,
+            "parse_after_import": True,
+        },
+    )
+
+    await run_worker(once=True)
+    completed = await get_job(job.id)
+
+    assert completed is not None
+    assert completed.status == JobStatus.failed
+    assert completed.error is not None
+    assert completed.error["type"] == "EmptyMessageError"
+    assert completed.error["message"] == "import_arxiv failed with EmptyMessageError."
+
+
+@pytest.mark.asyncio
 async def test_parse_job_queues_default_translation_and_reader_cards(
     bilin_home: Path,
     tmp_path: Path,

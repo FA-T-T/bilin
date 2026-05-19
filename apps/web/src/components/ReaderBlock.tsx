@@ -1320,6 +1320,7 @@ function latexmlCaptionFromFragment(
     const parsed = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
     const caption = parsed.body.querySelector("figcaption, caption, .ltx_caption");
     if (!caption) return null;
+    const originalText = collapseWhitespace(caption.textContent ?? "");
     const tag = caption.querySelector(".ltx_tag_table, .ltx_tag_figure");
     const tagText = tag?.textContent ?? "";
     tag?.remove();
@@ -1327,9 +1328,9 @@ function latexmlCaptionFromFragment(
     const number = tagText
       .match(/\b(?:Table|Figure)\s+([A-Za-z0-9.:-]+)/i)?.[1]
       ?.replace(/[:.]$/, "");
-    const text = collapseWhitespace(caption.textContent ?? "");
+    const text = cleanLatexmlCaptionMarkdown(latexmlCaptionNodeMarkdown(caption));
     if (kind && text) return { kind, number, text };
-    const fallback = collapseWhitespace(caption.textContent ?? "");
+    const fallback = text || originalText;
     const match = fallback.match(/^(Table|Figure)\s+([A-Za-z0-9.:-]+)[:.]\s*(.*)$/i);
     if (match?.[1] && match[3]) {
       return {
@@ -1348,6 +1349,41 @@ function latexmlCaptionFromFragment(
         text: collapseWhitespace(match[2])
       }
     : null;
+}
+
+function latexmlCaptionNodeMarkdown(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const element = node as Element;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "math") return latexmlMathMarkdown(element);
+  if (tag === "br") return " ";
+  const children = [...element.childNodes].map(latexmlCaptionNodeMarkdown).join("");
+  if (tag === "a") {
+    const href = element.getAttribute("href");
+    const label = cleanLatexmlCaptionMarkdown(children);
+    return href && label ? `[${label}](${href})` : children;
+  }
+  const className = element.getAttribute("class")?.toLowerCase() ?? "";
+  if (children.trim() && className.includes("ltx_font_bold")) return `**${children}**`;
+  if (children.trim() && className.includes("ltx_font_italic")) return `*${children}*`;
+  return children;
+}
+
+function latexmlMathMarkdown(element: Element) {
+  const latex =
+    element.getAttribute("alttext") || element.getAttribute("tex") || element.textContent || "";
+  const normalized = normalizeExtractedLatex(latex);
+  return normalized ? `$${normalized.replace(/\$/g, "\\$")}$` : "";
+}
+
+function cleanLatexmlCaptionMarkdown(value: string) {
+  return collapseWhitespace(value)
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .replace(/\[\s+/g, "[")
+    .replace(/\s+\]/g, "]");
 }
 
 function captionFromLegacyMarkdown(
@@ -1569,7 +1605,7 @@ function equationNumberForBlock(block: DocumentBlock): string | undefined {
   );
 }
 
-function MarkdownContent({
+export function MarkdownContent({
   content,
   referenceTargets,
   citations,
@@ -1939,9 +1975,23 @@ function renderInlineMathChildren(
   children: ReactNode,
   inlineMathByToken: Map<string, string>
 ): ReactNode {
-  return Children.map(children, (child) =>
-    typeof child === "string" ? renderInlineMathText(child, inlineMathByToken) : child
-  );
+  return Children.map(children, (child) => renderInlineMathNode(child, inlineMathByToken));
+}
+
+function renderInlineMathNode(child: ReactNode, inlineMathByToken: Map<string, string>): ReactNode {
+  if (typeof child === "string") return renderInlineMathText(child, inlineMathByToken);
+  if (typeof child === "number" || typeof child === "bigint") {
+    return renderInlineMathText(String(child), inlineMathByToken);
+  }
+  if (isValidElement<{ children?: ReactNode }>(child)) {
+    if (child.props.children === undefined) return child;
+    return cloneElement(
+      child,
+      undefined,
+      renderInlineMathChildren(child.props.children, inlineMathByToken)
+    );
+  }
+  return child;
 }
 
 function renderInlineMathText(text: string, inlineMathByToken = emptyInlineMathByToken): ReactNode {
@@ -2657,30 +2707,38 @@ function sanitizeLatexmlFragment(
   referenceTargets: ReferenceTargets
 ) {
   if (typeof DOMParser === "undefined") return "";
+  const mathFragments = new Map<string, string>();
+  let mathIndex = 0;
+  const reserveMathFragment = (latex: string) => {
+    const placeholderIndex = String(mathIndex++);
+    mathFragments.set(
+      placeholderIndex,
+      `<span class="table-math">${renderKatexCached(latex, false)}</span>`
+    );
+    return placeholderIndex;
+  };
   const imageUrls = new Map<string, string>();
   if (assetUrl) imageUrls.set("", assetUrl);
   for (const file of assetFileUrls) {
     imageUrls.set(file.originalReference, file.url);
   }
-  const document = new DOMParser().parseFromString(
-    `<div>${normalizeLatexmlTableFragmentHtml(html)}</div>`,
-    "text/html"
+  const protectedHtml = protectLatexmlMathHtml(
+    normalizeLatexmlTableFragmentHtml(html),
+    reserveMathFragment
   );
+  const document = new DOMParser().parseFromString(`<div>${protectedHtml}</div>`, "text/html");
   const root = document.body.firstElementChild;
   if (!root) return "";
   for (const element of [...root.querySelectorAll("script, style, iframe, object, embed")]) {
     element.remove();
   }
   removeLatexmlTableRuleArtifacts(root);
-  const mathFragments = new Map<string, string>();
-  let mathIndex = 0;
+  for (const table of [...root.querySelectorAll("table")]) {
+    removeEmptyTableSpacerColumns(table as HTMLTableElement);
+  }
   for (const math of [...root.querySelectorAll("math")]) {
     const latex = math.getAttribute("alttext") || math.textContent || "";
-    const placeholderIndex = String(mathIndex++);
-    mathFragments.set(
-      placeholderIndex,
-      `<span class="table-math">${renderKatexCached(latex, false)}</span>`
-    );
+    const placeholderIndex = reserveMathFragment(latex);
     const placeholder = document.createElement("span");
     placeholder.setAttribute("data-bilin-math-index", placeholderIndex);
     math.replaceWith(placeholder);
@@ -2703,6 +2761,16 @@ function sanitizeLatexmlFragment(
   const tablePreview = academicTablePreviewHtml(root, document);
   if (tablePreview) return tablePreview;
   return root.innerHTML.trim();
+}
+
+function protectLatexmlMathHtml(html: string, reserveMathFragment: (latex: string) => string) {
+  return html.replace(
+    /<math\b[^>]*\balttext\s*=\s*(["'])([\s\S]*?)\1[^>]*>[\s\S]*?<\/math>/gi,
+    (_match: string, _quote: string, encodedLatex: string) => {
+      const placeholderIndex = reserveMathFragment(decodeHtmlAttribute(encodedLatex));
+      return `<span data-bilin-math-index="${placeholderIndex}"></span>`;
+    }
+  );
 }
 
 function sanitizeLatexmlFragmentCached(
@@ -2750,10 +2818,71 @@ function cleanLatexmlDisplayMarkdown(value: string) {
     (_match: string, label: string, href: string) =>
       `[${compactLatexmlCitationLabel(label)}](${href})`
   );
-  return compactedCitations
+  return flattenLatexmlEquationMarkdownTables(compactedCitations)
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+function flattenLatexmlEquationMarkdownTables(value: string) {
+  const lines = value.split("\n");
+  const flattened: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const nextLine = lines[index + 1] ?? "";
+    const flattenedEquation = flattenedLatexmlEquationTableLine(line, nextLine);
+    if (flattenedEquation) {
+      flattened.push(flattenedEquation);
+      index += 1;
+      continue;
+    }
+    flattened.push(line);
+  }
+  return flattened.join("\n");
+}
+
+function flattenedLatexmlEquationTableLine(line: string, separatorLine: string): string | null {
+  if (!isMarkdownTableSeparator(separatorLine)) return null;
+  const indent = line.match(/^\s*/)?.[0] ?? "";
+  const cells = splitMarkdownTableLine(line.trim());
+  if (cells.length < 2) return null;
+  const latexParts: string[] = [];
+  let equationNumber = "";
+  for (const cell of cells) {
+    const trimmed = cell.trim();
+    if (!trimmed) continue;
+    if (isEquationNumberCell(trimmed)) {
+      equationNumber = trimmed;
+      continue;
+    }
+    const latex = latexFromMarkdownMathCell(trimmed);
+    if (!latex) return null;
+    latexParts.push(latex);
+  }
+  if (latexParts.length === 0) return null;
+  const latex = normalizeLatex(latexParts.join(" "));
+  return `${indent}\\(${latex}\\)${equationNumber ? ` ${equationNumber}` : ""}`;
+}
+
+function splitMarkdownTableLine(line: string): string[] {
+  const trimmed = line.replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|");
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableLine(line.trim()).map((cell) => cell.trim());
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isEquationNumberCell(value: string) {
+  return /^\([A-Za-z0-9.:-]+\)$/.test(value);
+}
+
+function latexFromMarkdownMathCell(value: string): string | null {
+  const display = value.match(/^\$\$\s*([\s\S]*?)\s*\$\$$/);
+  if (display?.[1]) return display[1];
+  const inline = value.match(/^\$\s*([\s\S]*?)\s*\$$/);
+  return inline?.[1] ?? null;
 }
 
 function compactLatexmlCitationLabel(label: string) {
@@ -2766,9 +2895,10 @@ function compactLatexmlCitationLabel(label: string) {
 function removeLatexmlTableRuleArtifacts(root: Element) {
   for (const row of [...root.querySelectorAll("tr")]) {
     const stripped = stripLatexmlTableRuleCommands(row.textContent ?? "");
-    if (!stripped.trim()) row.remove();
+    if (!stripped.trim() && !rowContainsProtectedMath(row)) row.remove();
   }
   for (const element of [...root.querySelectorAll("td, th, span")]) {
+    if (rowContainsProtectedMath(element)) continue;
     const text = element.textContent ?? "";
     const stripped = stripLatexmlTableRuleCommands(text);
     if (stripped === text) continue;
@@ -2778,6 +2908,10 @@ function removeLatexmlTableRuleArtifacts(root: Element) {
       element.remove();
     }
   }
+}
+
+function rowContainsProtectedMath(element: Element) {
+  return Boolean(element.querySelector("math, [data-bilin-math-index], .table-math, .katex"));
 }
 
 function stripLatexmlTableRuleCommands(value: string) {
@@ -2796,6 +2930,7 @@ function academicTablePreviewHtml(root: Element, document: Document) {
   container.setAttribute("class", "academic-table-set");
   for (const sourceTable of tables) {
     const table = sourceTable.cloneNode(true) as HTMLTableElement;
+    removeEmptyTableSpacerColumns(table);
     promoteHeaderRow(table, document);
     const wrapper = document.createElement("div");
     wrapper.setAttribute("class", "academic-table-scroll");
@@ -2821,8 +2956,90 @@ function promoteHeaderRow(table: HTMLTableElement, document: Document) {
   }
 }
 
+interface TableCellSlot {
+  cell: HTMLTableCellElement;
+  start: number;
+  end: number;
+}
+
+function removeEmptyTableSpacerColumns(table: HTMLTableElement) {
+  const rows = [...table.querySelectorAll("tr")];
+  const rowSlots = rows.map((row) => tableCellSlotsForRow(row));
+  const columnCount = Math.max(0, ...rowSlots.flatMap((slots) => slots.map((slot) => slot.end)));
+  if (columnCount === 0) return;
+  const removableColumns = Array.from({ length: columnCount }, (_value, columnIndex) =>
+    rowSlots.every((slots) => {
+      const slot = slots.find(({ start, end }) => columnIndex >= start && columnIndex < end);
+      if (!slot) return true;
+      return slot.end - slot.start === 1 && !tableCellHasContent(slot.cell);
+    })
+  );
+  if (removableColumns.some(Boolean)) {
+    for (const slots of rowSlots) {
+      for (const slot of [...slots].reverse()) {
+        const removedSpan = removableColumns.slice(slot.start, slot.end).filter(Boolean).length;
+        if (removedSpan === 0) continue;
+        const originalSpan = slot.end - slot.start;
+        if (removedSpan >= originalSpan) {
+          slot.cell.remove();
+          continue;
+        }
+        const nextSpan = originalSpan - removedSpan;
+        if (nextSpan > 1) {
+          slot.cell.setAttribute("colspan", String(nextSpan));
+        } else {
+          slot.cell.removeAttribute("colspan");
+        }
+      }
+    }
+  }
+  removeEmptySeparatorCellsByRow(table);
+}
+
+function removeEmptySeparatorCellsByRow(table: HTMLTableElement) {
+  for (const row of [...table.querySelectorAll("tr")]) {
+    const cells = [...row.children].filter(isTableCellElement);
+    for (let index = cells.length - 1; index >= 0; index -= 1) {
+      const cell = cells[index];
+      if (!cell || safeTableColSpan(cell) !== 1 || tableCellHasContent(cell)) continue;
+      const hasContentBefore = cells.slice(0, index).some(tableCellHasContent);
+      const hasContentAfter = cells.slice(index + 1).some(tableCellHasContent);
+      if (hasContentBefore && hasContentAfter) cell.remove();
+    }
+  }
+}
+
+function tableCellSlotsForRow(row: HTMLTableRowElement): TableCellSlot[] {
+  const slots: TableCellSlot[] = [];
+  let columnIndex = 0;
+  for (const cell of [...row.children]) {
+    if (!isTableCellElement(cell)) continue;
+    const span = safeTableColSpan(cell);
+    slots.push({ cell, start: columnIndex, end: columnIndex + span });
+    columnIndex += span;
+  }
+  return slots;
+}
+
+function isTableCellElement(element: Element): element is HTMLTableCellElement {
+  const tag = element.tagName.toLowerCase();
+  return tag === "td" || tag === "th";
+}
+
+function safeTableColSpan(cell: HTMLTableCellElement) {
+  const parsed = Number.parseInt(cell.getAttribute("colspan") ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 1 && parsed < 100 ? parsed : 1;
+}
+
+function tableCellHasContent(cell: HTMLTableCellElement) {
+  if (cell.querySelector("img, svg, math, [data-bilin-math-index], .katex, .table-math")) {
+    return true;
+  }
+  return collapseWhitespace(cell.textContent ?? "").length > 0;
+}
+
 function normalizeLatex(value: string) {
-  return normalizeLatexCommandGroups(value)
+  const normalized = normalizeLatexCommandGroups(value)
     .trim()
     .replace(/^\\\(/, "")
     .replace(/\\\)$/, "")
@@ -2859,8 +3076,26 @@ function normalizeLatex(value: string) {
     .replace(/\\cr/g, "\\\\")
     .replace(/\\(?:no)?pagebreak\s*(?:\[[^\]]+])?/g, "")
     .replace(/\\(?:linebreak|break)\s*(?:\[[^\]]+])?/g, "")
-    .replace(/\\\\\s*\\\\/g, "\\\\")
-    .trim();
+    .replace(/\\\\\s*\\\\/g, "\\\\");
+  return normalizeMatrixRowBreaks(normalized).trim();
+}
+
+function normalizeMatrixRowBreaks(value: string) {
+  return value.replace(
+    /\\begin\{([pbvVB]?matrix|smallmatrix)}([\s\S]*?)\\end\{\1}/g,
+    (_match, environment: string, body: string) => {
+      const rows = body
+        .split(/\\\\/)
+        .map((row) =>
+          row
+            .replace(/\\hline\b/g, "")
+            .replace(/\\cr\b/g, "")
+            .trim()
+        )
+        .filter(Boolean);
+      return `\\begin{${environment}}${rows.join(" \\\\ ")}\\end{${environment}}`;
+    }
+  );
 }
 
 function normalizeLatexCommandGroups(value: string) {

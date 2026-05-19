@@ -31,6 +31,7 @@ from bilin_api.article_store import (
     replace_document,
     write_manifest,
 )
+from bilin_api.citation_keys import humanize_missing_citation_text
 from bilin_api.doctor import detect_version
 from bilin_api.schemas import AssetRecord, DocumentBlock, Library, ParseErrorInfo
 
@@ -68,16 +69,28 @@ MARKDOWN_CONVERSION_OPTIONS = ConversionOptions(
 )
 LATEXML_ENTRY_FILE = "__bilin_latexml_entry.tex"
 LATEXML_DISABLED_PACKAGES = {
+    "algpseudocodex",
     "babel",
     "polyglossia",
     "glossaries",
     "glossaries-extra",
     "mfirstuc",
     "qcircuit",
+    "siunitx",
+    "tcolorbox",
 }
 LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
     "cas-dc",
     "cas-sc",
+}
+LATEXML_CAS_DOCUMENT_CLASSES = {
+    "cas-dc",
+    "cas-sc",
+}
+LATEXML_KOMA_DOCUMENT_CLASS_REPLACEMENTS = {
+    "scrartcl": "article",
+    "scrbook": "book",
+    "scrreprt": "report",
 }
 LATEXML_LAYOUT_AUTHOR_METADATA_KEYS = frozenset(
     {
@@ -147,6 +160,74 @@ LATEXML_COMPATIBILITY_PREAMBLE = "\n".join(
         r"}%",
     ]
 )
+LATEXML_CITATION_FALLBACK_PREAMBLE = r"""
+\makeatletter
+\providecommand{\citeauthor}{\@ifstar{\BilinCiteAuthorStar}{\BilinCiteAuthor}}
+\providecommand{\BilinCiteAuthorStar}[1]{}
+\providecommand{\BilinCiteAuthor}[1]{}
+\makeatother
+"""
+LATEXML_ALGORITHMIC_FALLBACK_PREAMBLE = r"""
+\makeatletter
+\@ifundefined{algorithmic}{\newenvironment{algorithmic}[1][]{\par}{\par}}{}
+\@ifundefined{algorithm}{\newenvironment{algorithm}[1][]{\par}{\par}}{}
+\providecommand{\State}{}
+\providecommand{\Statex}{}
+\providecommand{\Procedure}[2]{#1 #2}
+\providecommand{\EndProcedure}{}
+\providecommand{\Function}[2]{#1 #2}
+\providecommand{\EndFunction}{}
+\providecommand{\If}[1]{if #1}
+\providecommand{\ElsIf}[1]{else if #1}
+\providecommand{\Else}{else}
+\providecommand{\EndIf}{}
+\providecommand{\For}[1]{for #1}
+\providecommand{\ForAll}[1]{for all #1}
+\providecommand{\EndFor}{}
+\providecommand{\While}[1]{while #1}
+\providecommand{\EndWhile}{}
+\providecommand{\Repeat}{repeat}
+\providecommand{\Until}[1]{until #1}
+\providecommand{\Return}[1]{return #1}
+\providecommand{\Call}[2]{#1 #2}
+\providecommand{\Comment}[1]{#1}
+\providecommand{\Require}{}
+\providecommand{\Ensure}{}
+\makeatother
+"""
+LATEXML_TCOLORBOX_FALLBACK_PREAMBLE = r"""
+\makeatletter
+\@ifundefined{tcolorbox}{\newenvironment{tcolorbox}[1][]{\par}{\par}}{}
+\providecommand{\newtcolorbox}[2][]{}
+\providecommand{\renewtcolorbox}[2][]{}
+\providecommand{\tcbset}[1]{}
+\providecommand{\tcbox}[2][]{#2}
+\makeatother
+"""
+LATEXML_SIUNITX_FALLBACK_PREAMBLE = r"""
+\providecommand{\SI}[3][]{#2\,#3}
+\providecommand{\si}[2][]{#2}
+\providecommand{\num}[2][]{#2}
+\providecommand{\qty}[3][]{#2\,#3}
+\providecommand{\SIrange}[4][]{#2--#3\,#4}
+\providecommand{\SIlist}[3][]{#2\,#3}
+\providecommand{\numrange}[3][]{#2--#3}
+\providecommand{\numlist}[2][]{#2}
+\providecommand{\micro}{\ensuremath{\mu}}
+\providecommand{\second}{s}
+\providecommand{\meter}{m}
+\providecommand{\metre}{m}
+\providecommand{\gram}{g}
+\providecommand{\mole}{mol}
+\providecommand{\kelvin}{K}
+\providecommand{\celsius}{^\circ C}
+\providecommand{\angstrom}{\AA}
+\providecommand{\electronvolt}{eV}
+\providecommand{\atomicmassunit}{amu}
+\providecommand{\per}{/}
+\providecommand{\squared}{^{2}}
+\providecommand{\cubed}{^{3}}
+"""
 LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
 \usepackage{amsmath,amsfonts,amssymb}
 \makeatletter
@@ -210,6 +291,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
     manifest = read_manifest(bundle_path) or empty_manifest(revision)
     manifest.parse_status = "running"
     manifest.errors = []
+    manifest.generated_artifacts.pop("parse_error_log", None)
     write_manifest(bundle_path, manifest)
     await mark_revision_status(library, revision.id, "parsing")
 
@@ -482,9 +564,66 @@ def score_main_tex_candidate(path: Path, text: str) -> int:
 def prepare_latexml_entry(main_tex: Path) -> Path:
     source = main_tex.read_text(encoding="utf-8", errors="ignore")
     prepared = prepare_latexml_source(source)
+    prepared = replace_available_bbl_bibliographies(prepared, main_tex.parent, main_tex.stem)
     entry = main_tex.parent / LATEXML_ENTRY_FILE
     entry.write_text(prepared, encoding="utf-8")
     return entry
+
+
+def replace_available_bbl_bibliographies(
+    source: str,
+    source_dir: Path,
+    main_stem: str | None = None,
+) -> str:
+    bibliography_pattern = re.compile(r"\\bibliography\s*\{(?P<names>[^{}]+)\}")
+
+    def replace(match: re.Match[str]) -> str:
+        names = [name.strip() for name in match.group("names").split(",") if name.strip()]
+        if not names:
+            return match.group(0)
+        inputs: list[str] = []
+        for name in names:
+            bbl_reference = _resolve_available_bbl_reference(
+                name,
+                source_dir,
+                main_stem,
+                len(names),
+            )
+            if bbl_reference is None:
+                return match.group(0)
+            inputs.append(rf"\input{{{bbl_reference.as_posix()}}}")
+        return "\n".join(inputs)
+
+    return bibliography_pattern.sub(replace, source)
+
+
+def _resolve_available_bbl_reference(
+    bibliography_name: str,
+    source_dir: Path,
+    main_stem: str | None,
+    bibliography_count: int,
+) -> Path | None:
+    if Path(bibliography_name).suffix:
+        exact_reference = Path(bibliography_name).with_suffix(".bbl")
+    else:
+        exact_reference = Path(f"{bibliography_name}.bbl")
+    if (source_dir / exact_reference).exists():
+        return exact_reference
+
+    if bibliography_count != 1:
+        return None
+
+    if main_stem:
+        main_reference = Path(f"{main_stem}.bbl")
+        if (source_dir / main_reference).exists():
+            return main_reference
+
+    bbl_references = sorted(
+        path.relative_to(source_dir)
+        for path in source_dir.glob("*.bbl")
+        if path.name != LATEXML_ENTRY_FILE
+    )
+    return bbl_references[0] if len(bbl_references) == 1 else None
 
 
 def prepare_latexml_side_sources(unpack_dir: Path, main_tex: Path) -> None:
@@ -503,7 +642,7 @@ def prepare_latexml_side_sources(unpack_dir: Path, main_tex: Path) -> None:
 def prepare_latexml_source(source: str) -> str:
     source = prepare_latexml_included_source(source)
     source = _replace_latexml_layout_document_classes(source)
-    if "Bilin replaced layout document class for LaTeXML" in source:
+    if _source_needs_layout_class_preamble(source):
         source = _strip_layout_author_metadata_options(source)
     if source.startswith("% Bilin LaTeXML parser entry"):
         return source
@@ -513,17 +652,28 @@ def prepare_latexml_source(source: str) -> str:
 
 def prepare_latexml_included_source(source: str) -> str:
     source = _disable_latexml_incompatible_packages(source)
+    if _source_disables_latexml_package(source, "tcolorbox"):
+        source = _replace_latexml_tcolorbox_definitions(source)
     return _replace_latexml_code_generated_diagrams(source)
 
 
 def _inject_latexml_compatibility_preamble(source: str) -> str:
     if "Bilin LaTeXML compatibility shims" in source:
         return source
-    preamble_parts = [LATEXML_COMPATIBILITY_PREAMBLE.strip()]
-    if "Bilin replaced layout document class for LaTeXML" in source:
+    preamble_parts = [
+        LATEXML_COMPATIBILITY_PREAMBLE.strip(),
+        LATEXML_CITATION_FALLBACK_PREAMBLE.strip(),
+    ]
+    if _source_disables_latexml_package(source, "algpseudocodex"):
+        preamble_parts.append(LATEXML_ALGORITHMIC_FALLBACK_PREAMBLE.strip())
+    if _source_disables_latexml_package(source, "tcolorbox"):
+        preamble_parts.append(LATEXML_TCOLORBOX_FALLBACK_PREAMBLE.strip())
+    if _source_disables_latexml_package(source, "siunitx"):
+        preamble_parts.append(LATEXML_SIUNITX_FALLBACK_PREAMBLE.strip())
+    if _source_needs_layout_class_preamble(source):
         preamble_parts.append(LATEXML_LAYOUT_CLASS_PREAMBLE.strip())
     preamble = "% Bilin LaTeXML compatibility shims.\n" + "\n".join(preamble_parts)
-    document_command = re.search(
+    document_command = _first_uncommented_latex_match(
         r"\\(?:documentclass|documentstyle)(?:\s*\[[^\]]*\])?\s*\{[^{}]+\}",
         source,
     )
@@ -541,18 +691,68 @@ def _replace_latexml_layout_document_classes(source: str) -> str:
         re.MULTILINE,
     )
 
-    def replace(match: re.Match[str]) -> str:
-        class_name = match.group("class_name").strip()
-        if class_name not in LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES:
-            return match.group(0)
-        options = match.group("options") or ""
-        option_note = f" {options.strip()}" if options else ""
-        return (
-            "\\documentclass{article}"
-            f"% Bilin replaced layout document class for LaTeXML: {class_name}{option_note}"
-        )
+    match = _first_uncommented_latex_match(document_class_pattern, source)
+    if match is None:
+        return source
+    class_name = match.group("class_name").strip()
+    replacement_class = _latexml_document_class_replacement(class_name)
+    if replacement_class is None:
+        return source
+    options = match.group("options") or ""
+    option_note = f" {options.strip()}" if options else ""
+    replacement = (
+        f"\\documentclass{{{replacement_class}}}"
+        f"% Bilin replaced layout document class for LaTeXML: {class_name}{option_note}"
+    )
+    return source[: match.start()] + replacement + source[match.end() :]
 
-    return document_class_pattern.sub(replace, source, count=1)
+
+def _first_uncommented_latex_match(
+    pattern: str | re.Pattern[str],
+    source: str,
+) -> re.Match[str] | None:
+    compiled = re.compile(pattern, re.MULTILINE) if isinstance(pattern, str) else pattern
+    for match in compiled.finditer(source):
+        if not _is_tex_comment_position(source, match.start()):
+            return match
+    return None
+
+
+def _is_tex_comment_position(source: str, index: int) -> bool:
+    line_start = source.rfind("\n", 0, index) + 1
+    prefix = source[line_start:index]
+    position = prefix.find("%")
+    while position != -1:
+        if not _is_escaped_tex_percent(prefix, position):
+            return True
+        position = prefix.find("%", position + 1)
+    return False
+
+
+def _is_escaped_tex_percent(prefix: str, percent_index: int) -> bool:
+    backslash_count = 0
+    cursor = percent_index - 1
+    while cursor >= 0 and prefix[cursor] == "\\":
+        backslash_count += 1
+        cursor -= 1
+    return backslash_count % 2 == 1
+
+
+def _latexml_document_class_replacement(class_name: str) -> str | None:
+    if class_name in LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES:
+        return "article"
+    return LATEXML_KOMA_DOCUMENT_CLASS_REPLACEMENTS.get(class_name)
+
+
+def _source_needs_layout_class_preamble(source: str) -> bool:
+    return any(
+        f"Bilin replaced layout document class for LaTeXML: {class_name}" in source
+        for class_name in LATEXML_CAS_DOCUMENT_CLASSES
+    )
+
+
+def _source_disables_latexml_package(source: str, package: str) -> bool:
+    return bool(re.search(rf"Bilin disabled for LaTeXML: .*\b{re.escape(package)}\b", source))
 
 
 def _strip_layout_author_metadata_options(source: str) -> str:
@@ -638,6 +838,83 @@ def _layout_author_metadata_keys(value: str) -> set[str] | None:
             return None
         keys.add(match.group("key").lower())
     return keys or None
+
+
+def _replace_latexml_tcolorbox_definitions(source: str) -> str:
+    command_pattern = re.compile(r"\\(?:new|renew)tcolorbox\b")
+    parts: list[str] = []
+    cursor = 0
+    search_from = 0
+    while True:
+        match = command_pattern.search(source, search_from)
+        if match is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        if _is_tex_comment_position(source, match.start()):
+            search_from = match.end()
+            continue
+        parsed = _parse_tcolorbox_definition(source, match.end())
+        if parsed is None:
+            search_from = match.end()
+            continue
+        environment_name, argument_spec, definition_end = parsed
+        parts.append(source[cursor : match.start()])
+        parts.append(_latexml_tcolorbox_environment_stub(environment_name, argument_spec))
+        cursor = definition_end
+        search_from = definition_end
+
+
+def _parse_tcolorbox_definition(source: str, position: int) -> tuple[str, str, int] | None:
+    cursor = _skip_tex_whitespace(source, position)
+    if cursor < len(source) and source[cursor] == "[":
+        option_end = _find_balanced_optional_end(source, cursor)
+        if option_end is None:
+            return None
+        cursor = _skip_tex_whitespace(source, option_end + 1)
+    if cursor >= len(source) or source[cursor] != "{":
+        return None
+    name_end = _find_balanced_group_end(source, cursor)
+    if name_end is None:
+        return None
+    environment_name = source[cursor + 1 : name_end].strip()
+    if not re.fullmatch(r"[A-Za-z@][A-Za-z0-9@_-]*", environment_name):
+        return None
+    cursor = _skip_tex_whitespace(source, name_end + 1)
+    argument_options: list[str] = []
+    while cursor < len(source) and source[cursor] == "[":
+        option_end = _find_balanced_optional_end(source, cursor)
+        if option_end is None:
+            return None
+        argument_options.append(source[cursor + 1 : option_end])
+        cursor = _skip_tex_whitespace(source, option_end + 1)
+    if cursor >= len(source) or source[cursor] != "{":
+        return None
+    body_end = _find_balanced_group_end(source, cursor)
+    if body_end is None:
+        return None
+    return environment_name, _latexml_tcolorbox_argument_spec(argument_options), body_end + 1
+
+
+def _latexml_tcolorbox_argument_spec(argument_options: list[str]) -> str:
+    if not argument_options:
+        return ""
+    argument_count = argument_options[0].strip()
+    if not re.fullmatch(r"[1-9]", argument_count):
+        return ""
+    argument_spec = f"[{argument_count}]"
+    if len(argument_options) > 1:
+        argument_spec += f"[{argument_options[1]}]"
+    return argument_spec
+
+
+def _latexml_tcolorbox_environment_stub(environment_name: str, argument_spec: str) -> str:
+    return (
+        "\\makeatletter\n"
+        f"\\@ifundefined{{{environment_name}}}"
+        f"{{\\newenvironment{{{environment_name}}}{argument_spec}{{\\par}}{{\\par}}}}"
+        f"{{\\renewenvironment{{{environment_name}}}{argument_spec}{{\\par}}{{\\par}}}}"
+        "\n\\makeatother\n"
+    )
 
 
 def _replace_latexml_code_generated_diagrams(source: str) -> str:
@@ -1739,13 +2016,7 @@ def _normalize_missing_latexml_citations(html: str) -> str:
 
 def _missing_latexml_citation_label(body: str) -> str:
     text = re.sub(r"<[^>]+>", "", body)
-    text = unescape(text).replace("\xa0", " ")
-    text = re.sub(r"\s+", " ", text).strip()
-    if text.startswith("[") and text.endswith("]"):
-        text = text[1:-1].strip()
-    text = re.sub(r"\s+([,.;:])", r"\1", text)
-    text = re.sub(r"([,;:])(?=\S)", r"\1 ", text)
-    return re.sub(r"\s{2,}", " ", text).strip()
+    return humanize_missing_citation_text(unescape(text))
 
 
 def _inline_latexml_footnotes(html: str) -> str:

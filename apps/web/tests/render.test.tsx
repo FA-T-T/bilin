@@ -175,14 +175,32 @@ function syntheticDocumentPayload(count = 300) {
   };
 }
 
+async function openReaderWorkspace() {
+  if (screen.queryByRole("button", { name: "Collapse reader workspace" })) return;
+  await userEvent.click(await screen.findByRole("button", { name: "Expand reader workspace" }));
+}
+
 async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
+  await openReaderWorkspace();
   if (screen.queryByRole("button", { name: `Collapse ${name}` })) return;
   await userEvent.click(await screen.findByRole("button", { name: `Expand ${name}` }));
 }
 
+async function findReaderSourcePane(blockUid = "p-0001") {
+  await waitFor(() => {
+    const sourcePane = screen
+      .getByTestId(`reader-block-shell-${blockUid}`)
+      .querySelector(".source-pane");
+    expect(sourcePane).not.toBeNull();
+  });
+  return screen
+    .getByTestId(`reader-block-shell-${blockUid}`)
+    .querySelector(".source-pane") as HTMLElement;
+}
+
 async function expandFirstTranslation() {
-  const buttons = await screen.findAllByRole("button", { name: "Show translation" });
-  fireEvent.pointerDown(buttons[0]);
+  const sourcePane = await findReaderSourcePane();
+  fireEvent.pointerDown(within(sourcePane).getByRole("button", { name: "Show translation" }));
 }
 
 const library = {
@@ -808,6 +826,35 @@ describe("Bilin web shell", () => {
     expect(container).not.toHaveTextContent("$ to a sequence of continuous representations $");
   });
 
+  it("renders inline math inside nested markdown children", () => {
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock(
+          "list-inline-math",
+          "list",
+          [
+            "1. $S_{6}\\rightarrow S_{7}$. Now, the upper $n\\times n$ matrix can be block-Cholesky decomposed as",
+            "",
+            "    | | $$ \\begin{pmatrix}I_{k}&D^{\\mathsf{T}}\\\\ D&I_{n-k}\\end{pmatrix}=M_{1}^{\\mathsf{T}}D_{1}M_{1}, $$ | | (32) |",
+            "    | --- | --- | --- | --- |",
+            "    where",
+            "",
+            "    | | $M_{1}$ | $:=\\begin{pmatrix}I_{k}&0\\\\ D&I_{n-k}\\end{pmatrix},$ | | (33) |",
+            "    | --- | --- | --- | --- | --- |",
+            "    | | $D_{1}$ | $:=\\begin{pmatrix}I_{k}-D^{\\mathsf{T}}D&0\\\\ 0&I_{n-k}\\end{pmatrix}.$ | | (34) |"
+          ].join("\n")
+        )}
+        viewMode="source"
+      />
+    );
+
+    expect(container).not.toHaveTextContent("BILININLINE");
+    expect(container).not.toHaveTextContent("| --- |");
+    expect(container.querySelectorAll(".inline-math .katex").length).toBeGreaterThanOrEqual(6);
+    expect(container).toHaveTextContent("(32)");
+    expect(container).toHaveTextContent("(34)");
+  });
+
   it("normalizes LaTeXML math dialects before KaTeX rendering", () => {
     const { container } = renderWithProviders(
       <ReaderBlock
@@ -837,6 +884,30 @@ L\eqqcolon \textsc{mask}
     expect(container.textContent).not.toContain("\\mspace");
     expect(container.textContent).not.toContain("\\rotatebox");
     expect(container.textContent).not.toContain("\\multicolumn");
+  });
+
+  it("removes empty LaTeXML matrix rows before rendering display math", () => {
+    const { container } = renderWithProviders(
+      <ReaderBlock
+        block={readerTestBlock(
+          "eq-matrix-empty-rows",
+          "equation",
+          String.raw`S_{\text{graph}}=\begin{pmatrix}\\[1.0pt]
+A\\[1.0pt]
+\hline\cr\\[1.0pt]
+I_{n}\\[1.0pt]
+\end{pmatrix},`
+        )}
+        viewMode="source"
+      />
+    );
+
+    const annotation = container.querySelector(".math-block annotation")?.textContent ?? "";
+    expect(container.querySelector(".math-block .katex")).toBeInTheDocument();
+    expect(container.querySelector(".katex-error")).not.toBeInTheDocument();
+    expect(annotation).not.toContain(String.raw`\begin{pmatrix}\\`);
+    expect(annotation).not.toContain(String.raw`\\\end{pmatrix}`);
+    expect(annotation).toContain(String.raw`\begin{pmatrix}A \\ I_{n}\end{pmatrix}`);
   });
 
   it("shows equation numbers from parser metadata", () => {
@@ -1612,12 +1683,12 @@ L\eqqcolon \textsc{mask}
       arxiv_id: "2605.07473v1",
       bare_id: "2605.07473",
       version: "v1",
-      title: "Breaking QAOA's Fixed Target Hamiltonian Barrier",
-      title_target_language: "打破 QAOA 固定目标哈密顿量限制",
+      title: "Breaking QAOA's $H_C$ Target Hamiltonian Barrier",
+      title_target_language: "打破 QAOA 的 $H_C$ 目标哈密顿量限制",
       authors: ["Ada Lovelace"],
       summary_target_language: "这篇文章讨论量子优化和哈密顿量建模。",
       recommendation_reason: "与当前文库的 quant-ph 主题接近。",
-      original_summary: "A compact quantum optimization abstract.",
+      original_summary: "A compact quantum optimization abstract with $H_C$ and $\\gamma$.",
       primary_category: "quant-ph",
       categories: ["quant-ph"],
       published: "2026-05-08T09:20:33Z",
@@ -1701,19 +1772,42 @@ L\eqqcolon \textsc{mask}
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderRoute("/libraries/library-1", "/libraries/:libraryId", <LibraryDetailPage />);
+    const { container } = renderRoute(
+      "/libraries/library-1",
+      "/libraries/:libraryId",
+      <LibraryDetailPage />
+    );
     await userEvent.click(await screen.findByRole("button", { name: /arXiv Daily/ }));
 
     expect(
       await screen.findByRole("button", {
-        name: /Breaking QAOA's Fixed Target Hamiltonian Barrier/
+        name: /Breaking QAOA/
       })
     ).toBeInTheDocument();
-    expect(screen.getByText("打破 QAOA 固定目标哈密顿量限制")).toBeInTheDocument();
+    expect(screen.getByText(/打破 QAOA/)).toBeInTheDocument();
+    expect(container.querySelector(".arxiv-recommendation-title .katex")).toBeInTheDocument();
     expect(screen.getByText(/No arXiv submissions matched/)).toBeInTheDocument();
+    await waitFor(() => {
+      const dailyBodies = fetchMock.mock.calls
+        .filter(([url]) => String(url).endsWith("/libraries/library-1/recommendations/arxiv/daily"))
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      expect(dailyBodies.some((body) => body.refresh === false)).toBe(true);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      const dailyBodies = fetchMock.mock.calls
+        .filter(([url]) => String(url).endsWith("/libraries/library-1/recommendations/arxiv/daily"))
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      expect(dailyBodies.filter((body) => body.refresh === true)).toHaveLength(1);
+    });
 
     await userEvent.click(screen.getByRole("button", { name: /Breaking QAOA/ }));
     expect(screen.getByText("这篇文章讨论量子优化和哈密顿量建模。")).toBeInTheDocument();
+    expect(screen.getByText(/A compact quantum optimization abstract/)).toBeInTheDocument();
+    expect(
+      container.querySelector(".arxiv-recommendation-abstract-source .katex")
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add to 衔牍" }));
 
     await waitFor(() => {
@@ -1826,6 +1920,58 @@ L\eqqcolon \textsc{mask}
     expect(await screen.findByText(/Install LaTeXML/)).toBeInTheDocument();
   });
 
+  it("shows a useful task failure when the backend message is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/jobs/summary")) {
+          return jsonResponse({
+            total: 1,
+            queued: 0,
+            running: 0,
+            paused: 0,
+            succeeded: 0,
+            failed: 1,
+            cancelled: 0,
+            active: 0,
+            updated_at: new Date().toISOString()
+          });
+        }
+        if (url.includes("/jobs?limit=")) {
+          return jsonResponse([
+            {
+              id: "job-import-1",
+              type: "import_arxiv",
+              status: "failed",
+              priority: 0,
+              payload: { arxiv_id: "2208.06563" },
+              result: null,
+              error: {
+                message: "",
+                type: "ReadTimeout"
+              },
+              progress: 0.1,
+              attempts: 1,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              started_at: new Date().toISOString(),
+              finished_at: new Date().toISOString(),
+              lease_owner: "worker-test"
+            }
+          ]);
+        }
+        return jsonResponse([]);
+      })
+    );
+    useUiStore.getState().openTaskDrawer();
+
+    renderWithProviders(<TaskDrawer />);
+
+    expect(await screen.findByText("import_arxiv")).toBeInTheDocument();
+    expect(await screen.findByText("ReadTimeout.")).toBeInTheDocument();
+  });
+
   it("keeps the task drawer bounded when the queue is large", async () => {
     const recentJobs = Array.from({ length: 120 }, (_, index) => ({
       id: `job-${index}`,
@@ -1908,9 +2054,9 @@ L\eqqcolon \textsc{mask}
       "data-virtualization",
       "progressive"
     );
-    expect(
-      await screen.findByText("First paragraph with inline technical content.")
-    ).toBeInTheDocument();
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
     expect(await screen.findByRole("img", { name: "An overview pipeline." })).toHaveAttribute(
       "src",
       "http://127.0.0.1:8000/libraries/library-1/articles/revision-1/assets/fig-0001"
@@ -1926,6 +2072,119 @@ L\eqqcolon \textsc{mask}
     expect(await screen.findByText("Glossary changed")).toBeInTheDocument();
     await openReaderTool("Ask");
     expect(await screen.findByText("External source")).toBeInTheDocument();
+  });
+
+  it("renders assistant chat answers as markdown", async () => {
+    const markdownChatPayload = {
+      ...chatPayload,
+      messages: [
+        {
+          ...chatPayload.messages[0],
+          id: "chat-markdown-1",
+          content:
+            "- **完全对易 (FC)** 要求整体对易，其酉变换 $\\hat{U}_{\\alpha}$ 需要双量子比特门 [p-0001]。 - **量子比特级对易 (QWC)** 仅需单量子比特门 [p-0001]。",
+          external_refs: []
+        }
+      ]
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(markdownChatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+    await openReaderTool("Ask");
+
+    const boldTerm = await screen.findByText("完全对易 (FC)");
+    const assistantMessage = boldTerm.closest(".chat-message-assistant") as HTMLElement;
+    expect(boldTerm.tagName.toLowerCase()).toBe("strong");
+    expect(assistantMessage.querySelectorAll("li")).toHaveLength(2);
+    expect(assistantMessage.querySelector(".inline-math .katex")).toBeInTheDocument();
+    expect(within(assistantMessage).getAllByRole("link", { name: "p-0001" })[0]).toHaveAttribute(
+      "href",
+      "#p-0001"
+    );
+    expect(container.querySelector(".chat-message-markdown")).toBeInTheDocument();
+  });
+
+  it("defaults reader side rails to open and can collapse them on demand", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(chatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
+    const mosaic = container.querySelector(".reader-mosaic");
+    expect(mosaic).not.toHaveClass("reader-mosaic-left-collapsed");
+    expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
+    expect(screen.getByRole("button", { name: "Collapse paper switcher" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse reader workspace" })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Search library papers")).toBeInTheDocument();
+    expect(await screen.findByText("Tasks, providers, and questions")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse paper switcher" }));
+    await userEvent.click(screen.getByRole("button", { name: "Collapse reader workspace" }));
+
+    expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
+    expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
+    expect(screen.queryByPlaceholderText("Search library papers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tasks, providers, and questions")).not.toBeInTheDocument();
   });
 
   it("does not display invalid source-copy translations", async () => {
@@ -1966,12 +2225,8 @@ L\eqqcolon \textsc{mask}
     );
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    const paragraph = await screen.findByText("First paragraph with inline technical content.");
-    const sourcePane = paragraph.closest(".source-pane");
-    expect(sourcePane).not.toBeNull();
-    fireEvent.pointerDown(
-      within(sourcePane as HTMLElement).getByRole("button", { name: "Show translation" })
-    );
+    const sourcePane = await findReaderSourcePane();
+    fireEvent.pointerDown(within(sourcePane).getByRole("button", { name: "Show translation" }));
 
     expect(await screen.findByText("Translation pending.")).toBeInTheDocument();
     expect(screen.queryByText("第一段 technical content 的译文。")).not.toBeInTheDocument();
@@ -2164,9 +2419,9 @@ L\eqqcolon \textsc{mask}
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
 
-    expect(
-      await screen.findByText("First paragraph with inline technical content.")
-    ).toBeInTheDocument();
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
     const page = document.querySelector(".reader-page") as HTMLElement;
     expect(page.style.getPropertyValue("--reader-line-width")).toBe("76%");
     expect(page.style.getPropertyValue("--reader-paragraph-spacing")).toBe("0.5em");
@@ -2472,10 +2727,8 @@ L\eqqcolon \textsc{mask}
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    const paragraph = await screen.findByText("First paragraph with inline technical content.");
-    const sourcePane = paragraph.closest(".source-pane");
+    const sourcePane = await findReaderSourcePane();
     const textBlock = sourcePane?.closest(".text-block");
-    expect(sourcePane).not.toBeNull();
     expect(textBlock).not.toBeNull();
     fireEvent.pointerDown(
       within(sourcePane as HTMLElement).getByRole("button", { name: "Show translation" })
@@ -2724,6 +2977,84 @@ L\eqqcolon \textsc{mask}
     expect(container.querySelector(".latexml-fragment-preview")).not.toHaveTextContent(/ddd\d/);
   });
 
+  it("removes empty LaTeXML spacer columns while preserving table math", () => {
+    const tableBlock = readerTestBlock(
+      "table-spacer-columns",
+      "table",
+      "**Table 2.** Molecular ratios.",
+      { asset_id: "asset-table-spacers", label: "S4.T2" }
+    );
+    const tableAsset = {
+      id: "asset-table-spacers",
+      article_revision_id: "revision-1",
+      asset_id: "asset-table-spacers",
+      kind: "table",
+      source_path: null,
+      web_path: null,
+      caption: "Molecular ratios.",
+      label: "S4.T2",
+      metadata: {
+        html_fragment:
+          '<figure class="ltx_table" id="S4.T2"><table class="ltx_tabular"><tbody><tr><td>Molecule</td><td><math alttext="n"></math> qubits</td><td></td><td colspan="2">Ratios <math alttext="R"></math></td></tr><tr><td></td><td></td><td></td><td><math alttext="\\overline{m_{i}}"></math></td><td><math alttext="R_{\\min}"></math></td></tr><tr><td>H<sub>2</sub></td><td>2</td><td></td><td>2.00</td><td>1.09</td></tr></tbody></table><figcaption>Table 2: Molecular ratios.</figcaption></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={tableBlock} asset={tableAsset} viewMode="source" />
+    );
+
+    const table = container.querySelector(".latexml-fragment-preview table");
+    expect(table).not.toBeNull();
+    const rowCellCounts = [...container.querySelectorAll(".latexml-fragment-preview tr")].map(
+      (row) => row.children.length
+    );
+    expect(rowCellCounts).toEqual([3, 4, 4]);
+    expect(container.querySelectorAll(".latexml-fragment-preview .katex").length).toBeGreaterThan(
+      1
+    );
+    expect(container.querySelector(".latexml-fragment-preview .katex-error")).toBeNull();
+  });
+
+  it("renders math from nested LaTeXML table header cells", () => {
+    const tableBlock = readerTestBlock(
+      "table-nested-math",
+      "table",
+      "**Table 2.** Molecular ratios.",
+      { asset_id: "asset-table-nested-math", label: "S4.T2" }
+    );
+    const tableAsset = {
+      id: "asset-table-nested-math",
+      article_revision_id: "revision-1",
+      asset_id: "asset-table-nested-math",
+      kind: "table",
+      source_path: null,
+      web_path: null,
+      caption: "Molecular ratios.",
+      label: "S4.T2",
+      metadata: {
+        html_fragment:
+          '<figure class="ltx_table" id="S4.T2"><table class="ltx_tabular"><tbody><tr><td>Molecule</td><td><span class="ltx_tabular"><span class="ltx_tr"><span class="ltx_td"><math alttext="n" class="ltx_Math" display="inline"><mi>n</mi></math></span></span><span class="ltx_tr"><span class="ltx_td">qubits</span></span></span></td><td><span class="ltx_tabular"><span class="ltx_tr"><span class="ltx_td"><math alttext="t" class="ltx_Math" display="inline"><mi>t</mi></math></span></span><span class="ltx_tr"><span class="ltx_td">Paulis</span></span></span></td><td></td><td colspan="3">Arrangement</td><td></td><td colspan="4">Ratios <math alttext="R" class="ltx_Math" display="inline"><mi>R</mi></math>, <math alttext="\\widehat{R}" class="ltx_Math" display="inline"><mover><mi>R</mi><mo>^</mo></mover></math></td><td></td><td colspan="3">Rotation Circuit <math alttext="2q" class="ltx_Math" display="inline"><mn>2</mn><mi>q</mi></math>-size</td></tr><tr><td></td><td></td><td></td><td></td><td><math alttext="N" class="ltx_Math" display="inline"><mi>N</mi></math></td><td><math alttext="\\overline{m_i}" class="ltx_Math" display="inline"><mover><msub><mi>m</mi><mi>i</mi></msub><mo>¯</mo></mover></math></td><td><math alttext="\\overline{k_i}" class="ltx_Math" display="inline"><mover><msub><mi>k</mi><mi>i</mi></msub><mo>¯</mo></mover></math></td><td></td><td><math alttext="R_{\\min}" class="ltx_Math" display="inline"><msub><mi>R</mi><mi>min</mi></msub></math></td><td><math alttext="R_{\\operatorname{mean}}" class="ltx_Math" display="inline"><msub><mi>R</mi><mi>mean</mi></msub></math></td><td><math alttext="R_{\\max}" class="ltx_Math" display="inline"><msub><mi>R</mi><mi>max</mi></msub></math></td><td><math alttext="\\widehat{R}" class="ltx_Math" display="inline"><mover><mi>R</mi><mo>^</mo></mover></math></td><td></td><td>theory max</td><td>true max</td><td>mean</td></tr><tr><td>H<sub>2</sub></td><td>2</td><td>4</td><td></td><td>2</td><td>2.00</td><td>1.50</td><td></td><td>1.09</td><td>1.93</td><td>4.60</td><td>1.76</td><td></td><td>0</td><td>0</td><td>0</td></tr></tbody></table></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={tableBlock} asset={tableAsset} viewMode="source" />
+    );
+
+    expect(container.querySelectorAll(".latexml-fragment-preview .table-math").length).toBe(12);
+    expect(container.querySelectorAll(".latexml-fragment-preview .katex").length).toBe(12);
+    expect(container.querySelector(".latexml-fragment-preview .katex-error")).toBeNull();
+    expect(container).not.toHaveTextContent("mi¯");
+    expect(container).not.toHaveTextContent("ki¯");
+    expect(
+      [...container.querySelectorAll(".latexml-fragment-preview tr")][1]?.children.length
+    ).toBe(13);
+  });
+
   it("renders LaTeXML inline SVG figures when no bitmap asset exists", () => {
     const figureBlock: DocumentBlock = {
       id: "block-svg-figure",
@@ -2773,6 +3104,38 @@ L\eqqcolon \textsc{mask}
       "M 0,0 40,0"
     );
     expect(container.querySelector(".latexml-fragment-preview script")).toBeNull();
+  });
+
+  it("renders formulas in LaTeXML-derived source captions", () => {
+    const figureBlock: DocumentBlock = {
+      id: "block-caption-math",
+      article_revision_id: "revision-1",
+      block_uid: "fig-caption-math",
+      structural_path: "00061",
+      block_type: "figure",
+      parent_uid: null,
+      content_hash: "hash-caption-math",
+      context_hash: null,
+      source_markdown: "**Figure 4.** The rotation circuit.",
+      source_latex: null,
+      metadata: {
+        asset_id: "fig-caption-math",
+        label: "A4.F4",
+        html_fragment:
+          '<figure class="ltx_figure" id="A4.F4"><figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_figure">Figure 4: </span>The rotation circuit <math alttext="\\hat{U}_{\\alpha}" class="ltx_Math" display="inline"></math> for the construction.</figcaption></figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={figureBlock} viewMode="source" />
+    );
+
+    const caption = screen.getByText("Figure 4.").closest("p") as HTMLElement;
+    expect(caption).toHaveTextContent("The rotation circuit");
+    expect(caption.querySelector(".inline-math .katex")).toBeInTheDocument();
+    expect(container.querySelector(".caption-translation")).toBeNull();
   });
 
   it("keeps CIFAR-style LaTeXML tables structured instead of flattening rows", () => {
@@ -2973,9 +3336,7 @@ L\eqqcolon \textsc{mask}
     );
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    const paragraph = await screen.findByText("First paragraph with inline technical content.");
-    const sourcePane = paragraph.closest(".source-pane");
-    expect(sourcePane).not.toBeNull();
+    const sourcePane = await findReaderSourcePane();
     await userEvent.hover(sourcePane as HTMLElement);
     await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Copy source"));
 
@@ -3197,9 +3558,9 @@ L\eqqcolon \textsc{mask}
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    expect(
-      await screen.findByText("First paragraph with inline technical content.")
-    ).toBeInTheDocument();
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
     await openReaderTool("Translate");
     await userEvent.click(screen.getByRole("button", { name: "Translate paper" }));
 
@@ -3352,9 +3713,9 @@ L\eqqcolon \textsc{mask}
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    expect(
-      await screen.findByText("First paragraph with inline technical content.")
-    ).toBeInTheDocument();
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
     await openReaderTool("Ask");
     await userEvent.type(screen.getByLabelText("Question"), "What is the paragraph about?");
     await userEvent.click(screen.getByRole("button", { name: "Ask paper" }));

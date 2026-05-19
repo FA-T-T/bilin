@@ -184,7 +184,9 @@ const TaskRow = memo(function TaskRow({ job }: { job: Job }) {
 function jobErrorText(job: Job): string {
   const error = job.error ?? {};
   const code = typeof error.code === "string" ? error.code : undefined;
-  const message = typeof error.message === "string" ? error.message : "Task failed.";
+  const type = typeof error.type === "string" ? error.type : undefined;
+  const rawMessage = typeof error.message === "string" ? error.message.trim() : "";
+  const message = rawMessage || (type ? `${type}.` : "Task failed.");
   const details = error.details;
   const installHint =
     details && typeof details === "object" && "install_hint" in details

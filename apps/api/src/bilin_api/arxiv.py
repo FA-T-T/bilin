@@ -33,6 +33,10 @@ OLD_STYLE_ARCHIVE_ALIASES = {
 }
 
 
+class ArxivFetchError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class ArxivIdentity:
     bare_id: str
@@ -133,6 +137,10 @@ async def resolve_arxiv_metadata(
         response = await active_client.get(ARXIV_API_URL, params={"id_list": id_for_query})
         response.raise_for_status()
         return parse_arxiv_atom(response.text, requested=identity)
+    except httpx.HTTPError as exc:
+        raise ArxivFetchError(
+            http_error_message("arXiv metadata request", id_for_query, exc)
+        ) from exc
     finally:
         if owns_client:
             await active_client.aclose()
@@ -257,9 +265,17 @@ async def download_bytes(url: str, client: httpx.AsyncClient | None = None) -> b
         response = await active_client.get(url)
         response.raise_for_status()
         return response.content
+    except httpx.HTTPError as exc:
+        raise ArxivFetchError(http_error_message("arXiv download", url, exc)) from exc
     finally:
         if owns_client:
             await active_client.aclose()
+
+
+def http_error_message(action: str, target: str, exc: httpx.HTTPError) -> str:
+    detail = str(exc).strip()
+    suffix = f": {detail}" if detail else "."
+    return f"{action} failed for {target}: {type(exc).__name__}{suffix}"
 
 
 async def search_arxiv(

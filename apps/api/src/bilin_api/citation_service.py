@@ -9,6 +9,12 @@ import httpx
 
 from bilin_api.article_store import get_article_revision
 from bilin_api.arxiv import resolve_arxiv_metadata, search_arxiv_latest_by_title
+from bilin_api.citation_keys import (
+    humanize_citation_key,
+    missing_citation_id,
+    normalize_citation_key,
+    parse_author_year_citation_key,
+)
 from bilin_api.repositories import create_job
 from bilin_api.schemas import (
     ArticleCitations,
@@ -222,6 +228,49 @@ def extract_latexml_citations(html: str) -> list[CitationEntry]:
                 metadata={"bib_blocks": blocks},
             )
         )
+    entries.extend(missing_latexml_citation_entries(html, entries))
+    return entries
+
+
+def missing_latexml_citation_entries(
+    html: str,
+    existing_entries: list[CitationEntry],
+) -> list[CitationEntry]:
+    entries: list[CitationEntry] = []
+    seen_ids = {entry.id for entry in existing_entries}
+    seen_keys: set[str] = set()
+    for match in re.finditer(
+        r"<span\b(?=[^>]*\bclass=(?P<quote>['\"])[^'\"]*\bltx_missing_citation\b"
+        r"[^'\"]*(?P=quote))[^>]*>(?P<body>.*?)</span>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        key = normalize_citation_key(clean_html_text(match.group("body")))
+        if not key or key in seen_keys:
+            continue
+        citation_id = missing_citation_id(key)
+        if citation_id in seen_ids:
+            continue
+        label = humanize_citation_key(key)
+        parsed_key = parse_author_year_citation_key(key)
+        authors = parsed_key[0] if parsed_key else None
+        year = parsed_key[1] if parsed_key else citation_year(key)
+        entries.append(
+            CitationEntry(
+                id=citation_id,
+                label=label,
+                title=label,
+                raw_text=key,
+                authors=authors,
+                year=year,
+                arxiv_id=None,
+                scholar_query=label,
+                scholar_url=google_scholar_url(label),
+                metadata={"source": "missing_latexml_citation", "citation_key": key},
+            )
+        )
+        seen_ids.add(citation_id)
+        seen_keys.add(key)
     return entries
 
 
@@ -314,11 +363,21 @@ def bib_blocks(html: str) -> list[str]:
 
 
 def citation_title(blocks: list[str], raw_text: str) -> str:
+    quoted_title = quoted_citation_title(raw_text)
+    if quoted_title:
+        return quoted_title
     if len(blocks) >= 2:
         return blocks[1].rstrip(".")
     cleaned = re.sub(r"^\[\d+\]\s*", "", raw_text).strip()
     parts = [part.strip() for part in re.split(r"\.\s+", cleaned) if part.strip()]
     return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
+
+
+def quoted_citation_title(raw_text: str) -> str:
+    match = re.search(r"[“\"](?P<title>[^”\"]{8,300})[”\"]", raw_text)
+    if not match:
+        return ""
+    return match.group("title").strip().rstrip(".,;:")
 
 
 def citation_label(html: str, citation_id: str, fallback_index: int | None = None) -> str:
@@ -340,7 +399,7 @@ def citation_label(html: str, citation_id: str, fallback_index: int | None = Non
 
 
 def citation_year(raw_text: str) -> str | None:
-    matches = re.findall(r"\b(19\d{2}|20\d{2})\b", raw_text)
+    matches = re.findall(r"(?<![\d-])(19\d{2}|20\d{2})(?![\d-])", raw_text)
     return matches[-1] if matches else None
 
 

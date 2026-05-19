@@ -25,6 +25,7 @@ from bilin_api.latexml_parser import (
     find_main_tex,
     normalize_latexml_html,
     parse_article_revision,
+    prepare_latexml_entry,
     prepare_latexml_included_source,
     prepare_latexml_side_sources,
     prepare_latexml_source,
@@ -101,8 +102,11 @@ def test_prepare_latexml_source_disables_babel_without_touching_other_packages()
     prepared = prepare_latexml_source(
         "\\documentclass{article}\n"
         "\\usepackage{graphicx,babel,amsmath}\n"
+        "\\usepackage[noEnd,commentColor=black]{algpseudocodex}\n"
         "\\RequirePackage[main=english]{polyglossia}\n"
         "\\usepackage[acronym]{glossaries}\n"
+        "\\usepackage{siunitx}\n"
+        "\\usepackage{tcolorbox}\n"
         "\\usepackage[bookmarks=false]{hyperref}\n"
         "\\begin{document}x\\end{document}\n"
     )
@@ -110,14 +114,25 @@ def test_prepare_latexml_source_disables_babel_without_touching_other_packages()
     assert prepared.startswith("% Bilin LaTeXML parser entry.")
     assert "\\usepackage{graphicx,amsmath}" in prepared
     assert "% Bilin disabled for LaTeXML: babel" in prepared
+    assert (
+        "% Bilin disabled for LaTeXML: \\usepackage[noEnd,commentColor=black]{algpseudocodex}"
+    ) in prepared
     assert "% Bilin disabled for LaTeXML: \\RequirePackage[main=english]{polyglossia}" in prepared
     assert "% Bilin disabled for LaTeXML: \\usepackage[acronym]{glossaries}" in prepared
+    assert "% Bilin disabled for LaTeXML: \\usepackage{siunitx}" in prepared
+    assert "% Bilin disabled for LaTeXML: \\usepackage{tcolorbox}" in prepared
     assert "\\usepackage[bookmarks=false]{hyperref}" in prepared
     assert "% Bilin LaTeXML compatibility shims." in prepared
+    assert "\\newenvironment{algorithmic}[1][]" in prepared
+    assert "\\providecommand{\\State}{}" in prepared
+    assert "\\newenvironment{tcolorbox}[1][]" in prepared
+    assert "\\providecommand{\\tcbox}[2][]{#2}" in prepared
     assert "\\providecommand{\\vmathbb}[1]{\\mathbb{#1}}" in prepared
     assert "\\providecommand{\\gls}[1]{#1}" in prepared
     assert "\\providecommand{\\newacronym}[3]{}" in prepared
     assert "\\providecommand{\\resizebox}[3]{#3}" in prepared
+    assert "\\providecommand{\\SI}[3][]{#2\\,#3}" in prepared
+    assert "\\providecommand{\\micro}{\\ensuremath{\\mu}}" in prepared
 
 
 def test_prepare_latexml_source_injects_after_documentstyle() -> None:
@@ -126,6 +141,45 @@ def test_prepare_latexml_source_injects_after_documentstyle() -> None:
     )
 
     assert "\\documentstyle[aps]{revtex}\n% Bilin LaTeXML compatibility shims." in prepared
+
+
+def test_prepare_latexml_source_ignores_commented_documentclass_for_preamble_injection() -> None:
+    prepared = prepare_latexml_source(
+        "%  \\documentclass[showpacs,twocolumn,prx]{revtex4-1}\n"
+        "% another historical class line\n"
+        "\\documentclass[rmp,aps,reprint]{revtex4-1}\n"
+        "\\begin{document}x\\end{document}\n"
+    )
+
+    assert (
+        "\\documentclass[rmp,aps,reprint]{revtex4-1}\n% Bilin LaTeXML compatibility shims."
+    ) in prepared
+    assert (
+        "%  \\documentclass[showpacs,twocolumn,prx]{revtex4-1}\n"
+        "% Bilin LaTeXML compatibility shims."
+    ) not in prepared
+
+
+def test_prepare_latexml_source_replaces_complex_tcolorbox_definitions() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{article}\n"
+        "\\usepackage[most]{tcolorbox}\n"
+        "\\newtcolorbox[auto counter]{tbox}[2][]{%\n"
+        "  title={#2}, #1\n"
+        "}\n"
+        "\\newtcolorbox{codebox}{enhanced,width=.95\\columnwidth}\n"
+        "\\begin{document}\n"
+        "\\begin{tbox}[label=tcolorbox:Gradient]{Algorithm.1}Body\\end{tbox}\n"
+        "\\begin{codebox}Code\\end{codebox}\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\newtcolorbox[auto counter]" not in prepared
+    assert "\\newenvironment{tbox}[2][]" in prepared
+    assert "\\newenvironment{codebox}" in prepared
+    assert "\\\\newenvironment{tbox}" not in prepared
+    assert "\\\\@ifundefined{tbox}" not in prepared
+    assert "title={#2}" not in prepared
 
 
 def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims() -> None:
@@ -157,6 +211,94 @@ def test_prepare_latexml_source_replaces_elsevier_cas_class_with_article_shims()
     assert "\\author[1]{Ada Lovelace}" in prepared
     assert "\\author[2]{Grace Hopper}" in prepared
     assert "\\author[1,2]{Katherine Johnson}" in prepared
+
+
+def test_prepare_latexml_source_replaces_koma_class_without_cas_shims() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass[abstract=true, DIV=14, parskip=half]{scrartcl}\n"
+        "\\author{Ada Lovelace}\n"
+        "\\begin{document}\n"
+        "\\begin{abstract}x\\end{abstract}\n"
+        "\\maketitle\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\documentclass{article}" in prepared
+    assert "\\documentclass[abstract=true, DIV=14, parskip=half]{scrartcl}" not in prepared
+    assert "% Bilin replaced layout document class for LaTeXML: scrartcl" in prepared
+    assert "\\providecommand{\\shorttitle}[1]{}" not in prepared
+    assert "\\providecommand{\\address}" not in prepared
+    assert "\\author{Ada Lovelace}" in prepared
+
+
+def test_prepare_latexml_entry_uses_available_bbl_instead_of_bibtex_placeholder(
+    tmp_path: Path,
+) -> None:
+    main_tex = tmp_path / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "Body \\cite{Bellman}.\n"
+        "\\bibliographystyle{alpha}\n"
+        "\\bibliography{main}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.bbl").write_text(
+        "\\begin{thebibliography}{Bel58}\n"
+        "\\bibitem[Bel58]{Bellman}Richard Bellman.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+
+    entry = prepare_latexml_entry(main_tex)
+    prepared = entry.read_text(encoding="utf-8")
+
+    assert "\\bibliography{main}" not in prepared
+    assert "\\input{main.bbl}" in prepared
+
+
+def test_prepare_latexml_entry_uses_main_stem_bbl_when_bibliography_name_differs(
+    tmp_path: Path,
+) -> None:
+    main_tex = tmp_path / "ghost_pauli_v15_arxiv.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "Body \\cite{Peruzzo_OBrien:2014}.\n"
+        "\\bibliography{ghost_pauli}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ghost_pauli_v15_arxiv.bbl").write_text(
+        "\\begin{thebibliography}{1}\n"
+        "\\bibitem{Peruzzo_OBrien:2014}Peruzzo et al. A variational eigenvalue solver.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+
+    entry = prepare_latexml_entry(main_tex)
+    prepared = entry.read_text(encoding="utf-8")
+
+    assert "\\bibliography{ghost_pauli}" not in prepared
+    assert "\\input{ghost_pauli_v15_arxiv.bbl}" in prepared
+
+
+def test_prepare_latexml_source_adds_common_latexml_layout_and_citation_shims() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{quantumarticle}\n"
+        "\\begin{document}\n"
+        "\\citeauthor*{vandennest2004_graph_states}\n"
+        "\\section{Proof of \\texorpdfstring{$R$}{R}}\n"
+        "\\onecolumngrid\n"
+        "\\begin{tabular}{cc}\\toprule A & B \\\\ \\bottomrule\\end{tabular}\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\providecommand{\\citeauthor}" in prepared
+    assert "\\providecommand{\\texorpdfstring}[2]{#1}" in prepared
+    assert "\\providecommand{\\onecolumngrid}{}" in prepared
+    assert "\\providecommand{\\toprule}{}" in prepared
 
 
 def test_prepare_latexml_side_sources_disables_incompatible_packages_in_inputs(
@@ -372,6 +514,51 @@ def test_normalize_latexml_html_preserves_missing_citation_brackets(
         "See [gokhale2019_commute, Sec. 10.1]."
     )
     assert "algorithm peruzzo2014variational" not in blocks[0].source_markdown
+
+
+def test_normalize_latexml_html_humanizes_author_year_missing_citations(
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <p>
+              The variational quantum eigensolver
+              <cite class="ltx_cite ltx_citemacro_cite">[
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  Peruzzo_OBrien:2014
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  McClean_Aspuru-Guzik: 2016
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  Rybinkin_Izmaylov:2020
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  Cerezo_Coles:2021
+                </span>,
+                <span class="ltx_ref ltx_missing_citation ltx_ref_self">
+                  Anand_Aspuru-Guzik:2022
+                </span>
+              ]</cite>
+              is a hybrid algorithm.
+            </p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert blocks[0].source_markdown == (
+        "The variational quantum eigensolver "
+        "[Peruzzo and OBrien 2014, McClean and Aspuru-Guzik 2016, "
+        "Rybinkin and Izmaylov 2020, Cerezo and Coles 2021, "
+        "Anand and Aspuru-Guzik 2022] is a hybrid algorithm."
+    )
 
 
 def test_normalize_latexml_html_inlines_footnote_urls_as_links(tmp_path: Path) -> None:

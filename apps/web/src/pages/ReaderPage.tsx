@@ -107,6 +107,7 @@ import type {
   TranslationVariant
 } from "../api/types";
 import {
+  MarkdownContent,
   ReaderBlock,
   type CitationImportMode,
   type CitationLookup,
@@ -1829,6 +1830,7 @@ export function ReaderPage() {
                         : (askQuestion.data?.cited_blocks ?? [])
                     }
                     streamingAnswer={streamingAnswer}
+                    referenceTargets={referenceTargets}
                     selectedBlockUid={chatBlockUid}
                     question={question}
                     nativeSearch={nativeSearch}
@@ -2413,6 +2415,7 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   citedBlocks: RetrievedBlock[];
   streamingAnswer: string;
+  referenceTargets: ReferenceTargets;
   selectedBlockUid: string | null;
   question: string;
   nativeSearch: boolean;
@@ -2463,6 +2466,7 @@ function ChatPanel({
   messages,
   citedBlocks,
   streamingAnswer,
+  referenceTargets,
   selectedBlockUid,
   question,
   nativeSearch,
@@ -2522,7 +2526,7 @@ function ChatPanel({
                   </Button>
                 ) : null}
               </Group>
-              <Text>{message.content}</Text>
+              <ChatMessageContent message={message} referenceTargets={referenceTargets} />
               {sourceRefs.length > 0 ? (
                 <Group gap="xs" aria-label="Current-paper evidence">
                   {sourceRefs.map((ref) => (
@@ -2539,7 +2543,11 @@ function ChatPanel({
         {streamingAnswer ? (
           <div className="chat-message chat-message-assistant" aria-live="polite">
             <Badge variant="light">assistant</Badge>
-            <Text>{streamingAnswer}</Text>
+            <ChatAnswerMarkdown
+              content={streamingAnswer}
+              referenceTargets={referenceTargets}
+              sourceRefs={citedBlocks.map((block) => block.block_uid)}
+            />
           </div>
         ) : null}
       </Stack>
@@ -2594,6 +2602,60 @@ function ChatPanel({
       ) : null}
     </div>
   );
+}
+
+function ChatMessageContent({
+  message,
+  referenceTargets
+}: {
+  message: ChatMessage;
+  referenceTargets: ReferenceTargets;
+}) {
+  if (message.role !== "assistant") {
+    return <Text>{message.content}</Text>;
+  }
+  return (
+    <ChatAnswerMarkdown
+      content={message.content}
+      referenceTargets={referenceTargets}
+      sourceRefs={message.source_refs ?? []}
+    />
+  );
+}
+
+function ChatAnswerMarkdown({
+  content,
+  referenceTargets,
+  sourceRefs
+}: {
+  content: string;
+  referenceTargets: ReferenceTargets;
+  sourceRefs: string[];
+}) {
+  return (
+    <div className="chat-message-markdown">
+      <MarkdownContent
+        content={prepareChatAnswerMarkdown(content, sourceRefs)}
+        referenceTargets={referenceTargets}
+      />
+    </div>
+  );
+}
+
+function prepareChatAnswerMarkdown(content: string, sourceRefs: string[]) {
+  return linkChatSourceRefs(normalizeInlineChatBullets(content), sourceRefs);
+}
+
+function normalizeInlineChatBullets(content: string) {
+  return content.replace(/([。.!?])\s+-\s+(?=\*\*)/g, "$1\n- ");
+}
+
+function linkChatSourceRefs(content: string, sourceRefs: string[]) {
+  const refs = new Set(sourceRefs.filter(Boolean));
+  return content.replace(/\[([A-Za-z]+-\d{4,})\]/g, (match, ref: string) => {
+    if (refs.size > 0 && !refs.has(ref)) return match;
+    return `[${ref}](#${ref})`;
+  });
 }
 
 function ExternalEvidence({ refs }: { refs: ExternalCitation[] }) {

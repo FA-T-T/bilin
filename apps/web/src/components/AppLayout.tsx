@@ -15,9 +15,9 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { useJobSummary } from "../api/hooks";
 import { useT } from "../i18n";
-import { SUPPORTED_LOCALES, type AppLocale } from "../product";
+import { productNameForLocale, SUPPORTED_LOCALES, type AppLocale } from "../product";
 import { useUiStore } from "../state/ui";
-import { XianduLogo } from "./brand/XianduLogo";
+import { BilinLogo } from "./brand/BilinLogo";
 import { TaskDrawer } from "./TaskDrawer";
 
 export function AppLayout() {
@@ -27,6 +27,7 @@ export function AppLayout() {
   const colorScheme = useComputedColorScheme("light", { getInitialValueInEffect: true });
   const locale = useUiStore((state) => state.locale);
   const setLocale = useUiStore((state) => state.setLocale);
+  const brandName = productNameForLocale(locale);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const isReaderRoute = location.pathname.startsWith("/articles/");
   const jobs = useJobSummary({ enabled: !isReaderRoute });
@@ -59,23 +60,28 @@ export function AppLayout() {
               className="brand-lockup brand-home-link"
               to="/"
               aria-current={libraryActive ? "page" : undefined}
-              aria-label="衔牍"
+              aria-label={brandName}
               data-active={libraryActive || undefined}
               data-variant={isHomeRoute ? "main" : "page"}
             >
               {isHomeRoute ? (
                 <>
                   <span className="brand-mark" aria-hidden="true">
-                    <XianduLogo className="brand-mark-image" decorative />
+                    <BilinLogo className="brand-mark-image" decorative />
                   </span>
                   <div>
                     <Title order={3} className="brand-title">
-                      衔牍
+                      {brandName}
                     </Title>
                   </div>
                 </>
               ) : (
-                <XianduLogo className="brand-page-logo" title="衔牍" variant="page" />
+                <BilinLogo
+                  className="brand-page-logo"
+                  title={brandName}
+                  variant="page"
+                  wordmark={brandName}
+                />
               )}
             </Link>
             <Group gap="xs" className="app-nav">

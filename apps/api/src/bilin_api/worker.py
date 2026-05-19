@@ -142,7 +142,13 @@ async def run_job(job: Job) -> None:
             return
         await fail_job(job.id, {"message": f"Unsupported job type: {job.type}."})
     except Exception as exc:  # pragma: no cover - defensive worker boundary
-        await fail_job(job.id, {"message": str(exc), "type": type(exc).__name__})
+        await fail_job(job.id, job_error_payload(job, exc))
+
+
+def job_error_payload(job: Job, exc: Exception) -> dict[str, object]:
+    error_type = type(exc).__name__
+    message = str(exc).strip() or f"{job.type.value} failed with {error_type}."
+    return {"message": message, "type": error_type}
 
 
 async def run_import_arxiv_job(job: Job) -> None:

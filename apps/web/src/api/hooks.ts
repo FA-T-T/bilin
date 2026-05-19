@@ -266,6 +266,21 @@ export function useArxivDailyRecommendations(
   });
 }
 
+export function useRefreshArxivDailyRecommendations(libraryId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ArxivRecommendationRequest) =>
+      apiClient.getArxivDailyRecommendations(libraryId ?? "", { ...payload, refresh: true }),
+    onSuccess: (result, payload) => {
+      if (!libraryId) return;
+      queryClient.setQueryData(
+        queryKeys.arxivDailyRecommendations(libraryId, { ...payload, refresh: false }),
+        result
+      );
+    }
+  });
+}
+
 export function useArticles(libraryId?: string, targetLanguage = "zh-CN") {
   return useQuery({
     queryKey: queryKeys.articles(libraryId ?? "", targetLanguage),

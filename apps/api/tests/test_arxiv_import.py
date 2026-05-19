@@ -19,6 +19,8 @@ from bilin_api.article_store import (
     upsert_arxiv_revision,
 )
 from bilin_api.arxiv import (
+    ArxivFetchError,
+    download_bytes,
     metadata_from_entry,
     parse_arxiv_category_taxonomy,
     parse_arxiv_identity,
@@ -115,6 +117,22 @@ def test_metadata_from_entry_reads_arxiv_categories() -> None:
 
     assert metadata.primary_category == "cs.LG"
     assert metadata.categories == ["cs.LG", "stat.ML"]
+
+
+@pytest.mark.asyncio
+async def test_download_bytes_surfaces_timeout_context() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("", request=request)
+
+    url = "https://arxiv.org/e-print/2208.06563v1"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ArxivFetchError) as exc_info:
+            await download_bytes(url, client)
+
+    message = str(exc_info.value)
+    assert "arXiv download failed" in message
+    assert url in message
+    assert "ReadTimeout" in message
 
 
 def test_parse_arxiv_category_taxonomy_extracts_groups_and_descriptions() -> None:
@@ -298,7 +316,7 @@ async def test_daily_candidate_search_falls_back_to_recent_available_window() ->
         seen_urls.append(url)
         assert "cat%3Aquant-ph" in url or "cat:quant-ph" in url
         assert "all%3A%22measurement%22" not in url
-        if "202605080000" in url:
+        if "202605040000" in url:
             return httpx.Response(200, text=fallback_feed)
         return httpx.Response(200, text=empty_feed)
 
@@ -312,8 +330,9 @@ async def test_daily_candidate_search_falls_back_to_recent_available_window() ->
             client=client,
         )
 
-    assert submitted_on == "2026-05-10"
+    assert submitted_on == "2026-05-08"
     assert len(seen_urls) == 2
+    assert "202605102359" in seen_urls[1]
     assert candidates[0].concrete_id == "2605.08082v1"
 
 
