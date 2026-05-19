@@ -1,5 +1,5 @@
 <h1 align="center">
-  衔牍<br>
+  衔牍 (LLM 辅助论文阅读)<br>
   <sub><sub>Ilios · 理紐</sub></sub>
 </h1>
 
