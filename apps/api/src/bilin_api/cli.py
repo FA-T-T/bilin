@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from bilin_api.acceptance import run_golden_acceptance
-from bilin_api.article_store import resolve_library
+from bilin_api.article_store import get_article_revision, resolve_library
 from bilin_api.branding import PRODUCT_NAME_EN
 from bilin_api.doctor import build_doctor_report
 from bilin_api.embedding_service import build_article_embeddings, queue_article_embedding
@@ -16,11 +16,12 @@ from bilin_api.export_service import export_article
 from bilin_api.golden import (
     GoldenRegressionFailure,
     run_golden_fixture,
+    run_latex_corpus_fixture,
     run_live_latexml_golden_fixture,
 )
 from bilin_api.importer import import_arxiv, import_local_file
-from bilin_api.latexml_parser import ParseFailure, parse_article_revision
-from bilin_api.repositories import create_library, create_provider_profile, dev_info
+from bilin_api.latexml_parser import ParseFailure, diagnose_parse_revision, parse_article_revision
+from bilin_api.repositories import create_library, create_provider_profile, dev_info, get_job
 from bilin_api.schemas import (
     ArticleExportKind,
     ArticleExportRequest,
@@ -71,6 +72,7 @@ GOLDEN_LIVE_LATEXML_OPTION = typer.Option(
     "--live-latexml",
     help="Run the fixture source through the local LaTeXML parser before checking expectations.",
 )
+LATEX_CORPUS_FIXTURE_OPTION = typer.Option(None, "--fixture")
 
 
 @app.command()
@@ -243,6 +245,38 @@ def parse_article_command(library_id_or_path: str, article_revision_id: str) -> 
     asyncio.run(_run())
 
 
+@parse_app.command("diagnose")
+def parse_diagnose_command(library_id_or_path: str, revision_or_job_id: str) -> None:
+    """Inspect parser profile and stored failure logs without re-running LaTeXML."""
+
+    async def _run() -> None:
+        library = await resolve_library(library_id_or_path)
+        revision_id = await resolve_parse_diagnostic_target(library_id_or_path, revision_or_job_id)
+        result = await diagnose_parse_revision(library, revision_id)
+        console.print_json(data=result)
+
+    asyncio.run(_run())
+
+
+async def resolve_parse_diagnostic_target(library_id_or_path: str, target_id: str) -> str:
+    library = await resolve_library(library_id_or_path)
+    if await get_article_revision(library, target_id) is not None:
+        return target_id
+    job = await get_job(target_id)
+    if job is None:
+        msg = f"Could not find an article revision or job with id: {target_id}"
+        raise typer.BadParameter(msg)
+    revision_id = job.payload.get("article_revision_id")
+    if not isinstance(revision_id, str) or not revision_id:
+        msg = f"Job does not contain an article_revision_id payload: {target_id}"
+        raise typer.BadParameter(msg)
+    job_library_id = job.payload.get("library_id")
+    if isinstance(job_library_id, str) and job_library_id != library.id:
+        msg = f"Job belongs to library {job_library_id}, but the requested library is {library.id}."
+        raise typer.BadParameter(msg)
+    return revision_id
+
+
 @export_app.command("article")
 def export_article_command(
     library_id_or_path: str,
@@ -308,6 +342,23 @@ def golden_run_command(
         console.print(f"[red]Golden regression failed:[/red] {exc.fixture_path}")
         for failure in exc.failures:
             console.print(f"- {failure}")
+        raise typer.Exit(code=1) from exc
+    console.print_json(data=result.model_dump(mode="json"))
+
+
+@golden_app.command("latex-corpus")
+def golden_latex_corpus_command(
+    fixture_path: Path | None = LATEX_CORPUS_FIXTURE_OPTION,
+    live_latexml: bool = GOLDEN_LIVE_LATEXML_OPTION,
+) -> None:
+    """Run local LaTeX corpus diagnostics or explicit live LaTeXML regression."""
+    try:
+        result = asyncio.run(run_latex_corpus_fixture(fixture_path, live_latexml=live_latexml))
+    except (GoldenRegressionFailure, ParseFailure) as exc:
+        console.print(f"[red]LaTeX corpus regression failed:[/red] {exc}")
+        if isinstance(exc, GoldenRegressionFailure):
+            for failure in exc.failures:
+                console.print(f"- {failure}")
         raise typer.Exit(code=1) from exc
     console.print_json(data=result.model_dump(mode="json"))
 

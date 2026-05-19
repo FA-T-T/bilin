@@ -1,0 +1,12 @@
+{
+  "source_root": "source",
+  "arxiv_id": "legacy-compatibility",
+  "version": "v1",
+  "minimum_summary": {
+    "block_count": 3,
+    "section_count": 1,
+    "figure_count": 1
+  },
+  "required_caption_fragments": ["Circuit with"]
+}
+

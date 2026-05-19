@@ -23,6 +23,80 @@
       "used_for": "Guide lightweight preamble shims before LaTeXML conversion."
     }
   ],
+  "latexml_package_policies": [
+    {
+      "package": "algpseudocodex",
+      "disable_for_latexml": true,
+      "fallback": "algorithmic-environment",
+      "risk": "medium",
+      "reason": "Modern algorithmic packages define presentation environments that can block LaTeXML; preserving readable algorithm text is preferable to failing the parse.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "babel",
+      "disable_for_latexml": true,
+      "fallback": "none",
+      "risk": "low",
+      "reason": "Language and hyphenation setup is layout-only for Bilin's structural parse and can trigger old-package conflicts.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "polyglossia",
+      "disable_for_latexml": true,
+      "fallback": "none",
+      "risk": "low",
+      "reason": "Language setup is layout-only for Bilin's structural parse and often assumes a XeLaTeX/LuaLaTeX path.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "glossaries",
+      "disable_for_latexml": true,
+      "fallback": "glossary-commands",
+      "risk": "medium",
+      "reason": "Glossary indexing commands are document-production machinery; inline uses should remain visible through lightweight command fallbacks.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "glossaries-extra",
+      "disable_for_latexml": true,
+      "fallback": "glossary-commands",
+      "risk": "medium",
+      "reason": "Glossary indexing commands are document-production machinery; inline uses should remain visible through lightweight command fallbacks.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "mfirstuc",
+      "disable_for_latexml": true,
+      "fallback": "glossary-commands",
+      "risk": "medium",
+      "reason": "The package is usually pulled by glossary workflows; Bilin keeps visible text and drops indexing behavior.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "qcircuit",
+      "disable_for_latexml": true,
+      "fallback": "qcircuit-placeholder",
+      "risk": "medium",
+      "reason": "Qcircuit diagrams are code-generated figures; Bilin preserves surrounding figure and caption while marking the diagram for controlled rendering.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "siunitx",
+      "disable_for_latexml": true,
+      "fallback": "siunitx-commands",
+      "risk": "medium",
+      "reason": "Current siunitx can pull expl3 paths that LaTeXML 0.8.8 fails on; simple quantities and units can be displayed with stable local fallbacks.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "tcolorbox",
+      "disable_for_latexml": true,
+      "fallback": "tcolorbox-environment",
+      "risk": "medium",
+      "reason": "Box styling is layout-only, but environments created by newtcolorbox must be stubbed so their contents survive parsing.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    }
+  ],
   "command_group_rules": [
     {
       "id": "blackboard-bold-variants",

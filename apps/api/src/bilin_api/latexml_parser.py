@@ -68,17 +68,6 @@ MARKDOWN_CONVERSION_OPTIONS = ConversionOptions(
     convert_as_inline=False,
 )
 LATEXML_ENTRY_FILE = "__bilin_latexml_entry.tex"
-LATEXML_DISABLED_PACKAGES = {
-    "algpseudocodex",
-    "babel",
-    "polyglossia",
-    "glossaries",
-    "glossaries-extra",
-    "mfirstuc",
-    "qcircuit",
-    "siunitx",
-    "tcolorbox",
-}
 LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
     "cas-dc",
     "cas-sc",
@@ -137,6 +126,15 @@ LATEX_COMPATIBILITY_TABLE = json.loads(
         encoding="utf-8"
     )
 )
+LATEXML_PACKAGE_POLICIES = {
+    str(policy["package"]): policy
+    for policy in LATEX_COMPATIBILITY_TABLE.get("latexml_package_policies", [])
+}
+LATEXML_DISABLED_PACKAGES = {
+    package
+    for package, policy in LATEXML_PACKAGE_POLICIES.items()
+    if policy.get("disable_for_latexml")
+}
 LATEX_COMPATIBILITY_COMMAND_GROUP_RULES = LATEX_COMPATIBILITY_TABLE["command_group_rules"]
 LATEX_COMPATIBILITY_SINGLE_TOKEN_COMMANDS = tuple(
     command
@@ -228,6 +226,11 @@ LATEXML_SIUNITX_FALLBACK_PREAMBLE = r"""
 \providecommand{\squared}{^{2}}
 \providecommand{\cubed}{^{3}}
 """
+LATEXML_PACKAGE_FALLBACK_PREAMBLES = {
+    "algorithmic-environment": LATEXML_ALGORITHMIC_FALLBACK_PREAMBLE,
+    "tcolorbox-environment": LATEXML_TCOLORBOX_FALLBACK_PREAMBLE,
+    "siunitx-commands": LATEXML_SIUNITX_FALLBACK_PREAMBLE,
+}
 LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
 \usepackage{amsmath,amsfonts,amssymb}
 \makeatletter
@@ -282,6 +285,63 @@ class CommandTimeoutBudget:
     graphic_file_count: int = 0
 
 
+@dataclass(frozen=True)
+class ParserProfile:
+    source_root: str | None = None
+    main_tex_file: str | None = None
+    entry_file: str | None = None
+    document_command: str | None = None
+    document_class: str | None = None
+    packages: tuple[str, ...] = ()
+    disabled_packages: tuple[str, ...] = ()
+    compatibility_rules: tuple[str, ...] = ()
+    main_candidates: tuple[dict[str, Any], ...] = ()
+    has_bbl: bool = False
+    has_bib: bool = False
+    has_tikz: bool = False
+    has_qcircuit: bool = False
+    has_tcolorbox: bool = False
+    has_algorithmic: bool = False
+    has_siunitx: bool = False
+    has_glossaries: bool = False
+    has_multiple_main_candidates: bool = False
+    is_legacy_arxiv: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ParserDiagnostic:
+    stage: str
+    code: str
+    message: str
+    command: tuple[str, ...] = ()
+    log_path: str | None = None
+    first_error: str | None = None
+    log_excerpt: str | None = None
+    profile: ParserProfile | None = None
+    compatibility_rules: tuple[str, ...] = ()
+    entry_path: str | None = None
+    diagnostics_path: str | None = None
+    suggestion: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        payload = asdict(self)
+        if self.profile is not None:
+            payload["profile"] = self.profile.to_json()
+        return payload
+
+
+@dataclass(frozen=True)
+class ParserPreparation:
+    source_archive: Path
+    unpack_dir: Path
+    main_tex: Path
+    latexml_entry: Path
+    profile: ParserProfile
+
+
 async def parse_article_revision(library: Library, revision_id: str) -> dict[str, Any]:
     revision = await get_article_revision(library, revision_id)
     if revision is None:
@@ -295,15 +355,20 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
     write_manifest(bundle_path, manifest)
     await mark_revision_status(library, revision.id, "parsing")
 
+    stage = "source_intake"
+    profile: ParserProfile | None = None
     try:
-        source_archive = _find_source_archive(bundle_path)
-        unpack_dir = bundle_path / "source" / "unpacked"
-        safe_unpack(source_archive, unpack_dir)
-        main_tex = find_main_tex(unpack_dir)
-        prepare_latexml_side_sources(unpack_dir, main_tex)
+        source_archive, unpack_dir = prepare_latexml_source_intake(bundle_path)
+        stage = "preflight_classification"
+        preparation = prepare_latexml_preflight(source_archive, unpack_dir)
+        main_tex = preparation.main_tex
+        latexml_entry = preparation.latexml_entry
+        profile = preparation.profile
         manifest.main_tex_file = str(main_tex.relative_to(unpack_dir))
-        latexml_entry = prepare_latexml_entry(main_tex)
+        manifest.metadata["parser_profile"] = profile.to_json()
+        manifest.metadata["latexml_compatibility_rules"] = list(profile.compatibility_rules)
 
+        stage = "dependency_check"
         latexml = shutil.which("latexml")
         latexmlpost = shutil.which("latexmlpost")
         if not latexml or not latexmlpost:
@@ -322,6 +387,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
                 },
             )
 
+        stage = "latexml_execution"
         document_dir = bundle_path / "document"
         logs_dir = bundle_path / "logs"
         document_dir.mkdir(parents=True, exist_ok=True)
@@ -343,6 +409,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         manifest.latexml_command = latexml_command + ["&&"] + latexmlpost_command
         manifest.metadata["latexml_entry_file"] = str(latexml_entry.relative_to(unpack_dir))
         manifest.metadata["latexml_disabled_packages"] = sorted(LATEXML_DISABLED_PACKAGES)
+        manifest.metadata["latexml_binding_dir"] = str(_latexml_binding_dir())
         manifest.tool_versions = {
             "latexml": detect_version(latexml),
             "latexmlpost": detect_version(latexmlpost),
@@ -361,6 +428,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
             timeout_budget=latexml_timeout,
             activity_paths=[xml_path],
         )
+        stage = "latexmlpost_execution"
         await run_command(
             latexmlpost_command,
             cwd=main_tex.parent,
@@ -368,6 +436,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
             timeout_budget=latexmlpost_timeout,
             activity_paths=[html_path],
         )
+        stage = "html_normalization"
         blocks, assets = normalize_latexml_html(
             html_path,
             revision.id,
@@ -391,18 +460,32 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
             "asset_count": len(assets),
         }
     except ParseFailure as exc:
-        manifest.parse_status = "failed"
-        manifest.errors = [exc.to_error_info()]
-        error_log = write_parse_failure_log(bundle_path, exc)
-        manifest.generated_artifacts["parse_error_log"] = str(error_log)
-        await mark_revision_status(library, revision.id, "parse_failed", manifest)
-        raise
-    except Exception as exc:
-        failure = ParseFailure("parse_failed", str(exc), {"type": type(exc).__name__})
+        failure = enrich_parse_failure(bundle_path, exc, stage=stage, profile=profile)
         manifest.parse_status = "failed"
         manifest.errors = [failure.to_error_info()]
         error_log = write_parse_failure_log(bundle_path, failure)
         manifest.generated_artifacts["parse_error_log"] = str(error_log)
+        if "diagnostics_path" in failure.details:
+            manifest.generated_artifacts["parser_diagnostics"] = str(
+                failure.details["diagnostics_path"]
+            )
+        await mark_revision_status(library, revision.id, "parse_failed", manifest)
+        raise failure from exc
+    except Exception as exc:
+        failure = enrich_parse_failure(
+            bundle_path,
+            ParseFailure("parse_failed", str(exc), {"type": type(exc).__name__}),
+            stage=stage,
+            profile=profile,
+        )
+        manifest.parse_status = "failed"
+        manifest.errors = [failure.to_error_info()]
+        error_log = write_parse_failure_log(bundle_path, failure)
+        manifest.generated_artifacts["parse_error_log"] = str(error_log)
+        if "diagnostics_path" in failure.details:
+            manifest.generated_artifacts["parser_diagnostics"] = str(
+                failure.details["diagnostics_path"]
+            )
         await mark_revision_status(library, revision.id, "parse_failed", manifest)
         raise failure from exc
 
@@ -424,6 +507,221 @@ def write_parse_failure_log(bundle_path: Path, failure: ParseFailure) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def enrich_parse_failure(
+    bundle_path: Path,
+    failure: ParseFailure,
+    *,
+    stage: str,
+    profile: ParserProfile | None = None,
+) -> ParseFailure:
+    log_path_value = failure.details.get("log_path")
+    log_path = Path(log_path_value) if isinstance(log_path_value, str) else None
+    first_error, log_excerpt = summarize_latexml_log(log_path) if log_path else (None, None)
+    diagnostic_path = parser_diagnostics_path(bundle_path)
+    diagnostic = ParserDiagnostic(
+        stage=str(failure.details.get("stage") or stage),
+        code=failure.code,
+        message=failure.message,
+        command=tuple(str(value) for value in failure.details.get("command", ()) or ()),
+        log_path=str(log_path) if log_path else None,
+        first_error=first_error,
+        log_excerpt=log_excerpt,
+        profile=profile,
+        compatibility_rules=profile.compatibility_rules if profile else (),
+        entry_path=_diagnostic_entry_path(bundle_path, profile),
+        diagnostics_path=str(diagnostic_path),
+        suggestion=_parse_failure_suggestion(failure.code, first_error, profile),
+    )
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic_path.write_text(
+        json.dumps(diagnostic.to_json(), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    details = dict(failure.details)
+    details.update(
+        {
+            "stage": diagnostic.stage,
+            "diagnostics_path": str(diagnostic_path),
+            "profile": profile.to_json() if profile else None,
+            "compatibility_rules": list(diagnostic.compatibility_rules),
+        }
+    )
+    if diagnostic.first_error:
+        details["first_error"] = diagnostic.first_error
+    if diagnostic.log_excerpt:
+        details["log_excerpt"] = diagnostic.log_excerpt
+    if diagnostic.entry_path:
+        details["entry_path"] = diagnostic.entry_path
+    if diagnostic.suggestion:
+        details["suggestion"] = diagnostic.suggestion
+    return ParseFailure(failure.code, failure.message, details)
+
+
+def parser_diagnostics_path(bundle_path: Path) -> Path:
+    return bundle_path / "logs" / "parser-diagnostics.json"
+
+
+def summarize_latexml_log(log_path: Path) -> tuple[str | None, str | None]:
+    if not log_path.exists():
+        return None, None
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first_error = next(
+        (
+            line
+            for line in lines
+            if line.startswith(("Fatal:", "Error:")) or "Fatal:" in line or "Error:" in line
+        ),
+        None,
+    )
+    interesting = [
+        line
+        for line in lines
+        if line.startswith(("Fatal:", "Error:", "Warning:"))
+        or "Fatal:" in line
+        or "Error:" in line
+        or "Warning:" in line
+    ]
+    excerpt_lines = interesting[:8] if interesting else lines[-12:]
+    return first_error, "\n".join(excerpt_lines) if excerpt_lines else None
+
+
+def _diagnostic_entry_path(bundle_path: Path, profile: ParserProfile | None) -> str | None:
+    if profile is None or profile.entry_file is None:
+        return None
+    return str(bundle_path / "source" / "unpacked" / profile.entry_file)
+
+
+def _parse_failure_suggestion(
+    code: str,
+    first_error: str | None,
+    profile: ParserProfile | None,
+) -> str:
+    if code == "missing_dependency:latexml":
+        return (
+            "Install LaTeXML and confirm both latexml and latexmlpost are visible in bilin doctor."
+        )
+    if code == "missing_main_tex":
+        return (
+            "Inspect the source package for the real TeX entry file and add a main-file "
+            "fixture if detection is ambiguous."
+        )
+    if first_error:
+        if "undefined" in first_error:
+            return (
+                "Add a conservative compatibility rule, source transform, or local LaTeXML "
+                "binding for the first undefined macro or environment."
+            )
+        if "too_many_errors" in first_error:
+            return (
+                "Inspect the earliest error before too_many_errors and reduce it to a fixture "
+                "before adding another shim."
+            )
+    if profile and profile.has_tikz:
+        return (
+            "TikZ content should remain a controlled-render asset path; avoid guessing diagram "
+            "semantics in the reader."
+        )
+    return (
+        "Inspect parser-diagnostics.json, the generated entry file, and the command log before "
+        "changing compatibility rules."
+    )
+
+
+def prepare_latexml_source_intake(bundle_path: Path) -> tuple[Path, Path]:
+    source_archive = _find_source_archive(bundle_path)
+    unpack_dir = bundle_path / "source" / "unpacked"
+    safe_unpack(source_archive, unpack_dir)
+    return source_archive, unpack_dir
+
+
+def prepare_latexml_preflight(source_archive: Path, unpack_dir: Path) -> ParserPreparation:
+    main_tex = find_main_tex(unpack_dir)
+    profile = build_parser_profile(unpack_dir, main_tex)
+    prepare_latexml_side_sources(unpack_dir, main_tex)
+    latexml_entry = prepare_latexml_entry(main_tex)
+    profile = build_parser_profile(unpack_dir, main_tex, latexml_entry)
+    return ParserPreparation(
+        source_archive=source_archive,
+        unpack_dir=unpack_dir,
+        main_tex=main_tex,
+        latexml_entry=latexml_entry,
+        profile=profile,
+    )
+
+
+async def diagnose_parse_revision(library: Library, revision_id: str) -> dict[str, Any]:
+    revision = await get_article_revision(library, revision_id)
+    if revision is None:
+        msg = f"Article revision not found: {revision_id}"
+        raise ParseFailure("not_found:article_revision", msg)
+    bundle_path = Path(revision.bundle_path)
+    manifest = read_manifest(bundle_path)
+    unpack_dir = bundle_path / "source" / "unpacked"
+    main_tex = _diagnostic_main_tex(unpack_dir, manifest)
+    entry_file = unpack_dir / LATEXML_ENTRY_FILE
+    profile = build_parser_profile(
+        unpack_dir,
+        main_tex=main_tex,
+        entry_file=entry_file if entry_file.exists() else None,
+    )
+    stored_diagnostics = _read_json_file(parser_diagnostics_path(bundle_path))
+    parse_error = (
+        _read_json_file(bundle_path / "logs" / "parse-error.json")
+        if manifest and manifest.generated_artifacts.get("parse_error_log")
+        else None
+    )
+    latexml_first_error, latexml_excerpt = summarize_latexml_log(
+        bundle_path / "logs" / "latexml.log"
+    )
+    latexmlpost_first_error, latexmlpost_excerpt = summarize_latexml_log(
+        bundle_path / "logs" / "latexmlpost.log"
+    )
+    return {
+        "article_revision_id": revision.id,
+        "bundle_path": str(bundle_path),
+        "parse_status": manifest.parse_status if manifest else revision.status,
+        "manifest_error": manifest.errors[0].model_dump(mode="json")
+        if manifest and manifest.errors
+        else None,
+        "profile": profile.to_json(),
+        "stored_diagnostics": stored_diagnostics,
+        "parse_error": parse_error,
+        "logs": {
+            "latexml": {
+                "path": str(bundle_path / "logs" / "latexml.log"),
+                "first_error": latexml_first_error,
+                "excerpt": latexml_excerpt,
+            },
+            "latexmlpost": {
+                "path": str(bundle_path / "logs" / "latexmlpost.log"),
+                "first_error": latexmlpost_first_error,
+                "excerpt": latexmlpost_excerpt,
+            },
+        },
+    }
+
+
+def _diagnostic_main_tex(unpack_dir: Path, manifest: Any) -> Path | None:
+    if manifest is not None and manifest.main_tex_file:
+        candidate = unpack_dir / str(manifest.main_tex_file)
+        if candidate.exists():
+            return candidate
+    try:
+        return find_main_tex(unpack_dir)
+    except ParseFailure:
+        return None
+
+
+def _read_json_file(path: Path) -> Any:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def safe_unpack(source_archive: Path, destination: Path, max_bytes: int = 200_000_000) -> None:
@@ -482,15 +780,9 @@ def safe_unpack(source_archive: Path, destination: Path, max_bytes: int = 200_00
 
 
 def find_main_tex(unpack_dir: Path) -> Path:
-    candidates = sorted(path for path in unpack_dir.rglob("*") if _is_tex_main_candidate(path))
-    if not candidates:
+    scored = _scored_main_tex_candidates(unpack_dir)
+    if not scored:
         raise ParseFailure("missing_main_tex", "No TeX-like main file found in source package.")
-    scored: list[tuple[int, Path]] = []
-    for candidate in candidates:
-        text = candidate.read_text(encoding="utf-8", errors="ignore")
-        score = score_main_tex_candidate(candidate, text)
-        scored.append((score, candidate))
-    scored.sort(key=lambda item: (-item[0], len(str(item[1]))))
     if scored[0][0] < 20:
         raise ParseFailure(
             "missing_main_tex",
@@ -498,6 +790,16 @@ def find_main_tex(unpack_dir: Path) -> Path:
             "and begin{document}.",
         )
     return scored[0][1]
+
+
+def _scored_main_tex_candidates(unpack_dir: Path) -> list[tuple[int, Path]]:
+    candidates = sorted(path for path in unpack_dir.rglob("*") if _is_tex_main_candidate(path))
+    scored: list[tuple[int, Path]] = []
+    for candidate in candidates:
+        text = candidate.read_text(encoding="utf-8", errors="ignore")
+        scored.append((score_main_tex_candidate(candidate, text), candidate))
+    scored.sort(key=lambda item: (-item[0], len(str(item[1]))))
+    return scored
 
 
 def _is_tex_main_candidate(path: Path) -> bool:
@@ -559,6 +861,179 @@ def score_main_tex_candidate(path: Path, text: str) -> int:
     if not (has_document_command and has_begin_document):
         score -= 20
     return score
+
+
+def build_parser_profile(
+    unpack_dir: Path,
+    main_tex: Path | None = None,
+    entry_file: Path | None = None,
+) -> ParserProfile:
+    scored_candidates = _scored_main_tex_candidates(unpack_dir) if unpack_dir.exists() else []
+    selected_main = main_tex
+    if selected_main is None and scored_candidates and scored_candidates[0][0] >= 20:
+        selected_main = scored_candidates[0][1]
+    source_files = _profile_source_files(unpack_dir)
+    source_text_by_path = {
+        path: path.read_text(encoding="utf-8", errors="ignore") for path in source_files
+    }
+    main_text = (
+        selected_main.read_text(encoding="utf-8", errors="ignore")
+        if selected_main is not None and selected_main.exists()
+        else ""
+    )
+    all_source_text = "\n".join(source_text_by_path.values())
+    packages = tuple(sorted(_source_package_names(all_source_text)))
+    disabled_packages = tuple(
+        package for package in packages if package in LATEXML_DISABLED_PACKAGES
+    )
+    document_command, document_class = _document_command_profile(main_text)
+    compatibility_rules = _profile_compatibility_rules(
+        packages=packages,
+        source_text=all_source_text,
+        document_class=document_class,
+        source_root=unpack_dir,
+        main_tex=selected_main,
+    )
+    candidate_records = tuple(
+        {
+            "path": _relative_path_or_str(path, unpack_dir),
+            "score": score,
+        }
+        for score, path in scored_candidates[:8]
+    )
+    has_package = set(packages).__contains__
+    return ParserProfile(
+        source_root=str(unpack_dir),
+        main_tex_file=_relative_path_or_str(selected_main, unpack_dir) if selected_main else None,
+        entry_file=_relative_path_or_str(entry_file, unpack_dir) if entry_file else None,
+        document_command=document_command,
+        document_class=document_class,
+        packages=packages,
+        disabled_packages=disabled_packages,
+        compatibility_rules=compatibility_rules,
+        main_candidates=candidate_records,
+        has_bbl=any(path.suffix.casefold() == ".bbl" for path in source_files),
+        has_bib=any(path.suffix.casefold() == ".bib" for path in source_files),
+        has_tikz=has_package("tikz")
+        or has_package("pgfplots")
+        or "\\begin{tikzpicture}" in all_source_text,
+        has_qcircuit=has_package("qcircuit") or "\\Qcircuit" in all_source_text,
+        has_tcolorbox=has_package("tcolorbox") or "\\newtcolorbox" in all_source_text,
+        has_algorithmic=(
+            has_package("algpseudocodex")
+            or has_package("algorithmic")
+            or has_package("algorithmicx")
+            or "\\begin{algorithmic}" in all_source_text
+        ),
+        has_siunitx=has_package("siunitx"),
+        has_glossaries=bool({"glossaries", "glossaries-extra", "mfirstuc"} & set(packages)),
+        has_multiple_main_candidates=sum(1 for score, _path in scored_candidates if score >= 20)
+        > 1,
+        is_legacy_arxiv=_is_legacy_latex_source(selected_main, main_text),
+    )
+
+
+def _profile_source_files(unpack_dir: Path) -> list[Path]:
+    if not unpack_dir.exists():
+        return []
+    files: list[Path] = []
+    for path in sorted(unpack_dir.rglob("*")):
+        if not path.is_file() or path.name == LATEXML_ENTRY_FILE:
+            continue
+        suffix = path.suffix.casefold()
+        if suffix in TEX_MAIN_FILE_SUFFIXES | TEX_SIDE_FILE_SUFFIXES | {".cls"}:
+            files.append(path)
+            continue
+        if not suffix and _looks_like_tex_file(path):
+            files.append(path)
+    return files
+
+
+def _source_package_names(source: str) -> set[str]:
+    package_pattern = re.compile(
+        r"\\(?:usepackage|RequirePackage)"
+        r"(?:\s*\[[^\]]*\])*"
+        r"\s*\{(?P<packages>[^{}]+)\}",
+    )
+    packages: set[str] = set()
+    for match in package_pattern.finditer(source):
+        if _is_tex_comment_position(source, match.start()):
+            continue
+        packages.update(
+            package.strip() for package in match.group("packages").split(",") if package.strip()
+        )
+    return packages
+
+
+def _document_command_profile(source: str) -> tuple[str | None, str | None]:
+    match = _first_uncommented_latex_match(
+        r"\\(?P<command>documentclass|documentstyle)"
+        r"(?:\s*\[[^\]]*\])?"
+        r"\s*\{(?P<class_name>[^{}]+)\}",
+        source,
+    )
+    if match is None:
+        return None, None
+    return f"\\{match.group('command')}", match.group("class_name").strip()
+
+
+def _profile_compatibility_rules(
+    *,
+    packages: tuple[str, ...],
+    source_text: str,
+    document_class: str | None,
+    source_root: Path,
+    main_tex: Path | None,
+) -> tuple[str, ...]:
+    rules: set[str] = set()
+    for package in packages:
+        policy = LATEXML_PACKAGE_POLICIES.get(package)
+        if policy and policy.get("disable_for_latexml"):
+            rules.add(f"package:{package}:{policy.get('fallback', 'none')}")
+    if document_class and _latexml_document_class_replacement(document_class):
+        rules.add(f"documentclass:{document_class}")
+    if main_tex is not None and _source_has_available_bbl_fallback(
+        source_text,
+        main_tex.parent,
+        main_tex.stem,
+    ):
+        rules.add("bibliography:bbl_fallback")
+    if "\\documentstyle" in source_text:
+        rules.add("legacy:documentstyle")
+    return tuple(sorted(rules))
+
+
+def _source_has_available_bbl_fallback(source: str, source_dir: Path, main_stem: str) -> bool:
+    bibliography_pattern = re.compile(r"\\bibliography\s*\{(?P<names>[^{}]+)\}")
+    for match in bibliography_pattern.finditer(source):
+        names = [name.strip() for name in match.group("names").split(",") if name.strip()]
+        if not names:
+            continue
+        for name in names:
+            if (
+                _resolve_available_bbl_reference(name, source_dir, main_stem, len(names))
+                is not None
+            ):
+                return True
+    return False
+
+
+def _is_legacy_latex_source(main_tex: Path | None, main_text: str) -> bool:
+    if "\\documentstyle" in main_text:
+        return True
+    if main_tex is None:
+        return False
+    suffix = main_tex.suffix.casefold()
+    return suffix in {".ltx", ".latex"} or not suffix
+
+
+def _relative_path_or_str(path: Path | None, root: Path) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def prepare_latexml_entry(main_tex: Path) -> Path:
@@ -664,12 +1139,7 @@ def _inject_latexml_compatibility_preamble(source: str) -> str:
         LATEXML_COMPATIBILITY_PREAMBLE.strip(),
         LATEXML_CITATION_FALLBACK_PREAMBLE.strip(),
     ]
-    if _source_disables_latexml_package(source, "algpseudocodex"):
-        preamble_parts.append(LATEXML_ALGORITHMIC_FALLBACK_PREAMBLE.strip())
-    if _source_disables_latexml_package(source, "tcolorbox"):
-        preamble_parts.append(LATEXML_TCOLORBOX_FALLBACK_PREAMBLE.strip())
-    if _source_disables_latexml_package(source, "siunitx"):
-        preamble_parts.append(LATEXML_SIUNITX_FALLBACK_PREAMBLE.strip())
+    preamble_parts.extend(_latexml_package_fallback_preambles(source))
     if _source_needs_layout_class_preamble(source):
         preamble_parts.append(LATEXML_LAYOUT_CLASS_PREAMBLE.strip())
     preamble = "% Bilin LaTeXML compatibility shims.\n" + "\n".join(preamble_parts)
@@ -681,6 +1151,22 @@ def _inject_latexml_compatibility_preamble(source: str) -> str:
         return preamble + "\n" + source
     insert_at = document_command.end()
     return source[:insert_at] + "\n" + preamble + source[insert_at:]
+
+
+def _latexml_package_fallback_preambles(source: str) -> list[str]:
+    preambles: list[str] = []
+    seen: set[str] = set()
+    for package, policy in LATEXML_PACKAGE_POLICIES.items():
+        if not _source_disables_latexml_package(source, package):
+            continue
+        fallback = str(policy.get("fallback", "none"))
+        if fallback in seen:
+            continue
+        fallback_preamble = LATEXML_PACKAGE_FALLBACK_PREAMBLES.get(fallback)
+        if fallback_preamble:
+            preambles.append(fallback_preamble.strip())
+            seen.add(fallback)
+    return preambles
 
 
 def _replace_latexml_layout_document_classes(source: str) -> str:
@@ -969,10 +1455,14 @@ def _find_balanced_group_end(source: str, group_start: int) -> int | None:
 
 def _latexml_search_paths(unpack_dir: Path, main_tex_parent: Path) -> list[Path]:
     paths: list[Path] = []
-    for candidate in (unpack_dir, main_tex_parent):
-        if candidate not in paths:
+    for candidate in (_latexml_binding_dir(), unpack_dir, main_tex_parent):
+        if candidate.exists() and candidate not in paths:
             paths.append(candidate)
     return paths
+
+
+def _latexml_binding_dir() -> Path:
+    return Path(__file__).parent / "latexml_bindings"
 
 
 def _disable_latexml_incompatible_packages(source: str) -> str:
@@ -1069,6 +1559,7 @@ async def run_command(
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(cwd),
+        env=_parser_subprocess_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -1142,8 +1633,23 @@ async def run_command(
         raise ParseFailure(
             "latexml_failed",
             f"Command failed with exit code {process.returncode}: {' '.join(command)}",
-            {"log_path": str(log_path), "returncode": process.returncode},
+            {"log_path": str(log_path), "returncode": process.returncode, "command": command},
         )
+
+
+def _parser_subprocess_env() -> dict[str, str]:
+    env = dict(os.environ)
+    proxy_names = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    )
+    for name in proxy_names:
+        env.pop(name, None)
+    return env
 
 
 def _activity_file_state(paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
@@ -1173,6 +1679,7 @@ def _timeout_failure(
         ),
         {
             "log_path": str(log_path),
+            "command": command,
             "timeout_reason": reason,
             "elapsed_seconds": round(elapsed_seconds, 3),
             "idle_seconds": round(idle_seconds, 3),

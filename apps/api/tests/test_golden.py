@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from bilin_api.cli import app
-from bilin_api.golden import GoldenRegressionFailure, run_golden_fixture
+from bilin_api.golden import GoldenRegressionFailure, run_golden_fixture, run_latex_corpus_fixture
 
 
 def test_golden_fixture_passes_structural_assertions() -> None:
@@ -103,6 +104,30 @@ def test_golden_cli_runs_public_arxiv_fixture() -> None:
     assert '"p-0002"' in result.output
 
 
+def test_latex_corpus_profile_runs_without_live_latexml() -> None:
+    result = asyncio.run(run_latex_corpus_fixture(latex_corpus_fixture_path(), live_latexml=False))
+
+    assert result.fixture == "legacy-compatibility"
+    assert result.live_latexml is False
+    assert result.skipped_reason == "live_latexml_not_requested"
+    assert result.profile["has_siunitx"] is True
+    assert result.profile["has_tcolorbox"] is True
+    assert result.profile["has_qcircuit"] is True
+
+
+def test_latex_corpus_cli_runs_profile_only() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["golden", "latex-corpus", "--fixture", str(latex_corpus_fixture_path())],
+    )
+
+    assert result.exit_code == 0
+    assert "legacy-compatibility" in result.output
+    assert '"live_latexml": false' in result.output
+    assert '"profile_only": true' in result.output
+
+
 def test_acceptance_cli_exports_golden_fixture(bilin_home: Path, tmp_path: Path) -> None:
     runner = CliRunner()
     output_dir = tmp_path / "acceptance"
@@ -134,3 +159,9 @@ def golden_fixture_path() -> Path:
 
 def public_arxiv_golden_fixture_path() -> Path:
     return Path(__file__).resolve().parents[3] / "fixtures" / "golden" / "public-arxiv-2408.13687"
+
+
+def latex_corpus_fixture_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[3] / "fixtures" / "latex-corpus" / "legacy-compatibility"
+    )

@@ -1,6 +1,6 @@
 [project]
 name = "bilin-api"
-version = "3.1.0"
+version = "0.3.1"
 description = "Local-first backend skeleton for Bilin."
 readme = "../../README.md"
 requires-python = ">=3.13"
@@ -37,7 +37,8 @@ packages = ["src/bilin_api"]
 [tool.hatch.build]
 include = [
   "src/bilin_api/**/*.py",
-  "src/bilin_api/**/*.sql"
+  "src/bilin_api/**/*.sql",
+  "src/bilin_api/latexml_bindings/**/*"
 ]
 
 [tool.pytest.ini_options]

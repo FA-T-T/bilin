@@ -17,6 +17,8 @@ from bilin_api.article_store import (
     upsert_arxiv_revision,
 )
 from bilin_api.latexml_parser import (
+    build_parser_profile,
+    find_main_tex,
     normalize_latexml_html,
     parse_article_revision,
     render_source_markdown,
@@ -42,12 +44,29 @@ class GoldenRegressionResult(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
+class LatexCorpusResult(BaseModel):
+    fixture: str
+    fixture_path: str
+    live_latexml: bool
+    skipped_reason: str | None = None
+    profile: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 def default_golden_fixture_path() -> Path:
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "fixtures" / "golden" / "minimal-paper"
         if candidate.exists():
             return candidate
     return Path("fixtures/golden/minimal-paper").resolve()
+
+
+def default_latex_corpus_fixture_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "fixtures" / "latex-corpus" / "legacy-compatibility"
+        if candidate.exists():
+            return candidate
+    return Path("fixtures/latex-corpus/legacy-compatibility").resolve()
 
 
 def run_golden_fixture(fixture_path: Path | None = None) -> GoldenRegressionResult:
@@ -133,6 +152,73 @@ async def run_live_latexml_golden_fixture(
         )
 
 
+async def run_latex_corpus_fixture(
+    fixture_path: Path | None = None,
+    *,
+    live_latexml: bool = False,
+) -> LatexCorpusResult:
+    fixture = (fixture_path or default_latex_corpus_fixture_path()).expanduser().resolve()
+    expected = _load_expected(fixture)
+    source_root = fixture / _string_value(expected.get("source_root"), "source")
+    if not source_root.exists():
+        msg = f"Missing LaTeX corpus source directory: {source_root}"
+        raise GoldenRegressionFailure(fixture, [msg])
+    main_tex = find_main_tex(source_root)
+    profile = build_parser_profile(source_root, main_tex)
+    if not live_latexml:
+        return LatexCorpusResult(
+            fixture=fixture.name,
+            fixture_path=str(fixture),
+            live_latexml=False,
+            skipped_reason="live_latexml_not_requested",
+            profile=profile.to_json(),
+            summary={"profile_only": True},
+        )
+
+    with tempfile.TemporaryDirectory(prefix="bilin-latex-corpus-") as temp_dir:
+        now = datetime.now(UTC)
+        library = Library(
+            id="latex-corpus-library",
+            name="LaTeX Corpus",
+            path=str(Path(temp_dir) / "library"),
+            status=LibraryStatus.active,
+            metadata={"latex_corpus_fixture": fixture.name},
+            created_at=now,
+            updated_at=now,
+        )
+        bare_id = _string_value(expected.get("arxiv_id"), f"corpus-{fixture.name}")
+        version = _string_value(expected.get("version"), "v1")
+        bundle_path = bundle_path_for_arxiv(library, bare_id, version)
+        original_dir = bundle_path / "original"
+        original_dir.mkdir(parents=True, exist_ok=True)
+        _write_source_tar(source_root, original_dir / "source.tar")
+        _, revision = await upsert_arxiv_revision(
+            library,
+            bare_id=bare_id,
+            version=version,
+            title=f"LaTeX corpus fixture: {fixture.name}",
+            bundle_path=bundle_path,
+            metadata={"latex_corpus_fixture": fixture.name},
+        )
+        await parse_article_revision(library, revision.id)
+        document = await read_article_document(library, revision.id)
+        if document is None:
+            msg = "Live LaTeX corpus parse did not produce a document."
+            raise GoldenRegressionFailure(fixture, [msg])
+        source_markdown = (bundle_path / "document" / "source.md").read_text(encoding="utf-8")
+        summary = stable_document_summary(document.blocks, document.assets, source_markdown)
+        failures = _compare_latex_corpus_expected(expected, summary)
+        if failures:
+            raise GoldenRegressionFailure(fixture, failures)
+        return LatexCorpusResult(
+            fixture=fixture.name,
+            fixture_path=str(fixture),
+            live_latexml=True,
+            profile=profile.to_json(),
+            summary=latex_corpus_summary(summary),
+        )
+
+
 def stable_document_summary(
     blocks: list[DocumentBlock],
     assets: list[AssetRecord],
@@ -169,6 +255,41 @@ def stable_document_summary(
             for asset in assets
         ],
     }
+
+
+def latex_corpus_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    block_types = [str(value) for value in summary.get("block_types", [])]
+    assets = _summary_list(summary, "assets")
+    return {
+        "block_count": summary["block_count"],
+        "asset_count": summary["asset_count"],
+        "section_count": block_types.count("section"),
+        "equation_count": block_types.count("equation"),
+        "figure_count": block_types.count("figure"),
+        "table_count": block_types.count("table"),
+        "captions": [asset.get("caption") for asset in assets if asset.get("caption")],
+    }
+
+
+def _compare_latex_corpus_expected(
+    expected: dict[str, Any],
+    summary: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    corpus_summary = latex_corpus_summary(summary)
+    minimums = expected.get("minimum_summary")
+    if isinstance(minimums, dict):
+        for key, minimum in minimums.items():
+            actual = corpus_summary.get(str(key))
+            if isinstance(minimum, int) and isinstance(actual, int) and actual < minimum:
+                failures.append(f"{key}: expected at least {minimum!r}, got {actual!r}")
+    required_caption_fragments = expected.get("required_caption_fragments")
+    if isinstance(required_caption_fragments, list):
+        caption_text = "\n".join(str(caption) for caption in corpus_summary["captions"])
+        for fragment in required_caption_fragments:
+            if isinstance(fragment, str) and fragment not in caption_text:
+                failures.append(f"caption fragment not found: {fragment!r}")
+    return failures
 
 
 def _load_expected(fixture: Path) -> dict[str, Any]:

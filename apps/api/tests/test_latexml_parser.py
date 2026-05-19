@@ -21,6 +21,8 @@ from bilin_api.cli import app
 from bilin_api.latexml_parser import (
     CommandTimeoutBudget,
     ParseFailure,
+    build_parser_profile,
+    diagnose_parse_revision,
     estimate_latexml_timeout_budget,
     find_main_tex,
     normalize_latexml_html,
@@ -33,8 +35,8 @@ from bilin_api.latexml_parser import (
     run_command,
     safe_unpack,
 )
-from bilin_api.repositories import create_library
-from bilin_api.schemas import ArticleManifest, LibraryCreate
+from bilin_api.repositories import create_job, create_library
+from bilin_api.schemas import ArticleManifest, JobType, LibraryCreate
 
 
 def test_safe_unpack_detects_main_tex(tmp_path: Path) -> None:
@@ -88,6 +90,44 @@ def test_find_main_tex_accepts_extensionless_old_arxiv_source(tmp_path: Path) ->
     )
 
     assert find_main_tex(source_dir).name == "9407022"
+
+
+def test_build_parser_profile_records_local_latex_features(tmp_path: Path) -> None:
+    source_dir = tmp_path / "profile"
+    source_dir.mkdir()
+    main_tex = source_dir / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{siunitx,tcolorbox,qcircuit}\n"
+        "\\newtcolorbox{tbox}[1][]{title={#1}}\n"
+        "\\begin{document}\n"
+        "\\SI{10}{\\micro\\second}\n"
+        "\\Qcircuit @C=1em {& \\gate{H} & \\qw}\n"
+        "\\bibliography{missing}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (source_dir / "main.bbl").write_text(
+        "\\begin{thebibliography}{1}\\bibitem{Bellman}Bellman.\\end{thebibliography}",
+        encoding="utf-8",
+    )
+    (source_dir / "9407022").write_text(
+        "\\documentstyle{article}\\begin{document}old\\end{document}",
+        encoding="utf-8",
+    )
+
+    profile = build_parser_profile(source_dir, main_tex)
+
+    assert profile.document_command == "\\documentclass"
+    assert profile.document_class == "article"
+    assert profile.has_siunitx is True
+    assert profile.has_tcolorbox is True
+    assert profile.has_qcircuit is True
+    assert profile.has_bbl is True
+    assert profile.has_multiple_main_candidates is True
+    assert "package:siunitx:siunitx-commands" in profile.compatibility_rules
+    assert "package:tcolorbox:tcolorbox-environment" in profile.compatibility_rules
+    assert "bibliography:bbl_fallback" in profile.compatibility_rules
 
 
 def test_safe_unpack_rejects_path_traversal(tmp_path: Path) -> None:
@@ -396,6 +436,27 @@ async def test_run_command_keeps_running_while_output_shows_activity(tmp_path: P
     )
 
     assert "latexml progress 3" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_command_strips_proxy_environment_for_local_parser_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "“http://127.0.0.1:7897”")
+    log_path = tmp_path / "proxy.log"
+    await run_command(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.getenv('HTTPS_PROXY'))",
+        ],
+        cwd=tmp_path,
+        log_path=log_path,
+        timeout_budget=CommandTimeoutBudget(soft_seconds=1, idle_seconds=1, hard_seconds=2),
+    )
+
+    assert "--- STDOUT ---\nNone\n" in log_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -1735,10 +1796,18 @@ async def test_parse_article_fails_explicitly_when_latexml_is_missing(
     assert manifest.parse_status == "failed"
     assert manifest.errors[0].code == "missing_dependency:latexml"
     assert manifest.errors[0].details["doctor_command"] == "bilin doctor"
+    assert manifest.errors[0].details["stage"] == "dependency_check"
+    assert manifest.errors[0].details["profile"]["main_tex_file"] == "main.tex"
     assert "Install LaTeXML" in manifest.errors[0].details["install_hint"]
+    diagnostics_path = Path(manifest.errors[0].details["diagnostics_path"])
+    assert diagnostics_path.exists()
+    diagnostics = diagnostics_path.read_text(encoding="utf-8")
+    assert "dependency_check" in diagnostics
+    assert "main.tex" in diagnostics
     error_log = bundle_path / "logs" / "parse-error.json"
     assert error_log.exists()
     assert manifest.generated_artifacts["parse_error_log"] == str(error_log)
+    assert manifest.generated_artifacts["parser_diagnostics"] == str(diagnostics_path)
     assert "missing_dependency:latexml" in error_log.read_text(encoding="utf-8")
 
 
@@ -1756,6 +1825,87 @@ def test_parse_cli_prints_missing_latexml_guidance(
     assert "missing_dependency:latexml" in result.output
     assert "Install LaTeXML" in result.output
     assert "bilin doctor" in result.output
+
+
+def test_parse_diagnose_cli_reads_existing_profile_without_reparse(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library_id, revision_id = asyncio.run(prepare_missing_dependency_cli_fixture(tmp_path))
+    monkeypatch.setattr(parser_module.shutil, "which", lambda _name: None)
+
+    parse_result = CliRunner().invoke(app, ["parse", "article", library_id, revision_id])
+    diagnose_result = CliRunner().invoke(app, ["parse", "diagnose", library_id, revision_id])
+
+    assert parse_result.exit_code == 1
+    assert diagnose_result.exit_code == 0
+    assert '"article_revision_id"' in diagnose_result.output
+    assert '"main_tex_file": "main.tex"' in diagnose_result.output
+    assert '"stage": "dependency_check"' in diagnose_result.output
+
+
+def test_parse_diagnose_cli_accepts_parse_job_id(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library_id, revision_id = asyncio.run(prepare_missing_dependency_cli_fixture(tmp_path))
+    job = asyncio.run(
+        create_job(
+            JobType.parse_article,
+            {"library_id": library_id, "article_revision_id": revision_id},
+        )
+    )
+    monkeypatch.setattr(parser_module.shutil, "which", lambda _name: None)
+
+    CliRunner().invoke(app, ["parse", "article", library_id, revision_id])
+    diagnose_result = CliRunner().invoke(app, ["parse", "diagnose", library_id, job.id])
+
+    assert diagnose_result.exit_code == 0
+    assert '"article_revision_id"' in diagnose_result.output
+    assert revision_id in diagnose_result.output
+
+
+@pytest.mark.asyncio
+async def test_diagnose_parse_revision_returns_stored_latexml_failure(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(LibraryCreate(name="Diagnose", path=str(tmp_path / "library")))
+    bundle_path = bundle_path_for_arxiv(library, "2401.00004", "v1")
+    (bundle_path / "source" / "unpacked").mkdir(parents=True)
+    (bundle_path / "logs").mkdir(parents=True)
+    (bundle_path / "source" / "unpacked" / "main.tex").write_text(
+        "\\documentclass{article}\\begin{document}x\\end{document}",
+        encoding="utf-8",
+    )
+    (bundle_path / "logs" / "latexml.log").write_text(
+        "--- STDERR ---\nError:undefined:\\foo The token T_CS[\\foo] is not defined.\n",
+        encoding="utf-8",
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00004",
+        version="v1",
+        title="Diagnose",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    write_manifest(
+        bundle_path,
+        ArticleManifest(
+            article_revision_id=revision.id,
+            source="arxiv",
+            main_tex_file="main.tex",
+            parse_status="failed",
+        ),
+    )
+
+    result = await diagnose_parse_revision(library, revision.id)
+
+    assert result["profile"]["main_tex_file"] == "main.tex"
+    assert result["logs"]["latexml"]["first_error"].startswith("Error:undefined")
 
 
 async def prepare_missing_dependency_cli_fixture(tmp_path: Path) -> tuple[str, str]:

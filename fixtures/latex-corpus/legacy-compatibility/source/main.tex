@@ -1,0 +1,19 @@
+\documentclass{article}
+\usepackage{siunitx}
+\usepackage[most]{tcolorbox}
+\usepackage{qcircuit}
+\newtcolorbox{tbox}[1][]{title={#1}}
+\begin{document}
+\section{Legacy compatibility}
+The pulse lasted \SI{10}{\micro\second}.
+\begin{figure}
+\Qcircuit @C=1em {& \gate{H} & \qw}
+\caption{Circuit with $U_{\alpha}$ and fallback content.}
+\end{figure}
+\begin{tbox}[Algorithm]
+Define $\textrm{Fen}(0,7)$.
+\end{tbox}
+Citation \cite{Bellman}.
+\bibliography{missing}
+\end{document}
+

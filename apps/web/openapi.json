@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "3.1.0"
+    "version": "0.3.1"
   },
   "paths": {
     "/health": {

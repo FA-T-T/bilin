@@ -13,7 +13,7 @@ from bilin_api.article_store import (
     read_article_document,
     upsert_arxiv_revision,
 )
-from bilin_api.golden import run_live_latexml_golden_fixture
+from bilin_api.golden import run_latex_corpus_fixture, run_live_latexml_golden_fixture
 from bilin_api.importer import import_arxiv
 from bilin_api.latexml_parser import parse_article_revision
 from bilin_api.repositories import create_library
@@ -106,6 +106,24 @@ async def test_latexml_golden_fixture_matches_expected(bilin_home: Path) -> None
     assert result.fixture == "minimal-paper"
     assert result.block_types == ["section", "paragraph", "equation", "figure", "table"]
     assert result.asset_count == 2
+
+
+@pytest.mark.integration_latexml
+@pytest.mark.skipif(
+    not RUN_LATEXML_INTEGRATION or not shutil.which("latexml") or not shutil.which("latexmlpost"),
+    reason="Set BILIN_RUN_LATEXML_INTEGRATION=1 and install LaTeXML to run live parser tests.",
+)
+@pytest.mark.asyncio
+async def test_latex_corpus_fixture_live_summary(bilin_home: Path) -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[3] / "fixtures" / "latex-corpus" / "legacy-compatibility"
+    )
+
+    result = await run_latex_corpus_fixture(fixture_path, live_latexml=True)
+
+    assert result.live_latexml is True
+    assert result.summary["block_count"] >= 3
+    assert result.summary["figure_count"] >= 1
 
 
 def write_tar(path: Path, files: dict[str, bytes]) -> None:
