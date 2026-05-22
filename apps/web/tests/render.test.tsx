@@ -179,7 +179,9 @@ function syntheticDocumentPayload(count = 300) {
   };
 }
 
-async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
+async function openReaderTool(
+  name: "Model provider" | "Translate" | "Terms" | "Ask" | "Notes" | "Export"
+) {
   if (screen.queryByRole("button", { name: `Collapse ${name}` })) return;
   await userEvent.click(await screen.findByRole("button", { name }));
 }
@@ -475,7 +477,12 @@ const glossaryPayload = {
       target_term: "技术内容",
       language_direction: "en->zh-CN",
       status: "active",
-      metadata: { target_language: "zh-CN", article_revision_id: "revision-1" },
+      metadata: {
+        target_language: "zh-CN",
+        article_revision_id: "revision-1",
+        definition: "A compact phrase used in the test article.",
+        definition_source: "ai_search"
+      },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }
@@ -795,6 +802,7 @@ describe("Bilin web shell", () => {
             authors: null,
             year: null,
             arxiv_id: null,
+            source: "fixture",
             scholar_query: "Neural machine translation",
             scholar_url: "https://scholar.google.com/scholar?q=Neural+machine+translation",
             metadata: {}
@@ -807,6 +815,7 @@ describe("Bilin web shell", () => {
             authors: null,
             year: null,
             arxiv_id: null,
+            source: "fixture",
             scholar_query: "Sequence to sequence learning",
             scholar_url: "https://scholar.google.com/scholar?q=Sequence+to+sequence+learning",
             metadata: {}
@@ -1094,17 +1103,18 @@ I_{n}\\[1.0pt]
     renderWithProviders(
       <ReaderBlock
         block={readerTestBlock("p-cite", "paragraph", "Residual blocks use normalization [1].", {
-          references: [{ href: "#bib.bib1", text: "1" }]
+          references: [{ href: "#bib:layernorm", text: "1" }]
         })}
         citations={{
-          "bib.bib1": {
-            id: "bib.bib1",
+          "bib:layernorm": {
+            id: "bib:layernorm",
             label: "1",
             title: "Layer normalization",
             raw_text: "Jimmy Lei Ba. Layer normalization. 2016.",
             authors: "Jimmy Lei Ba",
             year: "2016",
             arxiv_id: "1607.06450",
+            source: "fixture",
             scholar_query: "Layer normalization Jimmy Lei Ba",
             scholar_url: "https://scholar.google.com/scholar?q=Layer+normalization",
             metadata: {}
@@ -1133,12 +1143,12 @@ I_{n}\\[1.0pt]
     );
     await userEvent.click(screen.getByRole("button", { name: "Add to Ilios library" }));
     expect(onCitationImport).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "bib.bib1" }),
+      expect.objectContaining({ id: "bib:layernorm" }),
       "add"
     );
     await userEvent.click(screen.getByRole("button", { name: "Add and translate" }));
     expect(onCitationImport).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "bib.bib1" }),
+      expect.objectContaining({ id: "bib:layernorm" }),
       "add-and-translate"
     );
   });
@@ -1709,148 +1719,27 @@ I_{n}\\[1.0pt]
     });
   });
 
-  it("renders arXiv Daily recommendations and imports a recommended paper", async () => {
-    const recommendedPaper = {
-      arxiv_id: "2605.07473v1",
-      bare_id: "2605.07473",
-      version: "v1",
-      title: "Breaking QAOA's $H_C$ Target Hamiltonian Barrier",
-      title_target_language: "打破 QAOA 的 $H_C$ 目标哈密顿量限制",
-      authors: ["Ada Lovelace"],
-      summary_target_language: "这篇文章讨论量子优化和哈密顿量建模。",
-      recommendation_reason: "与当前文库的 quant-ph 主题接近。",
-      original_summary: "A compact quantum optimization abstract with $H_C$ and $\\gamma$.",
-      primary_category: "quant-ph",
-      categories: ["quant-ph"],
-      published: "2026-05-08T09:20:33Z",
-      updated: "2026-05-08T09:20:33Z",
-      abs_url: "https://arxiv.org/abs/2605.07473v1",
-      pdf_url: "https://arxiv.org/pdf/2605.07473v1.pdf",
-      source_url: "https://arxiv.org/e-print/2605.07473v1",
-      score: 2.67,
-      score_reasons: ["primary category quant-ph"],
-      status: "new",
-      is_in_library: false
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it("does not render arXiv Daily or request recommendation data", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
       if (url.includes("/libraries/library-1/articles?target_language=")) {
         return jsonResponse([article]);
       }
-      if (url.endsWith("/libraries/library-1/recommendations/arxiv/categories?refresh=false")) {
-        return jsonResponse({
-          categories: [
-            {
-              id: "quant-ph",
-              name: "Quantum Physics",
-              group: "Physics",
-              description: "Quantum physics papers."
-            }
-          ],
-          source_url: "https://arxiv.org/category_taxonomy",
-          cached: true,
-          updated_at: "2026-05-11T00:00:00Z"
-        });
-      }
-      if (url.endsWith("/libraries/library-1/recommendations/arxiv/preferences")) {
-        return jsonResponse({
-          library_id: "library-1",
-          categories: ["quant-ph"],
-          keywords: ["finite sampling error"],
-          updated_at: "2026-05-11T00:00:00Z"
-        });
-      }
-      if (url.endsWith("/libraries/library-1/recommendations/arxiv/daily")) {
-        return jsonResponse({
-          library_id: "library-1",
-          target_language: "zh-CN",
-          submitted_on: "2026-05-10",
-          categories: ["quant-ph"],
-          keywords: ["finite sampling error"],
-          engine_requested: "heuristic",
-          engine_used: "heuristic",
-          cached: false,
-          generated_at: "2026-05-11T00:00:00Z",
-          items: [recommendedPaper],
-          message:
-            "No arXiv submissions matched the current window around 2026-05-11; showing the latest available window anchored at 2026-05-10."
-        });
-      }
-      if (url.endsWith("/libraries/library-1/imports/arxiv") && init?.method === "POST") {
-        return jsonResponse(
-          {
-            id: "job-1",
-            type: "import_arxiv",
-            status: "queued",
-            priority: 0,
-            payload: {},
-            result: null,
-            error: null,
-            progress: 0,
-            attempts: 0,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            started_at: null,
-            finished_at: null,
-            lease_owner: null
-          },
-          201
-        );
-      }
       return jsonResponse([]);
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderRoute(
-      "/libraries/library-1",
-      "/libraries/:libraryId",
-      <LibraryDetailPage />
-    );
-    await userEvent.click(await screen.findByRole("button", { name: /arXiv Daily/ }));
+    renderRoute("/libraries/library-1", "/libraries/:libraryId", <LibraryDetailPage />);
 
+    expect((await screen.findAllByText("A Minimal Bilin Test Paper")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /arXiv Daily/ })).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("button", {
-        name: /Breaking QAOA/
-      })
-    ).toBeInTheDocument();
-    expect(screen.getByText(/打破 QAOA/)).toBeInTheDocument();
-    expect(container.querySelector(".arxiv-recommendation-title .katex")).toBeInTheDocument();
-    expect(screen.getByText(/No arXiv submissions matched/)).toBeInTheDocument();
-    await waitFor(() => {
-      const dailyBodies = fetchMock.mock.calls
-        .filter(([url]) => String(url).endsWith("/libraries/library-1/recommendations/arxiv/daily"))
-        .map(([, init]) => JSON.parse(String(init?.body)));
-      expect(dailyBodies.some((body) => body.refresh === false)).toBe(true);
-    });
-
-    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => {
-      const dailyBodies = fetchMock.mock.calls
-        .filter(([url]) => String(url).endsWith("/libraries/library-1/recommendations/arxiv/daily"))
-        .map(([, init]) => JSON.parse(String(init?.body)));
-      expect(dailyBodies.filter((body) => body.refresh === true)).toHaveLength(1);
-    });
-
-    await userEvent.click(screen.getByRole("button", { name: /Breaking QAOA/ }));
-    expect(screen.getByText("这篇文章讨论量子优化和哈密顿量建模。")).toBeInTheDocument();
-    expect(screen.getByText(/A compact quantum optimization abstract/)).toBeInTheDocument();
-    expect(
-      container.querySelector(".arxiv-recommendation-abstract-source .katex")
-    ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Add to 衔牍" }));
-
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(
-          ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/imports/arxiv") &&
-            init?.method === "POST" &&
-            String(init.body).includes("2605.07473v1")
-        )
-      ).toBe(true);
-    });
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/libraries/library-1/recommendations/arxiv/")
+      )
+    ).toBe(false);
   });
 
   it("renders reading progress as a style-like title heatmap", async () => {
@@ -2275,7 +2164,7 @@ I_{n}\\[1.0pt]
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
-          const kindleDocument = syntheticDocumentPayload(80);
+          const kindleDocument = syntheticDocumentPayload(120);
           return jsonResponse({
             ...kindleDocument,
             blocks: kindleDocument.blocks.map((block) =>
@@ -2333,6 +2222,13 @@ I_{n}\\[1.0pt]
     expect(await screen.findByTestId("kindle-paged-reader")).toHaveAttribute(
       "data-page-layout",
       "landscape"
+    );
+    const kindleReader = screen.getByTestId("kindle-paged-reader");
+    const measurementWindowSize = Number(kindleReader.getAttribute("data-measure-window-size"));
+    expect(measurementWindowSize).toBeGreaterThan(0);
+    expect(measurementWindowSize).toBeLessThan(120);
+    expect(container.querySelectorAll(".kindle-measure-block")).toHaveLength(
+      measurementWindowSize
     );
     expect(screen.getAllByTestId(/^kindle-page-block-/).length).toBeGreaterThan(4);
     expect(screen.queryByTestId("reader-block-list")).not.toBeInTheDocument();
@@ -2567,7 +2463,20 @@ I_{n}\\[1.0pt]
       "/articles/:articleId",
       <ReaderPage />
     );
-    expect(await screen.findByText("First paragraph with inline technical content.")).toBeVisible();
+    expect(
+      await screen.findByText(
+        (_content, element) =>
+          element?.tagName.toLowerCase() === "p" &&
+          element.textContent === "First paragraph with inline technical content."
+      )
+    ).toBeVisible();
+    const annotatedTerm = container.querySelector(".term-annotation");
+    expect(annotatedTerm).not.toBeNull();
+    expect(annotatedTerm).toHaveTextContent("technical content");
+    expect(annotatedTerm).toHaveAttribute(
+      "data-definition",
+      "A compact phrase used in the test article."
+    );
     expect(container.querySelector(".reader-card-rail")).not.toBeNull();
     expect(
       await screen.findByRole("button", { name: "Convolutional Neural Networks (CNN)" })
@@ -3793,7 +3702,7 @@ I_{n}\\[1.0pt]
       ).toBe(true);
     });
 
-    await userEvent.click(screen.getByRole("button", { name: "Expand Model provider" }));
+    await openReaderTool("Model provider");
     await userEvent.click(screen.getByRole("textbox", { name: "Target language" }));
     await userEvent.click(await screen.findByRole("option", { name: "日本語" }));
     await waitFor(() => {

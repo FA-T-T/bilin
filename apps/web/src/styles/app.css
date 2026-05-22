@@ -854,14 +854,6 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   background: light-dark(rgba(255, 252, 246, 0.38), rgba(11, 17, 19, 0.54));
 }
 
-.library-article-surface-recommendations {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  height: calc(100vh - 82px);
-  max-height: calc(100vh - 82px);
-  overflow: hidden;
-}
-
 .library-workbench-title {
   color: var(--bilin-text);
   font-size: clamp(1.7rem, 2.6vw, 2.6rem);
@@ -1099,225 +1091,6 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   margin-top: 4px;
 }
 
-.arxiv-daily-surface {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-  height: 100%;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.arxiv-daily-mobile-panel {
-  display: none;
-  min-width: 0;
-}
-
-.arxiv-daily-panel {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
-.arxiv-daily-panel-actions {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.arxiv-daily-panel-actions .mantine-Button-root {
-  width: 100%;
-}
-
-.arxiv-daily-controls {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-  align-items: start;
-  min-width: 0;
-}
-
-.arxiv-category-picker {
-  min-width: 0;
-}
-
-.arxiv-category-picker .mantine-PillGroup-group {
-  max-height: 58px;
-  overflow-y: auto;
-}
-
-.arxiv-daily-status-stack {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.arxiv-daily-summary-strip {
-  display: grid;
-  gap: 4px;
-  color: var(--bilin-muted);
-}
-
-.arxiv-daily-panel .library-inline-message {
-  padding: 0;
-  border: 0;
-  line-height: 1.5;
-  background: transparent;
-}
-
-.arxiv-recommendation-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 3px;
-  scrollbar-width: thin;
-}
-
-.arxiv-recommendation-row {
-  position: relative;
-  flex: 0 0 auto;
-  min-height: 104px;
-  overflow: hidden;
-  border: 1px solid var(--bilin-panel-border);
-  border-radius: 8px;
-  background: light-dark(rgba(255, 252, 245, 0.54), rgba(255, 255, 255, 0.04));
-}
-
-.arxiv-recommendation-row[data-expanded="true"] {
-  border-left: 3px solid var(--bilin-accent);
-  background: light-dark(rgba(255, 252, 245, 0.72), rgba(255, 255, 255, 0.055));
-}
-
-.arxiv-recommendation-title-button {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 104px;
-  padding: 12px 14px;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.arxiv-recommendation-title-button:hover,
-.arxiv-recommendation-title-button:focus-visible {
-  outline: 0;
-  background: var(--bilin-accent-soft);
-}
-
-.arxiv-recommendation-title-stack {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.arxiv-recommendation-title,
-.arxiv-recommendation-title-target {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.arxiv-recommendation-title {
-  color: var(--bilin-text);
-  font-size: 0.96rem;
-  font-weight: 710;
-  line-height: 1.34;
-  min-height: 1.34em;
-}
-
-.arxiv-recommendation-title-target {
-  color: var(--bilin-muted);
-  font-size: 0.9rem;
-  line-height: 1.34;
-}
-
-.arxiv-recommendation-title p,
-.arxiv-recommendation-title-target p {
-  display: inline;
-  margin: 0;
-}
-
-.arxiv-recommendation-meta {
-  overflow: hidden;
-  color: var(--bilin-faint);
-  font-size: 0.74rem;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.arxiv-recommendation-status {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  align-self: start;
-  gap: 8px;
-  color: var(--bilin-muted);
-}
-
-.arxiv-recommendation-row[data-expanded="true"] .arxiv-recommendation-status svg {
-  transform: rotate(180deg);
-}
-
-.arxiv-recommendation-expanded {
-  display: grid;
-  gap: 10px;
-  margin: 0 12px 12px;
-  padding: 14px;
-  border: 1px solid var(--bilin-panel-border);
-  border-radius: 8px;
-  background: light-dark(#fff8ec, rgba(255, 248, 236, 0.06));
-}
-
-.arxiv-recommendation-abstract {
-  max-width: 880px;
-  line-height: 1.62;
-}
-
-.arxiv-recommendation-abstract p {
-  margin: 0 0 0.55em;
-}
-
-.arxiv-recommendation-abstract p:last-child {
-  margin-bottom: 0;
-}
-
-.arxiv-recommendation-abstract-source {
-  color: var(--bilin-text);
-}
-
-.arxiv-recommendation-abstract-target {
-  color: var(--bilin-muted);
-}
-
-.arxiv-recommendation-actions {
-  padding-top: 2px;
-}
-
-.arxiv-daily-rail-card {
-  display: grid;
-  gap: 12px;
-  max-height: calc(100vh - 116px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
 @media (max-width: 1180px) {
   .library-workbench {
     grid-template-columns: 220px minmax(0, 1fr);
@@ -1329,30 +1102,6 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 
   .library-toolbar {
     grid-template-columns: minmax(220px, 1fr) minmax(130px, 170px);
-  }
-
-  .arxiv-daily-surface {
-    grid-template-rows: auto auto minmax(0, 1fr);
-  }
-
-  .arxiv-daily-mobile-panel {
-    display: block;
-  }
-
-  .arxiv-daily-mobile-panel .arxiv-daily-panel {
-    padding: 12px;
-    border: 1px solid var(--bilin-panel-border);
-    border-radius: 8px;
-    background: light-dark(rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.04));
-  }
-
-  .arxiv-daily-mobile-panel .arxiv-daily-panel-actions,
-  .arxiv-daily-mobile-panel .arxiv-daily-controls {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .arxiv-daily-mobile-panel .arxiv-category-picker {
-    grid-column: 1 / -1;
   }
 
   .library-toolbar > :last-child {
@@ -1382,8 +1131,6 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   .library-surface-header,
   .library-batch-strip,
   .library-toolbar,
-  .arxiv-daily-controls,
-  .arxiv-daily-mobile-panel .arxiv-daily-panel-actions,
   .add-article-form {
     grid-template-columns: 1fr;
     flex-direction: column;
@@ -1400,21 +1147,6 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
     justify-items: start;
   }
 
-  .library-article-surface-recommendations {
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .arxiv-recommendation-title-button {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .arxiv-recommendation-status {
-    justify-content: space-between;
-    width: 100%;
-  }
 }
 
 .settings-tabs .mantine-Tabs-list {
@@ -2714,7 +2446,11 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .reader-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .reader-chat-actions .mantine-Checkbox-root {
@@ -2727,7 +2463,8 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .reader-chat-actions .mantine-Button-root {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 112px;
 }
 
 .reader-tool-tile .reader-notes-panel > .mantine-Group-root:first-child,
@@ -3078,6 +2815,46 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 
 .citation-link:hover {
   border-bottom-color: currentColor;
+}
+
+.term-annotation {
+  position: relative;
+  display: inline;
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--bilin-accent) 72%, transparent);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.term-annotation:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--bilin-accent) 56%, transparent);
+  outline-offset: 2px;
+}
+
+.term-annotation::after {
+  content: attr(data-term) "\A" attr(data-definition);
+  position: absolute;
+  z-index: 18;
+  left: 0;
+  bottom: calc(100% + 7px);
+  display: none;
+  width: min(320px, calc(100vw - 32px));
+  padding: 9px 10px;
+  border: 1px solid var(--bilin-panel-border);
+  border-radius: 8px;
+  color: var(--bilin-text);
+  background: var(--bilin-surface-strong);
+  box-shadow: 0 16px 40px var(--bilin-shadow);
+  line-height: 1.42;
+  white-space: pre-wrap;
+  font-size: 0.76rem;
+}
+
+.term-annotation:hover::after,
+.term-annotation:focus-visible::after {
+  display: block;
 }
 
 .citation-popover {

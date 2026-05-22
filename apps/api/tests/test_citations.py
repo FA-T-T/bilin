@@ -9,6 +9,7 @@ from bilin_api.article_store import upsert_arxiv_revision
 from bilin_api.citation_service import (
     clear_scholar_cache,
     extract_latexml_citations,
+    get_article_citations,
     lookup_citation_scholar,
     queue_citation_library_import,
 )
@@ -65,6 +66,7 @@ def test_extract_latexml_citations() -> None:
     assert citations[0].authors == "Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton."
     assert citations[0].year == "2016"
     assert citations[0].arxiv_id == "1607.06450"
+    assert citations[1].arxiv_id == "1409.0473"
     assert citations[0].scholar_url.startswith("https://scholar.google.com/scholar?")
 
 
@@ -116,6 +118,144 @@ def test_extract_latexml_citations_reads_titles_from_aps_bbl_blocks() -> None:
     assert citations[0].year == "2014"
 
 
+def test_extract_latexml_citations_skips_author_fragments_in_scholar_query() -> None:
+    html = """
+    <section id="bib" class="ltx_bibliography">
+    <ul class="ltx_biblist">
+    <li id="bib:gonthier2020" class="ltx_bibitem">
+    <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[2020]</span>
+    <span class="ltx_bibblock">[2020] J</span>
+    <span class="ltx_bibblock">
+      J. F. Gonthier, M. D. Radin, C. Buda, E. J. Doskocil,
+      C. M. Abuan, and J. Romero.
+    </span>
+    <span class="ltx_bibblock">
+      Measurements as a roadblock to near-term practical quantum advantage
+      in chemistry: Resource analysis.
+    </span>
+    <span class="ltx_bibblock">
+      Physical Review Research, 4(3):033154, 2022.
+    </span>
+    </li>
+    </ul>
+    </section>
+    """
+
+    citations = extract_latexml_citations(html)
+
+    assert citations[0].title == (
+        "Measurements as a roadblock to near-term practical quantum advantage "
+        "in chemistry: Resource analysis"
+    )
+    assert citations[0].authors == (
+        "J. F. Gonthier, M. D. Radin, C. Buda, E. J. Doskocil, C. M. Abuan, and J. Romero."
+    )
+    assert citations[0].scholar_query == (
+        "Measurements as a roadblock to near-term practical quantum advantage "
+        "in chemistry: Resource analysis J. F. Gonthier"
+    )
+    assert "[2020] J" not in citations[0].scholar_query
+
+
+@pytest.mark.asyncio
+async def test_get_article_citations_falls_back_to_source_bbl_without_latexml_bibliography(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Source bibliography", path=str(tmp_path / "library"))
+    )
+    bundle_path = Path(library.path) / "articles" / "arxiv" / "2401.00010" / "v1"
+    document_dir = bundle_path / "document"
+    source_dir = bundle_path / "source" / "unpacked"
+    document_dir.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    (document_dir / "latexml.html").write_text(
+        "<html><body><p>Bibliography did not render.</p></body></html>",
+        encoding="utf-8",
+    )
+    (source_dir / "main.bbl").write_text(
+        r"""
+        \begin{thebibliography}{1}
+        \bibitem[Gonthier et al.(2022)]{Gonthier2022}
+        [2020] J
+        J. F. Gonthier, M. D. Radin, C. Buda, E. J. Doskocil,
+        C. M. Abuan, and J. Romero.
+        Measurements as a roadblock to near-term practical quantum advantage
+        in chemistry: Resource analysis.
+        Physical Review Research, 4(3):033154, 2022.
+        \end{thebibliography}
+        """,
+        encoding="utf-8",
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00010",
+        version="v1",
+        title="Citation fallback",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+
+    result = await get_article_citations(library, revision.id)
+
+    assert [citation.id for citation in result.citations] == ["bib:Gonthier2022"]
+    assert result.citations[0].citation_key == "Gonthier2022"
+    assert "bib.Gonthier2022" in result.citations[0].metadata["aliases"]
+    assert result.citations[0].title == (
+        "Measurements as a roadblock to near-term practical quantum advantage "
+        "in chemistry: Resource analysis"
+    )
+    assert result.citations[0].scholar_query == (
+        "Measurements as a roadblock to near-term practical quantum advantage "
+        "in chemistry: Resource analysis J. F. Gonthier"
+    )
+    assert "[2020] J" not in result.citations[0].scholar_query
+
+
+@pytest.mark.asyncio
+async def test_get_article_citations_falls_back_to_source_bib_without_latexml_bibliography(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Bib bibliography", path=str(tmp_path / "library"))
+    )
+    bundle_path = Path(library.path) / "articles" / "arxiv" / "2401.00011" / "v1"
+    source_dir = bundle_path / "source" / "unpacked"
+    source_dir.mkdir(parents=True)
+    (source_dir / "refs.bib").write_text(
+        r"""
+        @article{Ba2016LayerNorm,
+          author = {Jimmy Lei Ba and Jamie Ryan Kiros and Geoffrey E Hinton},
+          title = {Layer normalization},
+          year = {2016},
+          doi = {10.48550/arXiv.1607.06450},
+          eprint = {1607.06450},
+          archivePrefix = {arXiv}
+        }
+        """,
+        encoding="utf-8",
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00011",
+        version="v1",
+        title="Bib fallback",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+
+    result = await get_article_citations(library, revision.id)
+
+    assert [citation.id for citation in result.citations] == ["bib:Ba2016LayerNorm"]
+    assert result.citations[0].title == "Layer normalization"
+    assert result.citations[0].arxiv_id == "1607.06450"
+    assert result.citations[0].doi == "10.48550/arXiv.1607.06450"
+    assert result.citations[0].source == "bib"
+    assert result.citations[0].scholar_query.startswith("Layer normalization Jimmy Lei Ba")
+
+
 def test_extract_latexml_citations_does_not_read_issn_as_year() -> None:
     html = """
     <section id="bib" class="ltx_bibliography">
@@ -163,10 +303,9 @@ def test_extract_latexml_citations_adds_unresolved_author_year_keys() -> None:
     assert citations[0].label == "Peruzzo and OBrien 2014"
     assert citations[0].authors == "Peruzzo and OBrien"
     assert citations[0].year == "2014"
-    assert citations[0].metadata == {
-        "source": "missing_latexml_citation",
-        "citation_key": "Peruzzo_OBrien:2014",
-    }
+    assert citations[0].metadata["source"] == "missing_latexml_citation"
+    assert citations[0].metadata["citation_key"] == "Peruzzo_OBrien:2014"
+    assert citations[0].metadata["aliases"] == ["missing.Peruzzo_OBrien-2014"]
     assert citations[1].label == "McClean and Aspuru-Guzik 2016"
     assert citations[1].scholar_query == "McClean and Aspuru-Guzik 2016"
 
@@ -281,7 +420,7 @@ async def test_lookup_citation_scholar_falls_back_to_semantic_scholar(
 
 
 @pytest.mark.asyncio
-async def test_queue_citation_import_searches_arxiv_and_adds_import_job(
+async def test_queue_citation_import_resolves_arxiv_id_and_adds_import_job(
     bilin_home: Path,
     tmp_path: Path,
 ) -> None:
@@ -318,7 +457,7 @@ async def test_queue_citation_import_searches_arxiv_and_adds_import_job(
         )
 
     assert result.candidate.arxiv_id == "1409.0473v7"
-    assert result.candidate.source == "arxiv_search"
+    assert result.candidate.source == "citation_arxiv_id"
     assert result.translate_after_import is True
     assert result.job.type == JobType.import_arxiv
     assert result.job.payload["arxiv_id"] == "1409.0473v7"

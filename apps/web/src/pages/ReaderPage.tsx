@@ -112,7 +112,8 @@ import {
   type CitationLookup,
   type ReaderBlockColor,
   type ReaderAssetFile,
-  type ReferenceTargets
+  type ReferenceTargets,
+  type TermAnnotation
 } from "../components/ReaderBlock";
 import { KindlePagedReader } from "../components/KindlePagedReader";
 import { ReaderBlockList } from "../components/ReaderBlockList";
@@ -386,6 +387,7 @@ export function ReaderPage() {
     readerFeaturePreferences.termCardsEnabled &&
     hasArticleContext &&
     (termWikiEnabled || readerCardsByBlockUid.size > 0);
+  const glossaryTerms = useMemo(() => glossary.data?.terms ?? [], [glossary.data?.terms]);
   const blockTextForPlaceholder = useCallback(
     (block: DocumentBlock) =>
       viewMode === "translation"
@@ -452,6 +454,15 @@ export function ReaderPage() {
     t("reader.modeMenu");
   const kindleBlockViewMode: ReaderViewMode =
     viewMode === "translation" ? "translation" : "bilingual";
+  const kindleBlockTextForPagination = useCallback(
+    (block: DocumentBlock) => {
+      const translation = translationByBlockUid.get(block.block_uid);
+      if (kindleBlockViewMode === "translation") return translation ?? block.source_markdown;
+      if (!translation) return block.source_markdown;
+      return `${block.source_markdown}\n\n${translation}`;
+    },
+    [kindleBlockViewMode, translationByBlockUid]
+  );
 
   const markReaderActivity = useCallback(() => {
     lastReaderActivityAt.current = Date.now();
@@ -1475,6 +1486,15 @@ export function ReaderPage() {
           imageLightboxEnabled={readerFeaturePreferences.imageLightboxEnabled}
           searchActive={currentSearchBlockUid === block.block_uid}
           blockColor={blockColors[block.block_uid] ?? "none"}
+          termAnnotations={
+            readerFeaturePreferences.termCardsEnabled
+              ? termAnnotationsForBlock(
+                  block,
+                  glossaryTerms,
+                  readerCardsByBlockUid.get(block.block_uid) ?? []
+                )
+              : []
+          }
           termWikiEnabled={termCardsVisible}
           readerCards={readerCardsByBlockUid.get(block.block_uid) ?? []}
           expandedReaderCardId={expandedReaderCardByBlock[block.block_uid] ?? null}
@@ -1517,6 +1537,7 @@ export function ReaderPage() {
       handleReaderCardToggle,
       handleToolbarAction,
       handleTranslationVariantChange,
+      glossaryTerms,
       importCitationArxiv.isPending,
       importCitationToLibrary,
       libraryId,
@@ -1531,6 +1552,7 @@ export function ReaderPage() {
       readerFeaturePreferences.imageLightboxEnabled,
       readerFeaturePreferences.quickAskEnabled,
       readerFeaturePreferences.sentenceHoverAccentEnabled,
+      readerFeaturePreferences.termCardsEnabled,
       selectedProviderId,
       selectedVariantByBlockUid,
       askBlockQuestion.isPending,
@@ -1872,7 +1894,7 @@ export function ReaderPage() {
             title={title}
             fontScale={readerPreferences.fontScale}
             pageLayout={kindleBlockViewMode === "bilingual" ? "landscape" : "auto"}
-            getBlockText={blockTextForPlaceholder}
+            getBlockText={kindleBlockTextForPagination}
             renderBlock={renderKindleBlock}
             onPageBlockChange={changeKindlePageBlock}
             onNavigateToBlock={navigateToBlock}
@@ -2489,8 +2511,9 @@ function ReaderSideTile({
   className
 }: ReaderSideTileProps) {
   const t = useT();
+  if (!open) return null;
   return (
-    <section className={`reader-side-tile${className ? ` ${className}` : ""}`}>
+    <section className={`reader-side-tile reader-side-tile-open${className ? ` ${className}` : ""}`}>
       <button
         type="button"
         className="reader-side-tile-toggle"
@@ -2815,28 +2838,29 @@ function ChatPanel({
   onAsk,
   onCreateNotePatch
 }: ChatPanelProps) {
+  const t = useT();
   return (
     <div className="panel reader-chat-panel">
       <Group justify="space-between" align="flex-start">
         <div>
           <Group gap="xs">
             <MessageSquare size={18} />
-            <Title order={3}>Paper chat</Title>
+            <Title order={3}>{t("reader.paperChat")}</Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Answers are grounded in local article blocks and saved with cited block IDs.
+            {t("reader.paperChatHelp")}
           </Text>
         </div>
         {selectedBlockUid ? (
           <Button variant="subtle" size="xs" onClick={onClearBlock}>
-            Current block {selectedBlockUid}
+            {t("reader.currentBlock", { blockUid: selectedBlockUid })}
           </Button>
         ) : null}
       </Group>
       <Stack gap="sm" mt="md">
         {messages.length === 0 ? (
           <Text c="dimmed" size="sm">
-            No questions yet. Use a block toolbar or ask about the whole paper.
+            {t("reader.paperChatEmpty")}
           </Text>
         ) : null}
         {messages.map((message) => {
@@ -2855,13 +2879,13 @@ function ChatPanel({
                     disabled={!canCreateNotePatch}
                     onClick={() => onCreateNotePatch(message.id)}
                   >
-                    Create note patch
+                    {t("reader.createNotePatch")}
                   </Button>
                 ) : null}
               </Group>
               <ChatMessageContent message={message} referenceTargets={referenceTargets} />
               {sourceRefs.length > 0 ? (
-                <Group gap="xs" aria-label="Current-paper evidence">
+                <Group gap="xs" aria-label={t("reader.currentPaperEvidence")}>
                   {sourceRefs.map((ref) => (
                     <a className="source-ref" href={`#${ref}`} key={ref}>
                       {ref}
@@ -2887,7 +2911,7 @@ function ChatPanel({
       {citedBlocks.length > 0 ? (
         <div className="retrieved-blocks">
           <Text fw={600} size="sm">
-            Current-paper evidence
+            {t("reader.currentPaperEvidence")}
           </Text>
           <Group gap="xs" mt="xs">
             {citedBlocks.map((block) => (
@@ -2900,8 +2924,8 @@ function ChatPanel({
       ) : null}
       <Textarea
         className="reader-chat-question"
-        label="Question"
-        placeholder="Ask about the current paragraph or the whole paper"
+        label={t("reader.chatQuestion")}
+        placeholder={t("reader.chatQuestionPlaceholder")}
         autosize
         minRows={2}
         mt="md"
@@ -2910,7 +2934,7 @@ function ChatPanel({
       />
       <Group className="reader-chat-actions" justify="space-between" align="center" mt="sm">
         <Checkbox
-          label="Use model-native search"
+          label={t("reader.nativeSearch")}
           checked={nativeSearch}
           disabled={!nativeSearchAvailable}
           onChange={(event) => onNativeSearchChange(event.currentTarget.checked)}
@@ -2921,17 +2945,17 @@ function ChatPanel({
           loading={isAsking}
           disabled={!canAsk || !question.trim()}
         >
-          Ask paper
+          {t("reader.askPaper")}
         </Button>
       </Group>
       {!nativeSearchAvailable ? (
         <Text c="dimmed" size="xs" mt="xs">
-          Native search is disabled for this provider, so answers are restricted to article context.
+          {t("reader.nativeSearchUnavailable")}
         </Text>
       ) : null}
       {error ? (
         <Text c="red" size="sm" mt="xs">
-          Question could not be answered. Check provider settings or select a parsed article.
+          {t("reader.askError")}
         </Text>
       ) : null}
     </div>
@@ -3668,8 +3692,125 @@ function citationLookupForEntries(citations: CitationEntry[]): CitationLookup {
   const lookup: CitationLookup = {};
   for (const citation of citations) {
     lookup[citation.id] = citation;
+    for (const alias of citationAliases(citation)) {
+      lookup[alias] = citation;
+    }
   }
   return lookup;
+}
+
+function citationAliases(citation: CitationEntry) {
+  const aliases = new Set<string>([citation.id]);
+  if (citation.id.startsWith("bib:")) {
+    aliases.add(`bib.${citation.id.slice(4)}`);
+  } else if (citation.id.startsWith("bib.")) {
+    aliases.add(`bib:${citation.id.slice(4)}`);
+  }
+  if (citation.citation_key) {
+    aliases.add(citation.citation_key);
+    aliases.add(`bib:${citation.citation_key}`);
+    aliases.add(`bib.${citation.citation_key}`);
+  }
+  const metadataAliases = citation.metadata?.aliases;
+  if (Array.isArray(metadataAliases)) {
+    for (const alias of metadataAliases) {
+      if (typeof alias === "string" && alias.trim()) aliases.add(alias.trim());
+    }
+  }
+  return aliases;
+}
+
+function termAnnotationsForBlock(
+  block: DocumentBlock,
+  glossaryTerms: GlossaryTerm[],
+  readerCards: ReaderCard[]
+): TermAnnotation[] {
+  const annotations = new Map<string, TermAnnotation>();
+  for (const card of readerCards) {
+    if (card.card_type !== "term" || card.status === "archived") continue;
+    const definition = conciseDefinition(card.body_markdown);
+    if (!definition) continue;
+    for (const term of [card.full_form, card.abbreviation, card.anchor_text, card.title]) {
+      addTermAnnotation(annotations, {
+        term: term ?? "",
+        definition,
+        source: "reader_card",
+        sourceType: card.source_type
+      });
+    }
+  }
+  const blockText = `${block.source_markdown}\n${block.source_latex ?? ""}`;
+  for (const term of glossaryTerms) {
+    if (term.status === "archived") continue;
+    const sourceTerm = term.source_term.trim();
+    if (!sourceTerm || !textContainsTerm(blockText, sourceTerm)) continue;
+    const metadataDefinition = stringMetadataValue(
+      term.metadata?.llm_definition ??
+        term.metadata?.definition ??
+        term.metadata?.short_definition ??
+        term.metadata?.brief_definition
+    );
+    const definition =
+      metadataDefinition ||
+      (term.target_term.trim()
+        ? `${term.source_term} -> ${term.target_term}`
+        : String(term.metadata?.phrase_type ?? "Detected paper term"));
+    addTermAnnotation(annotations, {
+      term: sourceTerm,
+      definition,
+      source: "glossary",
+      sourceType: stringMetadataValue(term.metadata?.definition_source)
+    });
+  }
+  return [...annotations.values()];
+}
+
+function addTermAnnotation(
+  annotations: Map<string, TermAnnotation>,
+  annotation: TermAnnotation
+) {
+  const term = annotation.term.trim();
+  const definition = annotation.definition.trim();
+  if (!term || !definition) return;
+  const key = term.toLocaleLowerCase();
+  const current = annotations.get(key);
+  if (!current || termAnnotationPriority(annotation) > termAnnotationPriority(current)) {
+    annotations.set(key, { ...annotation, term, definition });
+  }
+}
+
+function termAnnotationPriority(annotation: TermAnnotation) {
+  if (annotation.source === "reader_card" && annotation.sourceType === "ai_search") return 4;
+  if (annotation.source === "reader_card" && annotation.sourceType === "paper_local") return 3;
+  if (annotation.source === "reader_card") return 2;
+  return 1;
+}
+
+function conciseDefinition(markdown: string) {
+  const text = markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[#*_>~-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  const firstSentence = text.match(/^.{20,160}?[。.!?](?:\s|$)/)?.[0]?.trim();
+  return firstSentence ?? text.slice(0, 160).trim();
+}
+
+function textContainsTerm(text: string, term: string) {
+  return new RegExp(`(^|[^\\p{L}\\p{N}_-])${escapeRegExp(term)}($|[^\\p{L}\\p{N}_-])`, "iu").test(
+    text
+  );
+}
+
+function stringMetadataValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function referenceTargetBlockType(block: DocumentBlock): string {

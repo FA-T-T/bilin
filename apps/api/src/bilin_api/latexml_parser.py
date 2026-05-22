@@ -2329,9 +2329,13 @@ def _markdown_link_text(element: Any, child_text: str) -> str:
     label = _collapse_markdown_whitespace(child_text)
     if label.startswith("[") and label.endswith("]"):
         label = label[1:-1]
-    if href.startswith("#bib."):
+    if _is_bibliography_href(href):
         label = _compact_citation_label(label)
     return f"[{label}]({href})"
+
+
+def _is_bibliography_href(href: str) -> bool:
+    return href.startswith("#bib.") or href.startswith("#bib:")
 
 
 def _is_citation_element(element: Any) -> bool:
@@ -2509,7 +2513,7 @@ def _normalize_missing_latexml_citations(html: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         body = match.group("body")
-        if re.search(r"<a\b[^>]*\bhref=(?P<quote>['\"])#bib\.", body, re.IGNORECASE):
+        if re.search(r"<a\b[^>]*\bhref=(?P<quote>['\"])#bib[.:]", body, re.IGNORECASE):
             return match.group(0)
         if not re.search(r"\bltx_missing_citation\b|\bltx_ref_self\b", body):
             return match.group(0)

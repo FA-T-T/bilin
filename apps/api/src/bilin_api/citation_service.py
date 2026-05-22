@@ -35,13 +35,17 @@ async def get_article_citations(library: Library, revision_id: str) -> ArticleCi
     revision = await get_article_revision(library, revision_id)
     if revision is None:
         raise ValueError(f"Article revision not found: {revision_id}")
-    html_path = Path(revision.bundle_path) / "document" / "latexml.html"
-    if not html_path.exists():
-        return ArticleCitations(article_revision_id=revision_id, citations=[])
-    html = html_path.read_text(encoding="utf-8", errors="replace")
+    bundle_path = Path(revision.bundle_path)
+    html_path = bundle_path / "document" / "latexml.html"
+    citations: list[CitationEntry] = []
+    if html_path.exists():
+        html = html_path.read_text(encoding="utf-8", errors="replace")
+        citations = extract_latexml_citations(html)
     return ArticleCitations(
         article_revision_id=revision_id,
-        citations=extract_latexml_citations(html),
+        citations=merge_citation_entries(
+            citations, extract_source_bibliography_citations(bundle_path)
+        ),
     )
 
 
@@ -123,7 +127,7 @@ async def resolve_citation_arxiv_candidate(
             arxiv_id=metadata.concrete_id,
             title=metadata.title,
             abs_url=metadata.abs_url,
-            source="citation",
+            source="citation_arxiv_id",
         )
     metadata = await search_arxiv_latest_by_title(citation.title, client=client)
     if metadata is None:
@@ -211,7 +215,7 @@ def extract_latexml_citations(html: str) -> list[CitationEntry]:
         title = citation_title(blocks, raw_text)
         if not title:
             continue
-        authors = blocks[0] if blocks else None
+        authors = citation_authors(blocks)
         label = citation_label(body, citation_id, len(entries) + 1)
         query = scholar_query(title, authors)
         entries.append(
@@ -223,12 +227,151 @@ def extract_latexml_citations(html: str) -> list[CitationEntry]:
                 authors=authors,
                 year=citation_year(raw_text),
                 arxiv_id=citation_arxiv_id(raw_text),
+                doi=citation_doi(raw_text),
+                url=citation_url(raw_text),
+                source="latexml",
+                citation_key=citation_key_from_id(citation_id),
                 scholar_query=query,
                 scholar_url=google_scholar_url(query),
-                metadata={"bib_blocks": blocks},
+                metadata={
+                    "source": "latexml",
+                    "bib_blocks": blocks,
+                    "aliases": citation_id_aliases(citation_id),
+                },
             )
         )
     entries.extend(missing_latexml_citation_entries(html, entries))
+    return entries
+
+
+def merge_citation_entries(
+    primary: list[CitationEntry],
+    fallback: list[CitationEntry],
+) -> list[CitationEntry]:
+    entries = list(primary)
+    seen = {entry.id for entry in entries}
+    for entry in fallback:
+        if entry.id in seen:
+            continue
+        entries.append(entry)
+        seen.add(entry.id)
+    return entries
+
+
+def extract_source_bibliography_citations(bundle_path: Path) -> list[CitationEntry]:
+    source_dir = bundle_path / "source" / "unpacked"
+    if not source_dir.exists():
+        return []
+    bbl_entries = extract_bbl_citations(source_dir)
+    if bbl_entries:
+        return bbl_entries
+    return extract_bib_citations(source_dir)
+
+
+def extract_bbl_citations(source_dir: Path) -> list[CitationEntry]:
+    entries: list[CitationEntry] = []
+    for path in sorted(source_dir.rglob("*.bbl")):
+        if path.name.startswith("__bilin_"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        entries.extend(extract_bbl_citations_from_text(text, source_path=path, offset=len(entries)))
+    return entries
+
+
+def extract_bbl_citations_from_text(
+    text: str,
+    *,
+    source_path: Path | None = None,
+    offset: int = 0,
+) -> list[CitationEntry]:
+    matches = list(
+        re.finditer(
+            r"\\bibitem(?:\s*\[(?P<label>[^\]]+)\])?\s*\{(?P<key>[^{}]+)\}",
+            text,
+            flags=re.DOTALL,
+        )
+    )
+    entries: list[CitationEntry] = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        raw_body = re.sub(r"\\end\{thebibliography\}.*$", "", text[start:end], flags=re.DOTALL)
+        raw_text = clean_latex_text(raw_body)
+        if not raw_text:
+            continue
+        blocks = reference_text_parts(raw_text)
+        title = citation_title(blocks, raw_text)
+        if not title:
+            continue
+        authors = citation_authors(blocks)
+        key = clean_citation_key(match.group("key"))
+        label = clean_latex_text(match.group("label") or "") or str(offset + len(entries) + 1)
+        entries.append(
+            build_citation_entry(
+                citation_id=bibliography_entry_id(key),
+                label=label.strip("[]"),
+                title=title,
+                raw_text=raw_text,
+                authors=authors,
+                source="bbl",
+                source_path=source_path,
+                citation_key=key,
+            )
+        )
+    return entries
+
+
+def extract_bib_citations(source_dir: Path) -> list[CitationEntry]:
+    entries: list[CitationEntry] = []
+    for path in sorted(source_dir.rglob("*.bib")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for entry in parse_bibtex_entries(text, source_path=path, offset=len(entries)):
+            entries.append(entry)
+    return entries
+
+
+def parse_bibtex_entries(
+    text: str,
+    *,
+    source_path: Path | None = None,
+    offset: int = 0,
+) -> list[CitationEntry]:
+    entries: list[CitationEntry] = []
+    for kind, key, body in iter_bibtex_entry_bodies(text):
+        if kind.casefold() in {"comment", "preamble", "string"}:
+            continue
+        fields = parse_bibtex_fields(body)
+        title = clean_latex_text(fields.get("title", ""))
+        if not title:
+            continue
+        authors = clean_latex_text(fields.get("author", "")) or None
+        raw_text = ". ".join(
+            part
+            for part in (
+                authors,
+                title,
+                clean_latex_text(fields.get("journal", "") or fields.get("booktitle", "")),
+                clean_latex_text(fields.get("year", "")),
+            )
+            if part
+        )
+        entry = build_citation_entry(
+            citation_id=bibliography_entry_id(clean_citation_key(key)),
+            label=str(offset + len(entries) + 1),
+            title=title,
+            raw_text=raw_text,
+            authors=authors,
+            source="bib",
+            source_path=source_path,
+            citation_key=clean_citation_key(key),
+            doi=clean_latex_text(fields.get("doi", "")) or None,
+            url=clean_latex_text(fields.get("url", "")) or None,
+        )
+        year = clean_latex_text(fields.get("year", ""))
+        entry.year = year or entry.year
+        arxiv_id = bibtex_arxiv_id(fields)
+        entry.arxiv_id = arxiv_id or entry.arxiv_id
+        entries.append(entry)
     return entries
 
 
@@ -264,9 +407,17 @@ def missing_latexml_citation_entries(
                 authors=authors,
                 year=year,
                 arxiv_id=None,
+                doi=None,
+                url=None,
+                source="missing_latexml_citation",
+                citation_key=key,
                 scholar_query=label,
                 scholar_url=google_scholar_url(label),
-                metadata={"source": "missing_latexml_citation", "citation_key": key},
+                metadata={
+                    "source": "missing_latexml_citation",
+                    "citation_key": key,
+                    "aliases": citation_id_aliases(citation_id),
+                },
             )
         )
         seen_ids.add(citation_id)
@@ -366,11 +517,96 @@ def citation_title(blocks: list[str], raw_text: str) -> str:
     quoted_title = quoted_citation_title(raw_text)
     if quoted_title:
         return quoted_title
-    if len(blocks) >= 2:
-        return blocks[1].rstrip(".")
-    cleaned = re.sub(r"^\[\d+\]\s*", "", raw_text).strip()
-    parts = [part.strip() for part in re.split(r"\.\s+", cleaned) if part.strip()]
-    return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
+    for block in blocks:
+        candidate = normalize_title_candidate(block)
+        if is_probable_citation_title(candidate):
+            return candidate
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", raw_text).strip()
+    parts = [part.strip() for part in re.split(r"(?<!\b[A-Z])\.\s+", cleaned) if part.strip()]
+    for part in parts:
+        candidate = normalize_title_candidate(part)
+        if is_probable_citation_title(candidate):
+            return candidate
+    return normalize_title_candidate(parts[0]) if parts else ""
+
+
+def citation_authors(blocks: list[str]) -> str | None:
+    for block in blocks:
+        candidate = normalize_author_candidate(block)
+        if is_probable_author_block(candidate):
+            return candidate
+    return None
+
+
+def normalize_title_candidate(value: str) -> str:
+    candidate = re.sub(r"^\[[^\]]{1,40}\]\s*", "", value).strip()
+    candidate = re.sub(r"^[A-Z]\s+(?=[A-Z]\.)", "", candidate)
+    candidate = re.sub(
+        r"^[A-Z][A-Za-z'’-]+ et al\.\s*\[\d{4}[a-z]?\]\s*",
+        "",
+        candidate,
+    )
+    return candidate.strip(" ,;:.")
+
+
+def normalize_author_candidate(value: str) -> str:
+    candidate = re.sub(r"^\[[^\]]{1,40}\]\s*", "", value).strip()
+    candidate = re.sub(r"^[A-Z]\s+(?=[A-Z]\.)", "", candidate)
+    candidate = re.sub(
+        r"^[A-Z][A-Za-z'’-]+ et al\.\s*\[\d{4}[a-z]?\]\s*",
+        "",
+        candidate,
+    )
+    return candidate.strip(" ,;")
+
+
+def is_probable_citation_title(value: str) -> bool:
+    if not value or len(value) < 8:
+        return False
+    if is_probable_author_block(value) or is_probable_venue_block(value):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9'’-]*", value)
+    return len(words) >= 2
+
+
+def is_probable_author_block(value: str) -> bool:
+    if not value or len(value) < 4:
+        return False
+    if is_probable_venue_block(value):
+        return False
+    initials = len(re.findall(r"\b[A-Z]\.", value))
+    comma_count = value.count(",")
+    has_author_joiner = bool(re.search(r"\b(?:and|et al\.?)\b", value, flags=re.IGNORECASE))
+    capitalized_words = re.findall(r"\b[A-Z][A-Za-z'’-]+\b", value)
+    title_words = re.findall(
+        r"\b(?:a|an|the|of|for|from|with|without|using|towards?|through|near|term|as|in|on|by|to)\b",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if initials >= 2 and (comma_count > 0 or has_author_joiner):
+        return True
+    if comma_count > 0 and len(capitalized_words) >= 2 and len(title_words) <= 2:
+        return True
+    return bool(has_author_joiner and initials > 0 and len(title_words) <= 2)
+
+
+def is_probable_venue_block(value: str) -> bool:
+    has_archive_or_identifier = bool(
+        re.search(r"\b(?:arXiv|CoRR|doi|ISBN|ISSN)\b", value, flags=re.IGNORECASE)
+    )
+    has_bibliographic_detail = bool(
+        re.search(r"\b(?:19|20)\d{2}\b|\b\d+\s*\(|:\d+|pp\.|pages?|vol\.|volume", value)
+    )
+    has_venue_word = bool(
+        re.search(
+            r"\b(?:Journal|Proceedings|Conference|"
+            r"Transactions|Physical Review|Phys\.|Nature|Science|IEEE|ACM|"
+            r"Springer|Elsevier|Wiley)\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+    return has_archive_or_identifier or (has_venue_word and has_bibliographic_detail)
 
 
 def quoted_citation_title(raw_text: str) -> str:
@@ -404,13 +640,78 @@ def citation_year(raw_text: str) -> str | None:
 
 
 def citation_arxiv_id(raw_text: str) -> str | None:
-    match = re.search(r"\barXiv:?\s*([a-z\-]+/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)\b", raw_text, re.I)
-    return match.group(1) if match else None
+    patterns = [
+        r"\barXiv:?\s*([a-z\-]+/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)\b",
+        r"\babs/([a-z\-]+/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, raw_text, re.I)
+        if match:
+            return match.group(1)
+    return None
+
+
+def citation_doi(raw_text: str) -> str | None:
+    match = re.search(r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)\b", raw_text, re.I)
+    if not match:
+        return None
+    return match.group(1).rstrip(".,;)")
+
+
+def citation_url(raw_text: str) -> str | None:
+    match = re.search(r"\bhttps?://[^\s<>{}\"']+", raw_text)
+    if not match:
+        return None
+    return match.group(0).rstrip(".,;)")
+
+
+def build_citation_entry(
+    *,
+    citation_id: str,
+    label: str,
+    title: str,
+    raw_text: str,
+    authors: str | None,
+    source: str,
+    source_path: Path | None,
+    citation_key: str | None = None,
+    doi: str | None = None,
+    url: str | None = None,
+) -> CitationEntry:
+    query = scholar_query(title, authors)
+    metadata: dict[str, object] = {
+        "source": source,
+        "aliases": citation_id_aliases(citation_id, citation_key),
+    }
+    if citation_key:
+        metadata["citation_key"] = citation_key
+    if source_path is not None:
+        metadata["source_path"] = str(source_path)
+    inferred_doi = doi or citation_doi(raw_text)
+    inferred_url = url or citation_url(raw_text)
+    return CitationEntry(
+        id=citation_id,
+        label=label,
+        title=title,
+        raw_text=raw_text,
+        authors=authors,
+        year=citation_year(raw_text),
+        arxiv_id=citation_arxiv_id(raw_text),
+        doi=inferred_doi,
+        url=inferred_url,
+        source=source,
+        citation_key=citation_key,
+        scholar_query=query,
+        scholar_url=google_scholar_url(query),
+        metadata=metadata,
+    )
 
 
 def scholar_query(title: str, authors: str | None) -> str:
     if authors:
-        first_author = re.split(r",|\band\b", authors, maxsplit=1)[0].strip()
+        first_author = normalize_author_candidate(
+            re.split(r",|\band\b", authors, maxsplit=1)[0].strip()
+        )
         if first_author:
             return f"{title} {first_author}"
     return title
@@ -418,6 +719,188 @@ def scholar_query(title: str, authors: str | None) -> str:
 
 def google_scholar_url(query: str) -> str:
     return f"https://scholar.google.com/scholar?{urlencode({'q': query})}"
+
+
+def reference_text_parts(raw_text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"(?<!\b[A-Z])\.\s+", raw_text) if part.strip()]
+
+
+def clean_citation_key(value: str) -> str:
+    return re.sub(r"\s+", "", unescape(value)).strip()
+
+
+def bibliography_entry_id(citation_key: str) -> str:
+    if citation_key.startswith(("bib.", "bib:")):
+        return citation_key
+    return f"bib:{citation_key}"
+
+
+def citation_key_from_id(citation_id: str) -> str | None:
+    if citation_id.startswith(("bib:", "bib.")):
+        return citation_id[4:]
+    return None
+
+
+def citation_id_aliases(citation_id: str, citation_key: str | None = None) -> list[str]:
+    aliases = {citation_id}
+    if citation_id.startswith("bib:"):
+        aliases.add(f"bib.{citation_id[4:]}")
+    elif citation_id.startswith("bib."):
+        aliases.add(f"bib:{citation_id[4:]}")
+    if citation_key:
+        aliases.add(citation_key)
+        aliases.add(bibliography_entry_id(citation_key))
+        aliases.add(f"bib.{citation_key}")
+    return sorted(alias for alias in aliases if alias)
+
+
+def clean_latex_text(value: str) -> str:
+    cleaned = re.sub(r"(?<!\\)%[^\n]*(?:\n|$)", " ", value)
+    cleaned = re.sub(r"\\(?:newblock|relax|noopsort)\b", " ", cleaned)
+    cleaned = re.sub(
+        r"\\(?:href|url|doi|arxiv)\s*\{([^{}]*)\}(?:\s*\{([^{}]*)\})?",
+        lambda match: match.group(2) or match.group(1),
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    previous = None
+    while previous != cleaned:
+        previous = cleaned
+        cleaned = re.sub(
+            r"\\(?:emph|textit|textbf|textrm|textsc|mathrm|mathbf|mathit|mbox)\s*\{([^{}]*)\}",
+            r"\1",
+            cleaned,
+        )
+    cleaned = re.sub(r"\\['`\"^~=cHkruv]\s*\{?([A-Za-z])\}?", r"\1", cleaned)
+    cleaned = re.sub(r"\\[A-Za-z]+\*?(?:\s*\[[^\]]*\])?", " ", cleaned)
+    cleaned = re.sub(r"\\([#$%&_{}])", r"\1", cleaned)
+    cleaned = cleaned.replace("~", " ").replace("--", "-")
+    cleaned = cleaned.replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", unescape(cleaned)).strip()
+
+
+def iter_bibtex_entry_bodies(text: str) -> list[tuple[str, str, str]]:
+    entries: list[tuple[str, str, str]] = []
+    index = 0
+    while True:
+        start = text.find("@", index)
+        if start < 0:
+            return entries
+        match = re.match(r"@(?P<kind>[A-Za-z]+)\s*([({])\s*(?P<key>[^,\s{}()]+)\s*,", text[start:])
+        if match is None:
+            index = start + 1
+            continue
+        opener = match.group(2)
+        closer = "}" if opener == "{" else ")"
+        body_start = start + match.end()
+        body_end = find_balanced_entry_end(text, body_start, opener, closer)
+        if body_end is None:
+            index = body_start
+            continue
+        entries.append((match.group("kind"), match.group("key"), text[body_start:body_end]))
+        index = body_end + 1
+
+
+def find_balanced_entry_end(text: str, body_start: int, opener: str, closer: str) -> int | None:
+    depth = 1
+    quote_open = False
+    index = body_start
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            quote_open = not quote_open
+        elif not quote_open and char == opener:
+            depth += 1
+        elif not quote_open and char == closer:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return None
+
+
+def parse_bibtex_fields(body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    index = 0
+    while index < len(body):
+        match = re.search(r"(?P<name>[A-Za-z][\w-]*)\s*=", body[index:])
+        if match is None:
+            break
+        name = match.group("name").casefold()
+        value_start = index + match.end()
+        value, value_end = read_bibtex_value(body, value_start)
+        fields[name] = value
+        index = value_end
+    return fields
+
+
+def read_bibtex_value(body: str, start: int) -> tuple[str, int]:
+    index = start
+    while index < len(body) and body[index].isspace():
+        index += 1
+    parts: list[str] = []
+    while index < len(body):
+        char = body[index]
+        if char == "{":
+            value, index = read_balanced_bibtex_value(body, index, "{", "}")
+            parts.append(value)
+        elif char == '"':
+            value, index = read_balanced_bibtex_value(body, index, '"', '"')
+            parts.append(value)
+        else:
+            match = re.match(r"[^,#\s]+", body[index:])
+            if match is None:
+                break
+            parts.append(match.group(0))
+            index += len(match.group(0))
+        while index < len(body) and body[index].isspace():
+            index += 1
+        if index < len(body) and body[index] == "#":
+            index += 1
+            continue
+        break
+    while index < len(body) and body[index] != ",":
+        index += 1
+    return " ".join(parts), index + 1 if index < len(body) else index
+
+
+def read_balanced_bibtex_value(
+    body: str,
+    start: int,
+    opener: str,
+    closer: str,
+) -> tuple[str, int]:
+    index = start + 1
+    depth = 1
+    chars: list[str] = []
+    while index < len(body):
+        char = body[index]
+        if char == "\\" and index + 1 < len(body):
+            chars.append(char)
+            chars.append(body[index + 1])
+            index += 2
+            continue
+        if char == opener and opener != '"':
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return "".join(chars), index + 1
+        chars.append(char)
+        index += 1
+    return "".join(chars), index
+
+
+def bibtex_arxiv_id(fields: dict[str, str]) -> str | None:
+    for key in ("eprint", "arxiv", "arxivid"):
+        value = clean_latex_text(fields.get(key, ""))
+        if value:
+            return value.removeprefix("arXiv:").strip()
+    note = clean_latex_text(fields.get("note", ""))
+    return citation_arxiv_id(note) if note else None
 
 
 def html_attr(attrs: str, name: str) -> str | None:

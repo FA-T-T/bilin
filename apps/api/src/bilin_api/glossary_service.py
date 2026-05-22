@@ -132,6 +132,8 @@ async def extract_article_glossary_candidates(
                     "occurrence_count": candidate.occurrence_count,
                     "block_uids": sorted(candidate.block_uids),
                     "acronym": candidate.acronym,
+                    "definition": candidate_definition(candidate),
+                    "definition_source": "local_candidate",
                     "case_sensitive": False,
                     "preserve_source": False,
                     "source": "rule-based",
@@ -386,6 +388,14 @@ def add_candidate(
     if acronym:
         candidate.acronym = acronym
         candidate.phrase_type = "abbreviation"
+
+
+def candidate_definition(candidate: Candidate) -> str:
+    if candidate.acronym:
+        return f"{candidate.acronym} abbreviates {candidate.source_term} in this article."
+    if candidate.phrase_type == "proper_noun":
+        return f"{candidate.source_term} is a named concept detected in this article."
+    return f"{candidate.source_term} is a repeated technical phrase detected in this article."
 
 
 def block_matches_terms(block: DocumentBlock, terms: list[GlossaryTerm]) -> bool:

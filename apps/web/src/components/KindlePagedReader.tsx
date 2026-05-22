@@ -38,6 +38,8 @@ interface MeasuredKindleBlocks {
 }
 
 const defaultGetBlockText = (block: DocumentBlock) => block.source_markdown;
+const KINDLE_MEASURE_WINDOW_RADIUS = 36;
+const KINDLE_MEASURE_INITIAL_LIMIT = 80;
 
 export function KindlePagedReader({
   blocks,
@@ -66,18 +68,29 @@ export function KindlePagedReader({
         Math.round(metrics.measureWidth),
         Math.round(metrics.contentHeight),
         fontScale,
-        blocks.map((block) => block.block_uid).join(":")
+        blocks
+          .map((block) =>
+            [
+              block.block_uid,
+              block.content_hash,
+              block.context_hash ?? "",
+              getBlockText(block).length
+            ].join(":")
+          )
+          .join("|")
       ].join("|"),
-    [blocks, fontScale, metrics.contentHeight, metrics.measureWidth]
+    [blocks, fontScale, getBlockText, metrics.contentHeight, metrics.measureWidth]
   );
   const [measuredBlocks, setMeasuredBlocks] = useState<MeasuredKindleBlocks | null>(null);
+  const measuredBlockCount =
+    measuredBlocks?.key === measureKey ? Object.keys(measuredBlocks.heights).length : 0;
   const estimatedPages = useMemo(
     () => paginateKindlePages(blocks, getBlockText, metrics.charBudget),
     [blocks, getBlockText, metrics.charBudget]
   );
   const measuredPages = useMemo(
     () =>
-      measuredBlocks?.key === measureKey
+      measuredBlocks?.key === measureKey && Object.keys(measuredBlocks.heights).length > 0
         ? paginateMeasuredKindlePages(blocks, getBlockText, measuredBlocks.heights, metrics)
         : [],
     [blocks, getBlockText, measureKey, measuredBlocks, metrics]
@@ -90,6 +103,10 @@ export function KindlePagedReader({
   const currentPage = pages[activePageIndex];
   const canGoPrevious = activePageIndex > 0;
   const canGoNext = activePageIndex < pages.length - 1;
+  const measurementBlocks = useMemo(
+    () => kindleMeasurementBlocks(blocks, pages, activePageIndex),
+    [activePageIndex, blocks, pages]
+  );
 
   const goToPage = useCallback(
     (pageIndex: number) => {
@@ -120,19 +137,20 @@ export function KindlePagedReader({
     const root = measureRoot.current;
     if (!root) return;
     const nextHeights = measureKindleBlockHeights(root);
-    const hasEnoughMeasurements = blocks.every((block) => (nextHeights[block.block_uid] ?? 0) > 0);
-    if (!hasEnoughMeasurements) return;
+    if (Object.keys(nextHeights).length === 0) return;
     setMeasuredBlocks((current) => {
-      if (current?.key === measureKey && shallowNumberRecordEqual(current.heights, nextHeights)) {
+      const baseHeights = current?.key === measureKey ? current.heights : {};
+      const mergedHeights = { ...baseHeights, ...nextHeights };
+      if (current?.key === measureKey && shallowNumberRecordEqual(current.heights, mergedHeights)) {
         return current;
       }
-      return { key: measureKey, heights: nextHeights };
+      return { key: measureKey, heights: mergedHeights };
     });
-  }, [blocks, measureKey]);
+  }, [measureKey]);
 
   useLayoutEffect(() => {
     updateMeasuredBlocks();
-  }, [updateMeasuredBlocks]);
+  }, [measurementBlocks, updateMeasuredBlocks]);
 
   useEffect(() => {
     const root = measureRoot.current;
@@ -150,7 +168,7 @@ export function KindlePagedReader({
       if (frame) cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [updateMeasuredBlocks]);
+  }, [measurementBlocks, updateMeasuredBlocks]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -214,6 +232,8 @@ export function KindlePagedReader({
       className={`kindle-reader kindle-reader-layout-${pageLayout}`}
       data-page-layout={pageLayout}
       data-page-mode="paged"
+      data-measured-block-count={measuredBlockCount}
+      data-measure-window-size={measurementBlocks.length}
       data-testid="kindle-paged-reader"
       aria-label={title}
     >
@@ -279,7 +299,7 @@ export function KindlePagedReader({
         className="kindle-measure-root"
         style={{ "--kindle-measure-width": `${metrics.measureWidth}px` } as CSSProperties}
       >
-        {blocks.map((block) => (
+        {measurementBlocks.map((block) => (
           <div
             className="kindle-measure-block"
             data-kindle-measure-block-uid={block.block_uid}
@@ -441,6 +461,45 @@ function pageIndexForBlock(pages: KindlePage[], activeBlockUid: string | null) {
     page.blocks.some((block) => block.block_uid === activeBlockUid)
   );
   return index >= 0 ? index : 0;
+}
+
+function kindleMeasurementBlocks(
+  blocks: DocumentBlock[],
+  pages: KindlePage[],
+  activePageIndex: number
+) {
+  if (blocks.length <= KINDLE_MEASURE_INITIAL_LIMIT) return blocks;
+  const activePage = pages[Math.min(Math.max(activePageIndex, 0), Math.max(pages.length - 1, 0))];
+  const firstVisibleBlock = activePage?.blocks[0];
+  const lastVisibleBlock = activePage?.blocks.at(-1) ?? firstVisibleBlock;
+  const firstVisibleIndex = firstVisibleBlock
+    ? blocks.findIndex((block) => block.block_uid === firstVisibleBlock.block_uid)
+    : -1;
+  const lastVisibleIndex = lastVisibleBlock
+    ? blocks.findIndex((block) => block.block_uid === lastVisibleBlock.block_uid)
+    : firstVisibleIndex;
+
+  if (firstVisibleIndex < 0) {
+    return blocks.slice(0, Math.min(KINDLE_MEASURE_INITIAL_LIMIT, blocks.length));
+  }
+
+  const start = Math.max(0, firstVisibleIndex - KINDLE_MEASURE_WINDOW_RADIUS);
+  const end = Math.min(
+    blocks.length,
+    Math.max(lastVisibleIndex, firstVisibleIndex) + KINDLE_MEASURE_WINDOW_RADIUS + 1
+  );
+  const nearbyBlockUids = new Set<string>();
+  const pageStart = Math.max(0, activePageIndex - 1);
+  const pageEnd = Math.min(pages.length, activePageIndex + 2);
+  for (let pageIndex = pageStart; pageIndex < pageEnd; pageIndex += 1) {
+    for (const block of pages[pageIndex]?.blocks ?? []) {
+      nearbyBlockUids.add(block.block_uid);
+    }
+  }
+  return blocks.filter(
+    (block, index) =>
+      (index >= start && index < end) || nearbyBlockUids.has(block.block_uid)
+  );
 }
 
 function measureKindleBlockHeights(root: HTMLElement) {

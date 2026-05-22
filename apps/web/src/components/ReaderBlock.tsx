@@ -39,6 +39,13 @@ export type CitationLookup = Record<string, CitationEntry>;
 export type CitationImportMode = "add" | "add-and-translate";
 export type ReaderBlockColor = "none" | "yellow" | "blue" | "green" | "pink" | "purple";
 
+export interface TermAnnotation {
+  term: string;
+  definition: string;
+  source: "reader_card" | "glossary";
+  sourceType?: string | null;
+}
+
 export interface ReaderAssetFile {
   index: number;
   originalReference: string;
@@ -125,6 +132,7 @@ interface ReaderBlockProps {
   imageLightboxEnabled?: boolean;
   searchActive?: boolean;
   blockColor?: ReaderBlockColor;
+  termAnnotations?: TermAnnotation[];
   termWikiEnabled?: boolean;
   readerCards?: ReaderCard[];
   expandedReaderCardId?: string | null;
@@ -170,6 +178,7 @@ export const ReaderBlock = memo(function ReaderBlock({
   imageLightboxEnabled = true,
   searchActive = false,
   blockColor = "none",
+  termAnnotations = [],
   termWikiEnabled = false,
   readerCards = [],
   expandedReaderCardId = null,
@@ -398,6 +407,7 @@ export const ReaderBlock = memo(function ReaderBlock({
           citationImportPending={citationImportPending}
           canImportCitationWithTranslation={canImportCitationWithTranslation}
           onCitationImport={onCitationImport}
+          termAnnotations={termAnnotations}
         />
         {showEnvironmentTranslation ? (
           <div className="caption-translation">
@@ -409,6 +419,7 @@ export const ReaderBlock = memo(function ReaderBlock({
               citationImportPending={citationImportPending}
               canImportCitationWithTranslation={canImportCitationWithTranslation}
               onCitationImport={onCitationImport}
+              termAnnotations={termAnnotations}
             />
             <TranslationVariantSelect
               blockUid={block.block_uid}
@@ -499,6 +510,7 @@ export const ReaderBlock = memo(function ReaderBlock({
                 citationImportPending={citationImportPending}
                 canImportCitationWithTranslation={canImportCitationWithTranslation}
                 onCitationImport={onCitationImport}
+                termAnnotations={termAnnotations}
                 sentenceHighlightPlan={sentenceHighlightPlan}
                 sentenceHighlightKind="source"
                 trailingInline={displayBlock.block_type === "paragraph" ? translationToggle : null}
@@ -524,6 +536,7 @@ export const ReaderBlock = memo(function ReaderBlock({
                       citationImportPending={citationImportPending}
                       canImportCitationWithTranslation={canImportCitationWithTranslation}
                       onCitationImport={onCitationImport}
+                      termAnnotations={termAnnotations}
                       sentenceHighlightPlan={sentenceHighlightPlan}
                       sentenceHighlightKind="translation"
                     />
@@ -589,6 +602,7 @@ export const ReaderBlock = memo(function ReaderBlock({
             citationImportPending={citationImportPending}
             canImportCitationWithTranslation={canImportCitationWithTranslation}
             onCitationImport={onCitationImport}
+            termAnnotations={termAnnotations}
             sentenceHighlightPlan={sentenceHighlightPlan}
             sentenceHighlightKind="source"
           />
@@ -621,6 +635,7 @@ export const ReaderBlock = memo(function ReaderBlock({
               citationImportPending={citationImportPending}
               canImportCitationWithTranslation={canImportCitationWithTranslation}
               onCitationImport={onCitationImport}
+              termAnnotations={termAnnotations}
               sentenceHighlightPlan={sentenceHighlightPlan}
               sentenceHighlightKind="translation"
             />
@@ -665,6 +680,7 @@ function areReaderBlockPropsEqual(left: ReaderBlockProps, right: ReaderBlockProp
     left.imageLightboxEnabled === right.imageLightboxEnabled &&
     left.searchActive === right.searchActive &&
     left.blockColor === right.blockColor &&
+    left.termAnnotations === right.termAnnotations &&
     left.termWikiEnabled === right.termWikiEnabled &&
     left.readerCards === right.readerCards &&
     left.expandedReaderCardId === right.expandedReaderCardId &&
@@ -1253,8 +1269,9 @@ function CitationLink({
 
 function arxivSearchUrl(citation: CitationEntry) {
   if (citation.arxiv_id) return `https://arxiv.org/abs/${encodeURIComponent(citation.arxiv_id)}`;
-  const query = citation.title || citation.raw_text;
-  return `https://arxiv.org/search/?query=${encodeURIComponent(query)}&searchtype=all&source=header`;
+  const query = citation.title || citation.scholar_query || citation.raw_text;
+  const searchType = citation.title ? "title" : "all";
+  return `https://arxiv.org/search/?query=${encodeURIComponent(query)}&searchtype=${searchType}&source=header`;
 }
 
 function displayBlockForReader(block: DocumentBlock, asset?: AssetRecord): DocumentBlock {
@@ -1598,6 +1615,7 @@ function BlockContent({
   citationImportPending,
   canImportCitationWithTranslation,
   onCitationImport,
+  termAnnotations,
   sentenceHighlightPlan,
   sentenceHighlightKind,
   trailingInline = null
@@ -1609,6 +1627,7 @@ function BlockContent({
   citationImportPending: boolean;
   canImportCitationWithTranslation: boolean;
   onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
+  termAnnotations?: TermAnnotation[];
   sentenceHighlightPlan?: SentenceHighlightPlan;
   sentenceHighlightKind?: SentenceHighlightKind;
   trailingInline?: ReactNode;
@@ -1640,6 +1659,7 @@ function BlockContent({
       citationImportPending={citationImportPending}
       canImportCitationWithTranslation={canImportCitationWithTranslation}
       onCitationImport={onCitationImport}
+      termAnnotations={termAnnotations}
       sentenceHighlightPlan={sentenceHighlightPlan}
       sentenceHighlightKind={sentenceHighlightKind}
       trailingInline={trailingInline}
@@ -1662,6 +1682,7 @@ export function MarkdownContent({
   citationImportPending = false,
   canImportCitationWithTranslation = false,
   onCitationImport,
+  termAnnotations = [],
   sentenceHighlightPlan,
   sentenceHighlightKind,
   trailingInline = null
@@ -1672,11 +1693,16 @@ export function MarkdownContent({
   citationImportPending?: boolean;
   canImportCitationWithTranslation?: boolean;
   onCitationImport?: (citation: CitationEntry, mode: CitationImportMode) => void;
+  termAnnotations?: TermAnnotation[];
   sentenceHighlightPlan?: SentenceHighlightPlan;
   sentenceHighlightKind?: SentenceHighlightKind;
   trailingInline?: ReactNode;
 }) {
   const preparedMarkdown = useMemo(() => prepareInlineMathMarkdown(content), [content]);
+  const normalizedTermAnnotations = useMemo(
+    () => normalizedTermAnnotationsForRender(termAnnotations),
+    [termAnnotations]
+  );
   const sentenceCursor = { value: 0 };
   return (
     <ReactMarkdown
@@ -1716,9 +1742,14 @@ export function MarkdownContent({
                   sentenceHighlightPlan,
                   sentenceHighlightKind,
                   preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations,
                   sentenceCursor
                 )
-              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+              : renderInlineMathChildren(
+                  children,
+                  preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations
+                );
           return (
             <p>
               {inlineChildren}
@@ -1734,9 +1765,14 @@ export function MarkdownContent({
                   sentenceHighlightPlan,
                   sentenceHighlightKind,
                   preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations,
                   sentenceCursor
                 )
-              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+              : renderInlineMathChildren(
+                  children,
+                  preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations
+                );
           return <li>{inlineChildren}</li>;
         },
         td({ children }) {
@@ -1747,9 +1783,14 @@ export function MarkdownContent({
                   sentenceHighlightPlan,
                   sentenceHighlightKind,
                   preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations,
                   sentenceCursor
                 )
-              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+              : renderInlineMathChildren(
+                  children,
+                  preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations
+                );
           return <td>{inlineChildren}</td>;
         },
         th({ children }) {
@@ -1760,9 +1801,14 @@ export function MarkdownContent({
                   sentenceHighlightPlan,
                   sentenceHighlightKind,
                   preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations,
                   sentenceCursor
                 )
-              : renderInlineMathChildren(children, preparedMarkdown.inlineMathByToken);
+              : renderInlineMathChildren(
+                  children,
+                  preparedMarkdown.inlineMathByToken,
+                  normalizedTermAnnotations
+                );
           return <th>{inlineChildren}</th>;
         }
       }}
@@ -1803,11 +1849,14 @@ function renderSentenceHighlightedChildren(
   plan: SentenceHighlightPlan,
   kind: SentenceHighlightKind,
   inlineMathByToken: Map<string, string>,
+  termAnnotations: TermAnnotation[],
   sentenceCursor: { value: number }
 ): ReactNode {
   const text = textContentOf(children);
   const ranges = cachedSentenceRanges(text);
-  if (ranges.length === 0) return renderInlineMathChildren(children, inlineMathByToken);
+  if (ranges.length === 0) {
+    return renderInlineMathChildren(children, inlineMathByToken, termAnnotations);
+  }
   const baseSentenceIndex = sentenceCursor.value;
   sentenceCursor.value += ranges.length;
   const offset = { value: 0 };
@@ -1818,6 +1867,7 @@ function renderSentenceHighlightedChildren(
     plan,
     kind,
     inlineMathByToken,
+    termAnnotations,
     offset
   );
 }
@@ -1829,6 +1879,7 @@ function renderHighlightedNode(
   plan: SentenceHighlightPlan,
   kind: SentenceHighlightKind,
   inlineMathByToken: Map<string, string>,
+  termAnnotations: TermAnnotation[],
   offset: { value: number }
 ): ReactNode {
   return Children.map(node, (child) => {
@@ -1842,7 +1893,8 @@ function renderHighlightedNode(
         baseSentenceIndex,
         plan,
         kind,
-        inlineMathByToken
+        inlineMathByToken,
+        termAnnotations
       );
     }
     if (typeof child === "number" || typeof child === "bigint") {
@@ -1856,7 +1908,8 @@ function renderHighlightedNode(
         baseSentenceIndex,
         plan,
         kind,
-        inlineMathByToken
+        inlineMathByToken,
+        termAnnotations
       );
     }
     if (isValidElement<{ children?: ReactNode }>(child)) {
@@ -1870,6 +1923,7 @@ function renderHighlightedNode(
               plan,
               kind,
               inlineMathByToken,
+              termAnnotations,
               offset
             )
           : child.props.children;
@@ -1886,7 +1940,8 @@ function renderHighlightedText(
   baseSentenceIndex: number,
   plan: SentenceHighlightPlan,
   kind: SentenceHighlightKind,
-  inlineMathByToken: Map<string, string>
+  inlineMathByToken: Map<string, string>,
+  termAnnotations: TermAnnotation[]
 ): ReactNode {
   const parts: ReactNode[] = [];
   let cursor = 0;
@@ -1899,7 +1954,7 @@ function renderHighlightedText(
     if (localStart > cursor) {
       parts.push(
         <Fragment key={`${textStartOffset}-${cursor}-${localStart}-plain`}>
-          {renderInlineMathText(text.slice(cursor, localStart), inlineMathByToken)}
+          {renderInlineMathText(text.slice(cursor, localStart), inlineMathByToken, termAnnotations)}
         </Fragment>
       );
     }
@@ -1913,7 +1968,7 @@ function renderHighlightedText(
         data-sentence-kind={kind}
         key={`${textStartOffset}-${localStart}-${localEnd}-${accentIndex}`}
       >
-        {renderInlineMathText(highlightedText, inlineMathByToken)}
+        {renderInlineMathText(highlightedText, inlineMathByToken, termAnnotations)}
       </span>
     );
     cursor = localEnd;
@@ -1921,14 +1976,14 @@ function renderHighlightedText(
   if (cursor < text.length) {
     parts.push(
       <Fragment key={`${textStartOffset}-${cursor}-${text.length}-plain`}>
-        {renderInlineMathText(text.slice(cursor), inlineMathByToken)}
+        {renderInlineMathText(text.slice(cursor), inlineMathByToken, termAnnotations)}
       </Fragment>
     );
   }
   return parts.length > 0 ? (
     <Fragment>{parts}</Fragment>
   ) : (
-    renderInlineMathText(text, inlineMathByToken)
+    renderInlineMathText(text, inlineMathByToken, termAnnotations)
   );
 }
 
@@ -2023,34 +2078,53 @@ function plainTextForSentenceHighlight(markdown: string): string {
 
 function renderInlineMathChildren(
   children: ReactNode,
-  inlineMathByToken: Map<string, string>
+  inlineMathByToken: Map<string, string>,
+  termAnnotations: TermAnnotation[] = []
 ): ReactNode {
-  return Children.map(children, (child) => renderInlineMathNode(child, inlineMathByToken));
+  return Children.map(children, (child) =>
+    renderInlineMathNode(child, inlineMathByToken, termAnnotations)
+  );
 }
 
-function renderInlineMathNode(child: ReactNode, inlineMathByToken: Map<string, string>): ReactNode {
-  if (typeof child === "string") return renderInlineMathText(child, inlineMathByToken);
+function renderInlineMathNode(
+  child: ReactNode,
+  inlineMathByToken: Map<string, string>,
+  termAnnotations: TermAnnotation[]
+): ReactNode {
+  if (typeof child === "string") {
+    return renderInlineMathText(child, inlineMathByToken, termAnnotations);
+  }
   if (typeof child === "number" || typeof child === "bigint") {
-    return renderInlineMathText(String(child), inlineMathByToken);
+    return renderInlineMathText(String(child), inlineMathByToken, termAnnotations);
   }
   if (isValidElement<{ children?: ReactNode }>(child)) {
     if (child.props.children === undefined) return child;
     return cloneElement(
       child,
       undefined,
-      renderInlineMathChildren(child.props.children, inlineMathByToken)
+      renderInlineMathChildren(child.props.children, inlineMathByToken, termAnnotations)
     );
   }
   return child;
 }
 
-function renderInlineMathText(text: string, inlineMathByToken = emptyInlineMathByToken): ReactNode {
+function renderInlineMathText(
+  text: string,
+  inlineMathByToken = emptyInlineMathByToken,
+  termAnnotations: TermAnnotation[] = []
+): ReactNode {
   const parts: ReactNode[] = [];
   const pattern = /BILININLINE\d+MATH|\\\((.+?)\\\)|\$([^$\n]+)\$/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
-    if (match.index > cursor) parts.push(text.slice(cursor, match.index));
+    if (match.index > cursor) {
+      parts.push(
+        <Fragment key={`text-${cursor}-${match.index}`}>
+          {renderTermAnnotatedText(text.slice(cursor, match.index), termAnnotations)}
+        </Fragment>
+      );
+    }
     const tokenLatex = inlineMathByToken.get(match[0]);
     const latex = tokenLatex ?? match[1] ?? match[2] ?? "";
     if (latex) {
@@ -2060,8 +2134,110 @@ function renderInlineMathText(text: string, inlineMathByToken = emptyInlineMathB
     }
     cursor = match.index + match[0].length;
   }
-  if (cursor < text.length) parts.push(text.slice(cursor));
+  if (cursor < text.length) {
+    parts.push(
+      <Fragment key={`text-${cursor}-${text.length}`}>
+        {renderTermAnnotatedText(text.slice(cursor), termAnnotations)}
+      </Fragment>
+    );
+  }
   return parts.length > 0 ? <Fragment>{parts}</Fragment> : text;
+}
+
+function normalizedTermAnnotationsForRender(annotations: TermAnnotation[]): TermAnnotation[] {
+  const seen = new Set<string>();
+  return annotations
+    .map((annotation) => ({
+      ...annotation,
+      term: annotation.term.trim(),
+      definition: annotation.definition.trim()
+    }))
+    .filter((annotation) => annotation.term.length >= 2 && annotation.definition.length > 0)
+    .sort((left, right) => {
+      const sourcePriority = termAnnotationPriority(right) - termAnnotationPriority(left);
+      if (sourcePriority !== 0) return sourcePriority;
+      return right.term.length - left.term.length;
+    })
+    .filter((annotation) => {
+      const key = annotation.term.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function termAnnotationPriority(annotation: TermAnnotation) {
+  if (annotation.source === "reader_card" && annotation.sourceType === "ai_search") return 4;
+  if (annotation.source === "reader_card" && annotation.sourceType === "paper_local") return 3;
+  if (annotation.source === "reader_card") return 2;
+  return 1;
+}
+
+function renderTermAnnotatedText(text: string, annotations: TermAnnotation[]): ReactNode {
+  if (!text || annotations.length === 0) return text;
+  const matches = termAnnotationMatches(text, annotations);
+  if (matches.length === 0) return text;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.start > cursor) {
+      parts.push(
+        <Fragment key={`plain-${cursor}-${match.start}`}>{text.slice(cursor, match.start)}</Fragment>
+      );
+    }
+    const label = text.slice(match.start, match.end);
+    parts.push(
+      <span
+        className="term-annotation"
+        data-definition={match.annotation.definition}
+        data-term={match.annotation.term}
+        key={`${match.start}-${match.end}`}
+        tabIndex={0}
+        title={`${match.annotation.term}: ${match.annotation.definition}`}
+      >
+        {label}
+      </span>
+    );
+    cursor = match.end;
+  }
+  if (cursor < text.length) {
+    parts.push(
+      <Fragment key={`plain-${cursor}-${text.length}`}>{text.slice(cursor)}</Fragment>
+    );
+  }
+  return <Fragment>{parts}</Fragment>;
+}
+
+function termAnnotationMatches(text: string, annotations: TermAnnotation[]) {
+  const candidates: { start: number; end: number; annotation: TermAnnotation }[] = [];
+  const lowerText = text.toLowerCase();
+  for (const annotation of annotations) {
+    const lowerTerm = annotation.term.toLowerCase();
+    let start = lowerText.indexOf(lowerTerm);
+    while (start >= 0) {
+      const end = start + lowerTerm.length;
+      if (termBoundary(text, start - 1) && termBoundary(text, end)) {
+        candidates.push({ start, end, annotation });
+      }
+      start = lowerText.indexOf(lowerTerm, start + 1);
+    }
+  }
+  candidates.sort(
+    (left, right) => left.start - right.start || right.end - right.start - (left.end - left.start)
+  );
+  const selected: typeof candidates = [];
+  let cursor = -1;
+  for (const candidate of candidates) {
+    if (candidate.start < cursor) continue;
+    selected.push(candidate);
+    cursor = candidate.end;
+  }
+  return selected;
+}
+
+function termBoundary(text: string, index: number) {
+  if (index < 0 || index >= text.length) return true;
+  return !/[\p{L}\p{N}_-]/u.test(text[index] ?? "");
 }
 
 const emptyInlineMathByToken = new Map<string, string>();
@@ -2697,7 +2873,7 @@ function citationForHref(
 
 function isBibliographyHref(href: string) {
   const key = href.startsWith("#") ? href.slice(1) : href;
-  return key.startsWith("bib.");
+  return key.startsWith("bib.") || key.startsWith("bib:");
 }
 
 function referenceTargetForHref(href: string, referenceTargets: ReferenceTargets) {

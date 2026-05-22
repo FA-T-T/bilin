@@ -36,6 +36,18 @@ Answerer = Callable[
 
 CONTEXT_NEIGHBORS = 1
 ANSWER_STREAM_CHARS = 120
+MAX_EVIDENCE_CHARS = 12_000
+MAX_BLOCK_EVIDENCE_CHARS = 1_800
+EVIDENCE_BLOCK_TYPES = {
+    "abstract",
+    "paragraph",
+    "section",
+    "subsection",
+    "subsubsection",
+    "figure",
+    "table",
+    "equation",
+}
 
 
 @dataclass(frozen=True)
@@ -163,6 +175,10 @@ async def persist_question_answer(
             "model": context.model,
             "usage": response.usage,
             "retrieval": [block.model_dump() for block in context.retrieved_blocks],
+            "retrieval_methods": sorted(
+                {block.retrieval_method for block in context.retrieved_blocks}
+            ),
+            "evidence_block_count": len(context.retrieved_blocks),
             "native_search": request.native_search,
             "current_block_uid": request.current_block_uid,
             "evidence_policy": "external_native_search_allowed"
@@ -300,6 +316,28 @@ async def retrieve_search_candidates(
             request.question,
             limit=request.max_blocks,
         )
+    ] or await retrieve_overview_candidates(library, revision_id, request.max_blocks)
+
+
+async def retrieve_overview_candidates(
+    library: Library,
+    revision_id: str,
+    limit: int,
+) -> list[EvidenceCandidate]:
+    blocks = [
+        block for block in await list_blocks(library, revision_id) if is_evidence_block(block)
+    ]
+    ranked = sorted(
+        enumerate(blocks),
+        key=lambda item: overview_block_score(item[1], item[0]),
+    )
+    return [
+        EvidenceCandidate(
+            block=block,
+            score=overview_block_score(block, index),
+            retrieval_method="overview",
+        )
+        for index, block in ranked[:limit]
     ]
 
 
@@ -330,10 +368,43 @@ def retrieved_block_from_candidate(candidate: EvidenceCandidate) -> RetrievedBlo
 
 
 def evidence_to_markdown(blocks: list[RetrievedBlock]) -> str:
-    return "\n\n".join(
-        (f"[{block.block_uid}] {block.block_type} {block.structural_path}\n{block.source_markdown}")
-        for block in blocks
-    )
+    chunks: list[str] = []
+    used_chars = 0
+    for block in blocks:
+        header = f"[{block.block_uid}] {block.block_type} {block.structural_path}"
+        body = trim_evidence_text(block.source_markdown, MAX_BLOCK_EVIDENCE_CHARS)
+        chunk = f"{header}\n{body}"
+        if used_chars + len(chunk) > MAX_EVIDENCE_CHARS:
+            remaining = MAX_EVIDENCE_CHARS - used_chars - len(header) - 2
+            if remaining <= 120:
+                break
+            chunk = f"{header}\n{trim_evidence_text(block.source_markdown, remaining)}"
+        chunks.append(chunk)
+        used_chars += len(chunk) + 2
+    return "\n\n".join(chunks)
+
+
+def trim_evidence_text(text: str, max_chars: int) -> str:
+    normalized = text.strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    cutoff = max(0, max_chars - 24)
+    return f"{normalized[:cutoff].rstrip()}\n[truncated]"
+
+
+def is_evidence_block(block: DocumentBlock) -> bool:
+    return bool(block.source_markdown.strip()) and block.block_type in EVIDENCE_BLOCK_TYPES
+
+
+def overview_block_score(block: DocumentBlock, index: int) -> float:
+    text = f"{block.block_type} {block.structural_path} {block.source_markdown[:160]}".casefold()
+    if "abstract" in text:
+        return index * 0.01
+    if "introduction" in text:
+        return 10 + index * 0.01
+    if block.block_type in {"section", "subsection", "subsubsection"}:
+        return 20 + index * 0.01
+    return 40 + index * 0.01
 
 
 def normalize_external_refs(

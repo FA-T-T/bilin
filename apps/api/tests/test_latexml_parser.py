@@ -504,7 +504,7 @@ def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path:
         <html>
           <body>
             <p>
-              Most models cite <cite class="ltx_cite">[<a href="#bib.bib5">5</a>,
+              Most models cite <cite class="ltx_cite">[<a href="#bib:vaswani2017">5</a>,
               <a href="#bib.bib2">2</a>]</cite>. Here, the encoder maps
               an input sequence of symbol representations
               <math alttext="(x_1,\ldots,x_n)"></math> to a sequence of continuous
@@ -519,7 +519,7 @@ def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path:
     blocks, _assets = normalize_latexml_html(html_path, "revision-1")
 
     assert blocks[0].source_markdown == (
-        "Most models cite [5](#bib.bib5), [2](#bib.bib2). Here, the encoder maps "
+        "Most models cite [5](#bib:vaswani2017), [2](#bib.bib2). Here, the encoder maps "
         "an input sequence of symbol representations "
         "$(x_1,\\ldots,x_n)$ to a sequence of continuous representations "
         "$\\mathbf{z}=(z_1,\\ldots,z_n)$."

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from html.parser import HTMLParser
 
 import httpx
 
@@ -79,14 +78,6 @@ class ArxivMetadata:
             "source_url": self.source_url,
             "pdf_url": self.pdf_url,
         }
-
-
-@dataclass(frozen=True)
-class ArxivCategory:
-    id: str
-    name: str
-    group: str
-    description: str
 
 
 def parse_arxiv_identity(value: str, version: str | None = None) -> ArxivIdentity:
@@ -311,86 +302,6 @@ def parse_arxiv_search_feed(xml_text: str) -> list[ArxivMetadata]:
     root = ET.fromstring(xml_text)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     return [metadata_from_entry(entry) for entry in root.findall("atom:entry", ns)]
-
-
-async def fetch_arxiv_category_taxonomy(
-    client: httpx.AsyncClient | None = None,
-) -> list[ArxivCategory]:
-    owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=30, follow_redirects=True)
-    try:
-        response = await active_client.get("https://arxiv.org/category_taxonomy")
-        response.raise_for_status()
-        return parse_arxiv_category_taxonomy(response.text)
-    finally:
-        if owns_client:
-            await active_client.aclose()
-
-
-def parse_arxiv_category_taxonomy(html: str) -> list[ArxivCategory]:
-    parser = _ArxivCategoryTaxonomyParser()
-    parser.feed(html)
-    parser.close()
-    return parser.categories
-
-
-class _ArxivCategoryTaxonomyParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.categories: list[ArxivCategory] = []
-        self._active_tag: str | None = None
-        self._active_text: list[str] = []
-        self._group = ""
-        self._pending_category: tuple[str, str] | None = None
-        self._pending_description: list[str] = []
-
-    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"h2", "h4", "p"}:
-            self._active_tag = tag
-            self._active_text = []
-
-    def handle_data(self, data: str) -> None:
-        if self._active_tag:
-            self._active_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag != self._active_tag:
-            return
-        text = " ".join("".join(self._active_text).split())
-        self._active_tag = None
-        self._active_text = []
-        if not text:
-            return
-        if tag == "h2":
-            self._flush_pending_category()
-            self._group = text
-        elif tag == "h4":
-            self._flush_pending_category()
-            match = re.fullmatch(r"(?P<id>[a-z.-]+(?:\.[A-Z]{2})?) \((?P<name>.+)\)", text)
-            if match:
-                self._pending_category = (match.group("id"), match.group("name"))
-                self._pending_description = []
-        elif tag == "p" and self._pending_category:
-            self._pending_description.append(text)
-
-    def close(self) -> None:
-        self._flush_pending_category()
-        super().close()
-
-    def _flush_pending_category(self) -> None:
-        if not self._pending_category:
-            return
-        category_id, name = self._pending_category
-        self.categories.append(
-            ArxivCategory(
-                id=category_id,
-                name=name,
-                group=self._group,
-                description=" ".join(self._pending_description).strip(),
-            )
-        )
-        self._pending_category = None
-        self._pending_description = []
 
 
 def _text(element: ET.Element | None) -> str:

@@ -208,6 +208,7 @@ async def render_bilingual_markdown(
 
 def render_markdown_document(title: str, body_parts: list[str]) -> str:
     body = "\n\n".join(part.strip() for part in body_parts if part.strip())
+    body = strip_duplicate_leading_title_heading(body, title)
     markdown = f"# {title}\n\n{body}".strip() + "\n"
     return with_export_notice(clean_user_markdown(markdown))
 
@@ -218,6 +219,8 @@ def render_source_block(block: DocumentBlock, assets: dict[str, AssetRecord]) ->
 
 def render_source_content(block: DocumentBlock, assets: dict[str, AssetRecord]) -> str:
     content = user_content_for_block(block, assets)
+    if block.block_type == "equation":
+        return render_display_math_block(content)
     if block.block_type == "section" and content and not content.startswith("#"):
         level = block.metadata.get("level")
         heading_level = level if isinstance(level, int) and 1 <= level <= 6 else 2
@@ -244,6 +247,13 @@ def translation_for_block(
 ) -> str:
     if is_translatable_block(block):
         translated = translations.get(block.block_uid)
+        if block.block_type in {"figure", "table"}:
+            if translated:
+                return render_media_content(block, assets, translated)
+            missing.append(block.block_uid)
+            if include_untranslated:
+                return render_source_content(block, assets)
+            return render_media_content(block, assets, "")
         if translated:
             return translated
         missing.append(block.block_uid)
@@ -388,21 +398,26 @@ def rewrite_asset_tokens(
 def user_content_for_block(block: DocumentBlock, assets: dict[str, AssetRecord]) -> str:
     content = block.source_markdown.strip()
     if block.block_type in {"figure", "table"}:
-        asset_id = str(block.metadata.get("asset_id") or "")
-        asset = assets.get(asset_id)
-        table = markdown_table_for_block(block, asset)
-        asset_link = asset_token(asset_id) if asset and asset_id else ""
-        content = "\n\n".join(part for part in (asset_link, table or content) if part)
+        content = render_media_content(block, assets, content)
     return clean_user_markdown(content)
+
+
+def render_media_content(
+    block: DocumentBlock,
+    assets: dict[str, AssetRecord],
+    caption_markdown: str,
+) -> str:
+    asset_id = str(block.metadata.get("asset_id") or "")
+    asset = assets.get(asset_id)
+    asset_link = asset_token(asset_id) if asset and asset_id else ""
+    table = markdown_table_for_block(block, asset)
+    return "\n\n".join(part for part in (asset_link, table, caption_markdown.strip()) if part)
 
 
 def markdown_table_for_block(block: DocumentBlock, asset: AssetRecord | None) -> str:
     html_fragment = html_fragment_for_block(block, asset)
     if html_fragment and "<table" in html_fragment.lower():
-        table = html_table_to_markdown(html_fragment)
-        if table:
-            caption = clean_user_markdown(block.source_markdown.strip())
-            return "\n\n".join(part for part in (table, caption) if part)
+        return html_table_to_markdown(html_fragment)
     return ""
 
 
@@ -418,10 +433,41 @@ def asset_token(asset_id: str) -> str:
     return f"<!-- ilios-asset:{asset_id} -->"
 
 
+def strip_duplicate_leading_title_heading(body: str, title: str) -> str:
+    lines = body.lstrip().splitlines()
+    if not lines:
+        return body
+    first_line = lines[0].strip()
+    heading = re.match(r"^#{1,6}\s+(.+?)\s*$", first_line)
+    if not heading:
+        return body
+    if normalized_heading_text(heading.group(1)) != normalized_heading_text(title):
+        return body
+    index = 1
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return "\n".join(lines[index:]).lstrip()
+
+
+def normalized_heading_text(value: str) -> str:
+    normalized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value)
+    normalized = re.sub(r"\s*\{#[^}]+\}\s*$", "", normalized)
+    normalized = re.sub(r"<[^>]+>", "", normalized)
+    normalized = re.sub(r"[*_`~$]+", "", normalized)
+    normalized = html.unescape(normalized)
+    return re.sub(r"\s+", " ", normalized).strip().casefold()
+
+
+def render_display_math_block(content: str) -> str:
+    tex = normalize_export_math_tex(strip_math_delimiters(content))
+    return f"$$\n{tex}\n$$" if tex else ""
+
+
 def clean_user_markdown(markdown: str) -> str:
     cleaned = strip_internal_markers(markdown)
     cleaned = convert_html_tables_in_markdown(cleaned)
     cleaned = strip_unwanted_html(cleaned)
+    cleaned = stabilize_math_markdown(cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
@@ -461,6 +507,91 @@ def strip_unwanted_html(markdown: str) -> str:
         flags=re.IGNORECASE,
     )
     return html.unescape(cleaned)
+
+
+def stabilize_math_markdown(markdown: str) -> str:
+    parts = re.split(r"(```.*?```|~~~.*?~~~)", markdown, flags=re.DOTALL)
+    return "".join(
+        part if part.startswith(("```", "~~~")) else stabilize_math_markdown_segment(part)
+        for part in parts
+    )
+
+
+def stabilize_math_markdown_segment(markdown: str) -> str:
+    markdown = re.sub(
+        r"\$\$(.*?)\$\$",
+        lambda match: render_display_math_block(match.group(1)),
+        markdown,
+        flags=re.DOTALL,
+    )
+    markdown = re.sub(
+        r"\\\[(.*?)\\\]",
+        lambda match: render_display_math_block(match.group(1)),
+        markdown,
+        flags=re.DOTALL,
+    )
+    markdown = re.sub(
+        r"\\\((.*?)\\\)",
+        lambda match: f"${normalize_export_math_tex(match.group(1))}$",
+        markdown,
+        flags=re.DOTALL,
+    )
+    return re.sub(
+        r"(?<!\\)(?<!\$)\$(?!\$)([^\n$]*(?:\\.[^\n$]*)*)(?<!\\)\$(?!\$)",
+        lambda match: f"${normalize_export_math_tex(match.group(1))}$",
+        markdown,
+    )
+
+
+def normalize_export_math_tex(tex: str) -> str:
+    normalized = tex.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"(?<!\\)%[^\n]*(?:\n|$)", " ", normalized)
+    normalized = re.sub(r"\\displaystyle\b", "", normalized)
+    normalized = re.sub(r"\\label\{[^{}]*\}", "", normalized)
+    normalized = re.sub(r"\\(?:nonumber|notag|xspace|nopagebreak|allowbreak)\b", "", normalized)
+    normalized = re.sub(r"\\operatornamewithlimits\b", r"\\operatorname*", normalized)
+    normalized = re.sub(r"\\argmax(?![A-Za-z])", r"\\operatorname*{arg\\,max}", normalized)
+    normalized = re.sub(r"\\argmin(?![A-Za-z])", r"\\operatorname*{arg\\,min}", normalized)
+    normalized = re.sub(r"\\bm\b", r"\\boldsymbol", normalized)
+    normalized = re.sub(
+        r"\\(?:mathds|mathbbm|mathbbmss|mathbbold|vmathbb|varmathbb|vvmathbb)\b",
+        r"\\mathbb",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\\(?:mbox|textnormal|textrm|textsc)\s*\{([^{}]*)\}",
+        r"\\text{\1}",
+        normalized,
+    )
+    normalized = re.sub(r"\\coloneqq\b", r"\\mathrel{:=}", normalized)
+    normalized = re.sub(r"\\eqqcolon\b", r"\\mathrel{=:}", normalized)
+    normalized = re.sub(r"\\eqref\{([^{}]*)\}", r"\\text{(\1)}", normalized)
+    normalized = re.sub(r"\\ref\{([^{}]*)\}", r"\\text{\1}", normalized)
+    normalized = re.sub(r"\\begin\{align\*?\}", r"\\begin{aligned}", normalized)
+    normalized = re.sub(r"\\end\{align\*?\}", r"\\end{aligned}", normalized)
+    normalized = re.sub(r"\\begin\{eqnarray\*?\}", r"\\begin{aligned}", normalized)
+    normalized = re.sub(r"\\end\{eqnarray\*?\}", r"\\end{aligned}", normalized)
+    normalized = re.sub(r"\\begin\{gather\*?\}", r"\\begin{gathered}", normalized)
+    normalized = re.sub(r"\\end\{gather\*?\}", r"\\end{gathered}", normalized)
+    normalized = re.sub(r"\\begin\{equation\*?\}", "", normalized)
+    normalized = re.sub(r"\\end\{equation\*?\}", "", normalized)
+    normalized = re.sub(r"[ \t\n]+", " ", normalized)
+    return strip_math_delimiters(normalized).strip()
+
+
+def strip_math_delimiters(tex: str) -> str:
+    stripped = tex.strip()
+    for opener, closer in (("$$", "$$"), (r"\[", r"\]"), (r"\(", r"\)")):
+        if stripped.startswith(opener) and stripped.endswith(closer):
+            return stripped[len(opener) : -len(closer)].strip()
+    if (
+        stripped.startswith("$")
+        and stripped.endswith("$")
+        and not stripped.startswith("$$")
+        and not stripped.endswith("$$")
+    ):
+        return stripped[1:-1].strip()
+    return stripped
 
 
 def html_table_to_markdown(fragment: str) -> str:

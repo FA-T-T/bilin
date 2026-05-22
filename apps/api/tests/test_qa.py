@@ -16,6 +16,7 @@ from bilin_api.llm import LLMResponse
 from bilin_api.note_service import create_note_patch_from_chat_message
 from bilin_api.qa_service import (
     ask_article_question,
+    evidence_to_markdown,
     prepare_question_context,
     retrieve_evidence_blocks,
     stream_question_answer_events,
@@ -30,6 +31,7 @@ from bilin_api.schemas import (
     ProviderProfile,
     ProviderProfileCreate,
     ProviderProtocol,
+    RetrievedBlock,
 )
 
 
@@ -162,6 +164,51 @@ async def test_fts_search_indexes_replaced_document(
     matches = await search_blocks(library, revision_id, "Hamiltonian gradients", limit=3)
     assert matches
     assert matches[0][0].block_uid in {"p-0001", "p-0002"}
+
+
+@pytest.mark.asyncio
+async def test_general_question_falls_back_to_overview_evidence(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, provider, revision_id = await prepare_qa_fixture(tmp_path)
+    context = await prepare_question_context(
+        library,
+        revision_id,
+        ChatAskRequest(
+            question="zzzxxy overview request",
+            provider_profile_id=provider.id,
+        ),
+    )
+
+    assert context.retrieved_blocks
+    assert context.retrieved_blocks[0].retrieval_method == "overview"
+    assert "Hamiltonian simulation" in context.evidence_markdown
+
+
+def test_evidence_markdown_truncates_large_blocks() -> None:
+    block = make_block(
+        "revision-1",
+        block_uid="p-long",
+        structural_path="00001",
+        block_type="paragraph",
+        source_markdown="alpha " * 1000,
+    )
+    rendered = evidence_to_markdown(
+        [
+            RetrievedBlock(
+                block_uid=block.block_uid,
+                block_type=block.block_type,
+                structural_path=block.structural_path,
+                source_markdown=block.source_markdown,
+                score=0,
+            )
+        ]
+    )
+
+    assert "[p-long]" in rendered
+    assert "[truncated]" in rendered
+    assert len(rendered) < 2_000
 
 
 @pytest.mark.asyncio

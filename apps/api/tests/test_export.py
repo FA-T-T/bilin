@@ -133,6 +133,240 @@ async def test_export_bundle_zip_contains_bundle_artifacts(
     assert "export/article-bundle.zip" not in names
 
 
+@pytest.mark.asyncio
+async def test_markdown_export_deduplicates_title_and_stabilizes_display_math(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Math Export", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00006", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00006",
+        version="v1",
+        title="A Stable Markdown Export",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    blocks = [
+        make_block(
+            revision.id,
+            block_uid="sec-title",
+            structural_path="00001",
+            block_type="section",
+            source_markdown="A Stable Markdown Export",
+            metadata={"level": 1},
+        ),
+        make_block(
+            revision.id,
+            block_uid="p-math",
+            structural_path="00002",
+            block_type="paragraph",
+            source_markdown=r"Inline math $\bm{x}=\argmax_y f(y)$ should render.",
+        ),
+        make_block(
+            revision.id,
+            block_uid="eq-display",
+            structural_path="00003",
+            block_type="equation",
+            source_markdown=r"\begin{align} \bm{x} & = \argmax_y f(y) \label{eq:x} \end{align}",
+        ),
+    ]
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        blocks,
+        [],
+        "\n\n".join(block.source_markdown for block in blocks),
+    )
+
+    result = await export_article(
+        library,
+        revision.id,
+        ArticleExportRequest(kind=ArticleExportKind.source_markdown),
+    )
+    markdown, _ = read_markdown_export(result.path)
+
+    assert markdown.count("# A Stable Markdown Export") == 1
+    assert r"$\boldsymbol{x}=\operatorname*{arg\,max}_y f(y)$" in markdown
+    assert "$$\n\\begin{aligned}" in markdown
+    assert r"\boldsymbol{x} & = \operatorname*{arg\,max}_y f(y)" in markdown
+    assert r"\bm" not in markdown
+    assert r"\argmax" not in markdown
+    assert r"\label" not in markdown
+
+
+@pytest.mark.asyncio
+async def test_translated_markdown_preserves_figure_images_with_translated_caption(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Figure Export", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00007", "v1")
+    assets_dir = bundle_path / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    primary_path = assets_dir / "source-left.png"
+    secondary_path = assets_dir / "source-right.png"
+    primary_path.write_bytes(b"left")
+    secondary_path.write_bytes(b"right")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00007",
+        version="v1",
+        title="Figure Export",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    block = make_block(
+        revision.id,
+        block_uid="fig-0001",
+        structural_path="00001",
+        block_type="figure",
+        source_markdown="**Figure 1.** Original caption.",
+        metadata={"asset_id": "fig-0001"},
+    )
+    asset = make_asset(
+        revision.id,
+        asset_id="fig-0001",
+        kind="figure",
+        caption="Original caption.",
+        web_path=str(primary_path),
+        metadata={
+            "asset_files": [
+                {"index": 1, "web_path": str(primary_path)},
+                {"index": 2, "web_path": str(secondary_path)},
+            ],
+        },
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [block],
+        [asset],
+        block.source_markdown,
+    )
+    await create_translation_variant(
+        library=library,
+        block=block,
+        target_language="zh-CN",
+        raw_markdown="**图 1.** 翻译图注。",
+        provider_profile_id="provider",
+        model="model",
+        glossary_version="glossary:none",
+    )
+
+    result = await export_article(
+        library,
+        revision.id,
+        ArticleExportRequest(
+            kind=ArticleExportKind.translated_markdown,
+            target_language="zh-CN",
+            include_untranslated=False,
+        ),
+    )
+    markdown, names = read_markdown_export(result.path)
+
+    assert "![fig-0001](figure-export-translation-zh-CN.assets/fig-0001.png)" in markdown
+    assert "![fig-0001](figure-export-translation-zh-CN.assets/fig-0001-2.png)" in markdown
+    assert "**图 1.** 翻译图注。" in markdown
+    assert "Original caption" not in markdown
+    assert "figure-export-translation-zh-CN.assets/fig-0001.png" in names
+    assert "figure-export-translation-zh-CN.assets/fig-0001-2.png" in names
+
+
+@pytest.mark.asyncio
+async def test_translated_markdown_preserves_tables_as_markdown_tables(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Table Export", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00008", "v1")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00008",
+        version="v1",
+        title="Table Export",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    translated_table = make_block(
+        revision.id,
+        block_uid="table-translated",
+        structural_path="00001",
+        block_type="table",
+        source_markdown="**Table 1.** Original caption.",
+        metadata={
+            "html_fragment": """
+            <table>
+              <tr><th>Method</th><th>Score</th></tr>
+              <tr><td>Alpha</td><td>0.91</td></tr>
+            </table>
+            """,
+        },
+    )
+    untranslated_table = make_block(
+        revision.id,
+        block_uid="table-untranslated",
+        structural_path="00002",
+        block_type="table",
+        source_markdown="**Table 2.** Caption without translation.",
+        metadata={
+            "html_fragment": """
+            <table>
+              <tr><th>Dataset</th><th>Size</th></tr>
+              <tr><td>Eval</td><td>128</td></tr>
+            </table>
+            """,
+        },
+    )
+    await replace_document(
+        library,
+        revision,
+        ArticleManifest(article_revision_id=revision.id, source="arxiv"),
+        [translated_table, untranslated_table],
+        [],
+        "\n\n".join((translated_table.source_markdown, untranslated_table.source_markdown)),
+    )
+    await create_translation_variant(
+        library=library,
+        block=translated_table,
+        target_language="zh-CN",
+        raw_markdown="**表 1.** 翻译表注。",
+        provider_profile_id="provider",
+        model="model",
+        glossary_version="glossary:none",
+    )
+
+    result = await export_article(
+        library,
+        revision.id,
+        ArticleExportRequest(
+            kind=ArticleExportKind.translated_markdown,
+            target_language="zh-CN",
+            include_untranslated=False,
+        ),
+    )
+    markdown, _ = read_markdown_export(result.path)
+
+    assert "| Method | Score |" in markdown
+    assert "| Alpha | 0.91 |" in markdown
+    assert "**表 1.** 翻译表注。" in markdown
+    assert "| Dataset | Size |" in markdown
+    assert "| Eval | 128 |" in markdown
+    assert "**Table 1.** Original caption." not in markdown
+    assert "**Table 2.** Caption without translation." not in markdown
+    assert "<table" not in markdown
+    assert result.missing_translation_block_uids == ["table-untranslated"]
+
+
 def test_html_table_export_is_markdown_table() -> None:
     markdown = html_table_to_markdown(
         """

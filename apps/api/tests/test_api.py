@@ -162,6 +162,21 @@ def test_arxiv_import_api_normalizes_old_style_archive_alias(
     assert payload["payload"]["arxiv_id"] == "cond-mat/9407022"
 
 
+def test_arxiv_daily_api_is_removed(bilin_home: Path, tmp_path: Path) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Local", "path": str(tmp_path / "daily-disabled-library")},
+        )
+        library_id = library_response.json()["id"]
+        response = client.post(
+            f"/libraries/{library_id}/recommendations/arxiv/daily",
+            json={"target_language": "zh-CN"},
+        )
+
+    assert response.status_code == 404
+
+
 def test_local_markdown_import_api_writes_article(bilin_home: Path, tmp_path: Path) -> None:
     with TestClient(app) as client:
         library_response = client.post(

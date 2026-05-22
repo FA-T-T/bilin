@@ -4,8 +4,6 @@ import { useEffect } from "react";
 import { API_BASE_URL, apiClient, type SseMessage } from "./client";
 import type {
   ArticleExportRequest,
-  ArxivRecommendationPreferencesUpdate,
-  ArxivRecommendationRequest,
   ChatAskRequest,
   ChatToNotePatchRequest,
   CitationLibraryImportRequest,
@@ -46,12 +44,6 @@ export const queryKeys = {
   providers: ["providers"] as const,
   libraries: ["libraries"] as const,
   library: (libraryId: string) => ["library", libraryId] as const,
-  arxivRecommendationCategories: (libraryId: string) =>
-    ["arxiv-recommendation-categories", libraryId] as const,
-  arxivRecommendationPreferences: (libraryId: string) =>
-    ["arxiv-recommendation-preferences", libraryId] as const,
-  arxivDailyRecommendations: (libraryId: string, payload: ArxivRecommendationRequest) =>
-    ["arxiv-daily-recommendations", libraryId, payload] as const,
   articles: (libraryId: string, targetLanguage?: string) =>
     targetLanguage
       ? (["articles", libraryId, targetLanguage] as const)
@@ -213,70 +205,6 @@ export function useDeleteLibrary() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.libraries });
       void queryClient.removeQueries({ queryKey: queryKeys.library(result.library_id) });
       void queryClient.removeQueries({ queryKey: queryKeys.articles(result.library_id) });
-    }
-  });
-}
-
-export function useArxivRecommendationCategories(libraryId?: string) {
-  return useQuery({
-    queryKey: queryKeys.arxivRecommendationCategories(libraryId ?? ""),
-    queryFn: () => apiClient.getArxivRecommendationCategories(libraryId ?? ""),
-    enabled: Boolean(libraryId),
-    staleTime: 7 * 24 * 60 * 60 * 1000,
-    retry: false
-  });
-}
-
-export function useArxivRecommendationPreferences(libraryId?: string) {
-  return useQuery({
-    queryKey: queryKeys.arxivRecommendationPreferences(libraryId ?? ""),
-    queryFn: () => apiClient.getArxivRecommendationPreferences(libraryId ?? ""),
-    enabled: Boolean(libraryId),
-    retry: false
-  });
-}
-
-export function useUpdateArxivRecommendationPreferences(libraryId?: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: ArxivRecommendationPreferencesUpdate) =>
-      apiClient.updateArxivRecommendationPreferences(libraryId ?? "", payload),
-    onSuccess: () => {
-      if (libraryId) {
-        void queryClient.invalidateQueries({
-          queryKey: queryKeys.arxivRecommendationPreferences(libraryId)
-        });
-      }
-    }
-  });
-}
-
-export function useArxivDailyRecommendations(
-  libraryId: string | undefined,
-  payload: ArxivRecommendationRequest,
-  enabled: boolean
-) {
-  return useQuery({
-    queryKey: queryKeys.arxivDailyRecommendations(libraryId ?? "", payload),
-    queryFn: () => apiClient.getArxivDailyRecommendations(libraryId ?? "", payload),
-    enabled: Boolean(enabled && libraryId),
-    placeholderData: (previousData) => previousData,
-    staleTime: 12 * 60 * 60 * 1000,
-    retry: false
-  });
-}
-
-export function useRefreshArxivDailyRecommendations(libraryId: string | undefined) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: ArxivRecommendationRequest) =>
-      apiClient.getArxivDailyRecommendations(libraryId ?? "", { ...payload, refresh: true }),
-    onSuccess: (result, payload) => {
-      if (!libraryId) return;
-      queryClient.setQueryData(
-        queryKeys.arxivDailyRecommendations(libraryId, { ...payload, refresh: false }),
-        result
-      );
     }
   });
 }

@@ -47,6 +47,8 @@ async def test_extract_confirm_render_and_mark_affected_blocks(
     assert "parameter shift rule" in terms_by_source
 
     candidate = terms_by_source["parameter shift rule"]
+    assert candidate.metadata["definition"]
+    assert candidate.metadata["definition_source"] == "local_candidate"
     active = await update_article_glossary_term(
         library,
         revision_id,
