@@ -20,8 +20,10 @@ beforeEach(() => {
   useUiStore.getState().setLocale("en");
   useUiStore.getState().resetReaderPreferences();
   useUiStore.getState().resetReaderFeaturePreferences();
+  useUiStore.getState().setReaderSurfaceMode("workbench");
   useUiStore.getState().setTranslationTargetLanguage("zh-CN");
   useUiStore.getState().setAutoTranslateOnLanguageSwitch(true);
+  window.history.replaceState(null, "", "/");
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     value: vi.fn(),
     configurable: true
@@ -32,11 +34,13 @@ afterEach(() => {
   cleanup();
   useUiStore.getState().closeTaskDrawer();
   useUiStore.getState().setReaderViewMode("study");
+  useUiStore.getState().setReaderSurfaceMode("workbench");
   useUiStore.getState().setLocale("en");
   useUiStore.getState().resetReaderPreferences();
   useUiStore.getState().resetReaderFeaturePreferences();
   useUiStore.getState().setTranslationTargetLanguage("zh-CN");
   useUiStore.getState().setAutoTranslateOnLanguageSwitch(true);
+  window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
 
@@ -175,15 +179,9 @@ function syntheticDocumentPayload(count = 300) {
   };
 }
 
-async function openReaderWorkspace() {
-  if (screen.queryByRole("button", { name: "Collapse reader workspace" })) return;
-  await userEvent.click(await screen.findByRole("button", { name: "Expand reader workspace" }));
-}
-
 async function openReaderTool(name: "Translate" | "Terms" | "Ask" | "Notes" | "Export") {
-  await openReaderWorkspace();
   if (screen.queryByRole("button", { name: `Collapse ${name}` })) return;
-  await userEvent.click(await screen.findByRole("button", { name: `Expand ${name}` }));
+  await userEvent.click(await screen.findByRole("button", { name }));
 }
 
 async function findReaderSourcePane(blockUid = "p-0001") {
@@ -981,6 +979,39 @@ I_{n}\\[1.0pt]
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(onQuickAsk).toHaveBeenCalledWith(block, "Why does this matter?");
+  });
+
+  it("places paragraph quick ask inside the viewport near the page edge", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { value: 320, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 480, configurable: true });
+    try {
+      const { container } = renderWithProviders(
+        <ReaderBlock
+          block={readerTestBlock("p-quick-ask-edge", "paragraph", "A paragraph near the edge.")}
+          viewMode="source"
+          canQuickAsk
+          onQuickAsk={() => undefined}
+        />
+      );
+      const blockElement = container.querySelector(".reader-block") as HTMLElement;
+      mockElementRect(blockElement, { left: 260, top: 110, right: 620, bottom: 190 });
+
+      fireEvent.pointerEnter(blockElement);
+
+      const quickAsk = await screen.findByLabelText("Ask this paragraph");
+      await waitFor(() => expect(quickAsk).toHaveStyle({ left: "48px", width: "260px" }));
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: originalInnerWidth,
+        configurable: true
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: originalInnerHeight,
+        configurable: true
+      });
+    }
   });
 
   it("places opened reader cards inside the viewport even when the tag sits outside the page", async () => {
@@ -2021,6 +2052,7 @@ I_{n}\\[1.0pt]
   });
 
   it("renders a real article document from the API", async () => {
+    useUiStore.getState().setReaderFeaturePreference("watermarkVisible", true);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2133,7 +2165,7 @@ I_{n}\\[1.0pt]
     expect(container.querySelector(".chat-message-markdown")).toBeInTheDocument();
   });
 
-  it("defaults reader side rails to open and can collapse them on demand", async () => {
+  it("keeps reader tools in a stable top toolbar and opens one panel at a time", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2171,12 +2203,48 @@ I_{n}\\[1.0pt]
       "First paragraph with inline technical content."
     );
     const mosaic = container.querySelector(".reader-mosaic");
+    const readerPage = container.querySelector(".reader-page");
+    const libraryArticleButton = screen.getByRole("button", { name: "Library" });
+    expect(screen.queryByRole("button", { name: "Papers" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Return to library" })).toHaveTextContent("Ilios");
+    expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
+    expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
+    expect(libraryArticleButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
+    const toolbarOrder = [
+      "Tasks",
+      "Model provider",
+      "Ask",
+      "Translate",
+      "Terms",
+      "Notes",
+      "Export",
+      "Reading preferences"
+    ];
+    expect(
+      toolbarOrder.map((name) => screen.getByRole("button", { name }).getAttribute("aria-pressed"))
+    ).toEqual(["false", "false", "false", "false", "false", "false", "false", "false"]);
+    expect(screen.queryByPlaceholderText("Search library papers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tasks, providers, and questions")).not.toBeInTheDocument();
+
+    await userEvent.click(libraryArticleButton);
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
     expect(mosaic).not.toHaveClass("reader-mosaic-left-collapsed");
     expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
-    expect(screen.getByRole("button", { name: "Collapse paper switcher" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Collapse reader workspace" })).toBeInTheDocument();
     expect(await screen.findByPlaceholderText("Search library papers")).toBeInTheDocument();
     expect(await screen.findByText("Tasks, providers, and questions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Collapse Ask" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Translate" }));
+    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Translate" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.queryByRole("button", { name: "Collapse Ask" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse Translate" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Collapse paper switcher" }));
     await userEvent.click(screen.getByRole("button", { name: "Collapse reader workspace" }));
@@ -2185,6 +2253,126 @@ I_{n}\\[1.0pt]
     expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
     expect(screen.queryByPlaceholderText("Search library papers")).not.toBeInTheDocument();
     expect(screen.queryByText("Tasks, providers, and questions")).not.toBeInTheDocument();
+
+    Object.defineProperty(window, "scrollY", { value: 160, configurable: true });
+    fireEvent.scroll(window);
+    await waitFor(() => expect(readerPage).toHaveClass("reader-workbench-chrome-hidden"));
+
+    Object.defineProperty(window, "scrollY", { value: 154, configurable: true });
+    fireEvent.scroll(window);
+    expect(readerPage).toHaveClass("reader-workbench-chrome-hidden");
+
+    Object.defineProperty(window, "scrollY", { value: 80, configurable: true });
+    fireEvent.scroll(window);
+    await waitFor(() => expect(readerPage).not.toHaveClass("reader-workbench-chrome-hidden"));
+  });
+
+  it("switches to Kindle page turns instead of the scrolling reader surface", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 680, configurable: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          const kindleDocument = syntheticDocumentPayload(80);
+          return jsonResponse({
+            ...kindleDocument,
+            blocks: kindleDocument.blocks.map((block) =>
+              block.block_type === "paragraph"
+                ? {
+                    ...block,
+                    source_markdown: `${block.source_markdown} First context sentence. **Middle context sentence.** Tail context sentence with \`code\`.`
+                  }
+                : block
+            )
+          });
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ ...translationsPayload, variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(chatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+    expect(await screen.findByTestId("reader-block-list")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "HTML" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "HTML" }).textContent?.trim()).toBe("");
+    expect(screen.getByRole("button", { name: "Kindle" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Kindle" }).textContent?.trim()).toBe("");
+
+    await userEvent.click(screen.getByRole("button", { name: "Kindle" }));
+
+    expect(container.querySelector(".reader-page")).toHaveClass("reader-page-kindle");
+    expect(container.querySelector(".reader-page")).toHaveClass("reader-page-kindle-landscape");
+    expect(screen.getByRole("button", { name: "HTML" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Kindle" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Reading mode" })).toHaveTextContent("mode");
+    expect(await screen.findByTestId("kindle-paged-reader")).toHaveAttribute(
+      "data-page-mode",
+      "paged"
+    );
+    expect(await screen.findByTestId("kindle-paged-reader")).toHaveAttribute(
+      "data-page-layout",
+      "landscape"
+    );
+    expect(screen.getAllByTestId(/^kindle-page-block-/).length).toBeGreaterThan(4);
+    expect(screen.queryByTestId("reader-block-list")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Collapse paper switcher" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Collapse reader workspace" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("kindle-page-counter")).toHaveTextContent(/^Page 1 \/ \d+$/);
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Next page" }).at(-1)!);
+    expect(screen.getByTestId("kindle-page-counter")).toHaveTextContent(/^Page 2 \/ \d+$/);
+    const contextBlock = screen.getAllByTestId(/^kindle-context-block-/)[0];
+    expect(contextBlock).toHaveTextContent("Middle context sentence.");
+    expect(within(contextBlock).getByText("Middle context sentence.").tagName).toBe("STRONG");
+    expect(contextBlock).toHaveTextContent("Tail context sentence with code.");
+    expect(within(contextBlock).getByText("code").tagName).toBe("CODE");
+    expect(contextBlock).not.toHaveTextContent("First context sentence.");
+    expect(container.querySelector(".reader-page")).toHaveClass("reader-kindle-chrome-hidden");
+
+    fireEvent.mouseMove(container.querySelector(".reader-page") as HTMLElement, { clientY: 8 });
+    expect(container.querySelector(".reader-page")).not.toHaveClass("reader-kindle-chrome-hidden");
+
+    await userEvent.click(screen.getByRole("button", { name: "Reading mode" }));
+    expect(await screen.findByRole("button", { name: "Bilingual" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Translation" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Study" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Source" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Translation" }));
+    expect(container.querySelector(".reader-page")).not.toHaveClass("reader-page-kindle-landscape");
+    expect(screen.getByTestId("kindle-paged-reader")).toHaveAttribute("data-page-layout", "auto");
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(screen.getByTestId("kindle-page-counter")).toHaveTextContent(/^Page 1 \/ \d+$/);
+    expect(container.querySelector(".reader-page")).toHaveClass("reader-kindle-chrome-hidden");
+
+    await userEvent.click(screen.getByRole("button", { name: "HTML" }));
+    expect(container.querySelector(".reader-page")).not.toHaveClass("reader-page-kindle");
+    expect(await screen.findByTestId("reader-block-list")).toBeInTheDocument();
   });
 
   it("does not display invalid source-copy translations", async () => {
@@ -2283,6 +2471,7 @@ I_{n}\\[1.0pt]
   });
 
   it("waits for an explicit click before activating a chapter jump", async () => {
+    useUiStore.getState().setReaderFeaturePreference("chapterIndexVisible", true);
     const longDocument = syntheticDocumentPayload(160);
     vi.stubGlobal(
       "fetch",
@@ -2327,12 +2516,22 @@ I_{n}\\[1.0pt]
     expect(thirdChapter).not.toHaveAttribute("aria-current", "location");
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
 
-    await userEvent.click(thirdChapter);
+    await userEvent.click(screen.getByRole("button", { name: "Collapse Chapters" }));
+    expect(
+      screen.getByText(
+        "Synthetic paragraph 1 with enough article-like text to estimate line height."
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Chapters" }));
+    const reopenedThirdChapter = await screen.findByRole("link", { name: "3 Section 3" });
+    await userEvent.click(reopenedThirdChapter);
 
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
   });
 
   it("renders the term wiki card layer without changing the reader body", async () => {
+    useUiStore.getState().setReaderFeaturePreference("termCardsEnabled", true);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2469,6 +2668,24 @@ I_{n}\\[1.0pt]
     });
   });
 
+  it("defaults noisy reader features off while keeping core tools available", () => {
+    expect(useUiStore.getState().readerFeaturePreferences).toMatchObject({
+      chapterIndexVisible: false,
+      bottomProgressVisible: false,
+      blockToolsEnabled: true,
+      colorMarkersEnabled: false,
+      termCardsEnabled: false,
+      quickAskEnabled: false,
+      sentenceHoverAccentEnabled: false,
+      citationPreviewEnabled: true,
+      imageLightboxEnabled: true,
+      watermarkVisible: false,
+      taskNotificationsEnabled: false,
+      glossaryReplacementEnabled: true,
+      includeUntranslatedInExport: true
+    });
+  });
+
   it("creates a note patch from an assistant chat answer", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -2579,6 +2796,7 @@ I_{n}\\[1.0pt]
   });
 
   it("syncs the active reader block from scroll visibility", async () => {
+    useUiStore.getState().setReaderFeaturePreference("chapterIndexVisible", true);
     const observers: MockIntersectionObserver[] = [];
     class MockIntersectionObserver {
       readonly callback: IntersectionObserverCallback;
@@ -2673,6 +2891,7 @@ I_{n}\\[1.0pt]
   });
 
   it("runs reader toolbar actions for a real article block", async () => {
+    useUiStore.getState().setReaderFeaturePreference("colorMarkersEnabled", true);
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },

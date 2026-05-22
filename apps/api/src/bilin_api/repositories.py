@@ -515,6 +515,7 @@ async def list_translation_memory_entries(
     target_language: str | None = None,
     review_status: TranslationMemoryReviewStatus | None = None,
     reuse_enabled: bool | None = None,
+    include_non_candidates: bool = False,
     limit: int = 100,
 ) -> list[TranslationMemoryEntry]:
     db_path = await init_global_db()
@@ -529,6 +530,8 @@ async def list_translation_memory_entries(
     if reuse_enabled is not None:
         clauses.append("reuse_enabled = ?")
         params.append(int(reuse_enabled))
+    if not include_non_candidates:
+        clauses.append("COALESCE(json_extract(metadata_json, '$.review_candidate'), 1) != 0")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     async with open_db(db_path) as conn:
         cursor = await conn.execute(

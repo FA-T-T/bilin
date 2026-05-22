@@ -18,6 +18,7 @@ async def get_translation_memory_entries(
     target_language: str | None = None,
     review_status: TranslationMemoryReviewStatus | None = None,
     reuse_enabled: bool | None = None,
+    include_non_candidates: bool = False,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> TranslationMemoryListResult:
     return TranslationMemoryListResult(
@@ -25,6 +26,7 @@ async def get_translation_memory_entries(
             target_language=target_language,
             review_status=review_status,
             reuse_enabled=reuse_enabled,
+            include_non_candidates=include_non_candidates,
             limit=limit,
         )
     )

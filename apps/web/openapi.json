@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "0.3.1"
+    "version": "0.3.2"
   },
   "paths": {
     "/health": {
@@ -614,6 +614,16 @@
                 }
               ],
               "title": "Reuse Enabled"
+            }
+          },
+          {
+            "name": "include_non_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Non Candidates"
             }
           },
           {

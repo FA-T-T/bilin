@@ -40,6 +40,7 @@ from bilin_api.schemas import (
 )
 from bilin_api.translation_service import (
     clean_translation_markdown,
+    is_translatable_block,
     queue_article_translation,
     queue_library_missing_translations,
     reset_provider_throttles,
@@ -274,6 +275,48 @@ async def test_translation_queue_treats_list_as_one_translatable_block(
 
 
 @pytest.mark.asyncio
+async def test_translation_queue_skips_math_only_paragraph(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library, provider, revision_id = await prepare_translation_fixture(
+        tmp_path,
+        include_math_paragraph=True,
+    )
+    math_block = await get_block_by_uid(library, revision_id, "p-0002")
+    assert math_block is not None
+    assert not is_translatable_block(math_block)
+
+    result = await queue_article_translation(
+        library,
+        revision_id,
+        TranslationBatchRequest(target_language="zh-CN", provider_profile_id=provider.id),
+    )
+
+    assert result.jobs_created == 1
+    assert result.skipped_blocks == 2
+    jobs = [await get_job(job_id) for job_id in result.job_ids]
+    assert [job.payload["block_uid"] for job in jobs if job] == ["p-0001"]
+
+    await create_translation_variant(
+        library=library,
+        block=math_block,
+        target_language="zh-CN",
+        raw_markdown=math_block.source_markdown,
+        provider_profile_id=provider.id,
+        model="mock-model",
+        glossary_version=None,
+        validation_status="unchanged_source",
+        metadata={"block_uid": math_block.block_uid, "content_hash": math_block.content_hash},
+    )
+    article = (await list_article_items(library, "zh-CN"))[0]
+    assert article.translation_status.status == ArticleTranslationState.translating
+    assert article.translation_status.translatable_blocks == 1
+    assert article.translation_status.failed_jobs == 0
+
+
+@pytest.mark.asyncio
 async def test_translation_validation_status_preserves_bad_model_output(
     bilin_home: Path,
     tmp_path: Path,
@@ -347,6 +390,15 @@ def test_translation_validation_rejects_unchanged_source() -> None:
     source = "Execution Model. GPUs load inputs from HBM."
 
     assert validate_translation_markdown(source, source) == "unchanged_source"
+
+
+def test_translation_validation_accepts_math_only_source_unchanged() -> None:
+    source = (
+        "$\\begin{pmatrix}\\mathbf{1.9999}&\\mathbf{-0.0005}\\\\ "
+        "\\mathbf{-0.0005}&\\mathbf{1.9598}\\end{pmatrix}.$"
+    )
+
+    assert validate_translation_markdown(source, source) == "ok"
 
 
 def test_translation_cleaner_removes_source_prefix() -> None:
@@ -944,6 +996,7 @@ async def prepare_translation_fixture(
     *,
     extra_paragraph: bool = False,
     include_list: bool = False,
+    include_math_paragraph: bool = False,
     max_concurrent_requests: int = 1,
 ) -> tuple[Library, ProviderProfile, str]:
     library = await create_library(
@@ -982,6 +1035,16 @@ async def prepare_translation_fixture(
                 structural_path="00003",
                 block_type="paragraph",
                 source_markdown="A second paragraph to translate.",
+            )
+        )
+    if include_math_paragraph:
+        blocks.append(
+            make_block(
+                revision.id,
+                block_uid=f"p-{len(blocks):04d}",
+                structural_path=f"{len(blocks) + 1:05d}",
+                block_type="paragraph",
+                source_markdown=("$\\begin{pmatrix}1.0&0.0\\\\0.0&1.0\\end{pmatrix}.$"),
             )
         )
     if include_list:

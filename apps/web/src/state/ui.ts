@@ -3,6 +3,7 @@ import type { AppLocale } from "../product";
 import { normalizeLocale } from "../product";
 
 export type ReaderViewMode = "study" | "bilingual" | "translation" | "source";
+export type ReaderSurfaceMode = "workbench" | "kindle";
 
 export interface ReaderPreferences {
   lineWidthPercent: number;
@@ -35,6 +36,7 @@ interface UiState {
   locale: AppLocale;
   taskDrawerOpen: boolean;
   readerViewMode: ReaderViewMode;
+  readerSurfaceMode: ReaderSurfaceMode;
   translationTargetLanguage: string;
   autoTranslateOnLanguageSwitch: boolean;
   readerPreferences: ReaderPreferences;
@@ -43,6 +45,7 @@ interface UiState {
   openTaskDrawer: () => void;
   closeTaskDrawer: () => void;
   setReaderViewMode: (mode: ReaderViewMode) => void;
+  setReaderSurfaceMode: (mode: ReaderSurfaceMode) => void;
   setTranslationTargetLanguage: (language: string) => void;
   setAutoTranslateOnLanguageSwitch: (enabled: boolean) => void;
   setReaderPreference: <Key extends ReaderPreferenceKey>(
@@ -60,6 +63,7 @@ interface UiState {
 const localeStorageKey = "iiios-ui-locale";
 const readerPreferencesStorageKey = "iiios-reader-preferences";
 const readerFeaturePreferencesStorageKey = "iiios-reader-feature-preferences";
+const readerSurfaceModeStorageKey = "iiios-reader-surface-mode";
 const translationTargetLanguageStorageKey = "iiios-translation-target-language";
 const autoTranslateOnLanguageSwitchStorageKey = "iiios-auto-translate-on-language-switch";
 
@@ -71,17 +75,17 @@ export const defaultReaderPreferences: ReaderPreferences = {
 };
 
 export const defaultReaderFeaturePreferences: ReaderFeaturePreferences = {
-  chapterIndexVisible: true,
-  bottomProgressVisible: true,
+  chapterIndexVisible: false,
+  bottomProgressVisible: false,
   blockToolsEnabled: true,
-  colorMarkersEnabled: true,
-  termCardsEnabled: true,
-  quickAskEnabled: true,
-  sentenceHoverAccentEnabled: true,
+  colorMarkersEnabled: false,
+  termCardsEnabled: false,
+  quickAskEnabled: false,
+  sentenceHoverAccentEnabled: false,
   citationPreviewEnabled: true,
   imageLightboxEnabled: true,
-  watermarkVisible: true,
-  taskNotificationsEnabled: true,
+  watermarkVisible: false,
+  taskNotificationsEnabled: false,
   glossaryReplacementEnabled: true,
   includeUntranslatedInExport: true
 };
@@ -134,6 +138,16 @@ function initialAutoTranslateOnLanguageSwitch(): boolean {
     return raw === null ? true : raw === "true";
   } catch {
     return true;
+  }
+}
+
+function initialReaderSurfaceMode(): ReaderSurfaceMode {
+  try {
+    return globalThis.localStorage?.getItem(readerSurfaceModeStorageKey) === "kindle"
+      ? "kindle"
+      : "workbench";
+  } catch {
+    return "workbench";
   }
 }
 
@@ -217,6 +231,7 @@ export const useUiStore = create<UiState>((set) => ({
   locale: initialLocale(),
   taskDrawerOpen: false,
   readerViewMode: "study",
+  readerSurfaceMode: initialReaderSurfaceMode(),
   translationTargetLanguage: initialTranslationTargetLanguage(),
   autoTranslateOnLanguageSwitch: initialAutoTranslateOnLanguageSwitch(),
   readerPreferences: initialReaderPreferences(),
@@ -232,6 +247,14 @@ export const useUiStore = create<UiState>((set) => ({
   openTaskDrawer: () => set({ taskDrawerOpen: true }),
   closeTaskDrawer: () => set({ taskDrawerOpen: false }),
   setReaderViewMode: (mode) => set({ readerViewMode: mode }),
+  setReaderSurfaceMode: (mode) => {
+    try {
+      globalThis.localStorage?.setItem(readerSurfaceModeStorageKey, mode);
+    } catch {
+      // Surface mode remains usable in memory if localStorage is unavailable.
+    }
+    set({ readerSurfaceMode: mode });
+  },
   setTranslationTargetLanguage: (language) => {
     const next = language.trim() || "zh-CN";
     try {

@@ -74,7 +74,6 @@ import {
   useGenerateNotePatch,
   useImportCitationArxiv,
   useJobSummary,
-  useLibrary,
   useNotePatches,
   useNoteTemplates,
   useProviders,
@@ -115,6 +114,7 @@ import {
   type ReaderAssetFile,
   type ReferenceTargets
 } from "../components/ReaderBlock";
+import { KindlePagedReader } from "../components/KindlePagedReader";
 import { ReaderBlockList } from "../components/ReaderBlockList";
 import { ReaderPreferencesPanel } from "../components/ReaderPreferencesPanel";
 import type { ReaderToolbarActionId } from "../components/readerToolbarActions";
@@ -127,6 +127,9 @@ const emptyReaderAssetFiles: ReaderAssetFile[] = [];
 const emptyCitationLookup: CitationLookup = {};
 const READING_PROGRESS_RECORD_INTERVAL_MS = 30_000;
 const READING_PROGRESS_MAX_IDLE_MS = 60_000;
+const READER_CHROME_HIDE_SCROLL_Y = 128;
+const READER_CHROME_REVEAL_SCROLL_Y = 48;
+const READER_CHROME_SCROLL_INTENT_PX = 32;
 
 interface ReaderCardDraft {
   cardId?: string;
@@ -135,6 +138,16 @@ interface ReaderCardDraft {
   title: string;
   bodyMarkdown: string;
 }
+
+type ReaderToolbarPanel =
+  | "tasks"
+  | "providers"
+  | "ask"
+  | "translate"
+  | "glossary"
+  | "notes"
+  | "export"
+  | "preferences";
 
 export function ReaderPage() {
   const t = useT();
@@ -145,6 +158,8 @@ export function ReaderPage() {
   const hasArticleContext = Boolean(libraryId && articleId);
   const viewMode = useUiStore((state) => state.readerViewMode);
   const setReaderViewMode = useUiStore((state) => state.setReaderViewMode);
+  const readerSurfaceMode = useUiStore((state) => state.readerSurfaceMode);
+  const setReaderSurfaceMode = useUiStore((state) => state.setReaderSurfaceMode);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const readerPreferences = useUiStore((state) => state.readerPreferences);
   const readerFeaturePreferences = useUiStore((state) => state.readerFeaturePreferences);
@@ -162,15 +177,9 @@ export function ReaderPage() {
   const [chatBlockUid, setChatBlockUid] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [readerArticleSearchQuery, setReaderArticleSearchQuery] = useState("");
-  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(true);
-  const [readerRightRailOpen, setReaderRightRailOpen] = useState(true);
-  const [readerTasksOpen, setReaderTasksOpen] = useState(false);
-  const [readerProvidersOpen, setReaderProvidersOpen] = useState(false);
-  const [readerAskOpen, setReaderAskOpen] = useState(true);
-  const [readerTranslateOpen, setReaderTranslateOpen] = useState(false);
-  const [readerGlossaryOpen, setReaderGlossaryOpen] = useState(false);
-  const [readerNotesOpen, setReaderNotesOpen] = useState(false);
-  const [readerExportOpen, setReaderExportOpen] = useState(false);
+  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(false);
+  const [activeReaderToolbarPanel, setActiveReaderToolbarPanel] =
+    useState<ReaderToolbarPanel | null>(null);
   const [nativeSearch, setNativeSearch] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("deep_reading");
   const [exportKind, setExportKind] = useState<ArticleExportKind>("bilingual_markdown");
@@ -188,9 +197,10 @@ export function ReaderPage() {
   const [readerSearchCursor, setReaderSearchCursor] = useState(0);
   const [blockColors, setBlockColors] = useState<Record<string, ReaderBlockColor>>({});
   const [chaptersOpen, setChaptersOpen] = useState(false);
-  const [readerPreferencesOpen, setReaderPreferencesOpen] = useState(false);
   const [termWikiEnabled, setTermWikiEnabled] = useState(false);
   const [readerModeMenuOpen, setReaderModeMenuOpen] = useState(false);
+  const [readerChromeHidden, setReaderChromeHidden] = useState(false);
+  const [kindleChromeHidden, setKindleChromeHidden] = useState(false);
   const [expandedReaderCardByBlock, setExpandedReaderCardByBlock] = useState<
     Record<string, string | null>
   >({});
@@ -199,13 +209,16 @@ export function ReaderPage() {
   const lastExportDownloadKey = useRef<string | null>(null);
   const lastInitialHashNavigation = useRef<string | null>(null);
   const lastSavedProgressNavigation = useRef<string | null>(null);
+  const lastReaderScrollY = useRef(0);
+  const readerChromeHiddenRef = useRef(false);
+  const readerChromeHideIntentPx = useRef(0);
+  const readerChromeRevealIntentPx = useRef(0);
   const activeBlockUidRef = useRef<string | null>(null);
   const lastReaderActivityAt = useRef(Date.now());
   const lastReadingProgressSampleAt = useRef(Date.now());
   const pendingReadingProgressDeltas = useRef<Record<string, number>>({});
   const previousTargetLanguage = useRef(targetLanguage);
   const document = useArticleDocument(libraryId, articleId);
-  const library = useLibrary(libraryId);
   const readingProgress = useArticleReadingProgress(libraryId, articleId);
   const citations = useArticleCitations(libraryId, articleId);
   const exportArticle = useExportArticle(libraryId, articleId);
@@ -271,6 +284,8 @@ export function ReaderPage() {
     const activeChapter = navBlocks.find((block) => block.block_uid === activeNavBlockUid);
     return activeChapter ? chapterTitle(activeChapter) : t("reader.noChapter");
   }, [activeNavBlockUid, navBlocks, t]);
+  const chapterRailEnabled = readerFeaturePreferences.chapterIndexVisible && navBlocks.length > 0;
+  const chapterRailOpen = chapterRailEnabled && chaptersOpen;
   const referenceTargets = useMemo(() => referenceTargetsForBlocks(blocks), [blocks]);
   const citationLookup = useMemo(
     () => citationLookupForEntries(citations.data?.citations ?? []),
@@ -279,6 +294,8 @@ export function ReaderPage() {
   const effectiveCitationLookup = readerFeaturePreferences.citationPreviewEnabled
     ? citationLookup
     : emptyCitationLookup;
+  const kindleMode = readerSurfaceMode === "kindle";
+  const readerRightRailOpen = activeReaderToolbarPanel !== null;
 
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.asset_id, asset] as const)),
@@ -422,15 +439,36 @@ export function ReaderPage() {
     ],
     [t]
   );
+  const activeReaderModeOptions = useMemo(
+    () =>
+      kindleMode
+        ? readerModeOptions.filter((option) => ["bilingual", "translation"].includes(option.value))
+        : readerModeOptions,
+    [kindleMode, readerModeOptions]
+  );
   const currentReaderModeLabel =
-    readerModeOptions.find((option) => option.value === viewMode)?.label ?? t("reader.modeMenu");
-  const readerLibraryName = useMemo(() => {
-    const libraryName = library.data?.name?.trim();
-    return libraryName ? libraryName : t("nav.library");
-  }, [library.data?.name, t]);
+    activeReaderModeOptions.find((option) => option.value === viewMode)?.label ??
+    activeReaderModeOptions[0]?.label ??
+    t("reader.modeMenu");
+  const kindleBlockViewMode: ReaderViewMode =
+    viewMode === "translation" ? "translation" : "bilingual";
 
   const markReaderActivity = useCallback(() => {
     lastReaderActivityAt.current = Date.now();
+  }, []);
+
+  const toggleReaderToolbarPanel = useCallback((panel: ReaderToolbarPanel) => {
+    setReaderModeMenuOpen(false);
+    setActiveReaderToolbarPanel((current) => (current === panel ? null : panel));
+  }, []);
+
+  const closeReaderToolbarPanel = useCallback(() => {
+    setActiveReaderToolbarPanel(null);
+  }, []);
+
+  const toggleReaderModeMenu = useCallback(() => {
+    setActiveReaderToolbarPanel(null);
+    setReaderModeMenuOpen((open) => !open);
   }, []);
 
   const mergePendingReadingDeltas = useCallback((deltas: Record<string, number>) => {
@@ -495,9 +533,87 @@ export function ReaderPage() {
   }, [providers.data, selectedProviderId]);
 
   useEffect(() => {
+    readerChromeHiddenRef.current = readerChromeHidden;
+  }, [readerChromeHidden]);
+
+  useEffect(() => {
+    if (!kindleMode) setKindleChromeHidden(false);
+  }, [kindleMode]);
+
+  useEffect(() => {
+    if (kindleMode || typeof window === "undefined") {
+      readerChromeHiddenRef.current = false;
+      readerChromeHideIntentPx.current = 0;
+      readerChromeRevealIntentPx.current = 0;
+      setReaderChromeHidden(false);
+      return undefined;
+    }
+    lastReaderScrollY.current = window.scrollY;
+    const handleReaderChromeScroll = () => {
+      const scrollY = Math.max(0, window.scrollY);
+      const delta = scrollY - lastReaderScrollY.current;
+      lastReaderScrollY.current = scrollY;
+      if (Math.abs(delta) < 4) return;
+      if (scrollY < READER_CHROME_REVEAL_SCROLL_Y) {
+        readerChromeHideIntentPx.current = 0;
+        readerChromeRevealIntentPx.current = 0;
+        readerChromeHiddenRef.current = false;
+        setReaderChromeHidden(false);
+        return;
+      }
+      if (delta > 0) {
+        readerChromeHideIntentPx.current += delta;
+        readerChromeRevealIntentPx.current = 0;
+      } else {
+        readerChromeRevealIntentPx.current += Math.abs(delta);
+        readerChromeHideIntentPx.current = 0;
+      }
+      if (
+        delta > 0 &&
+        !readerChromeHiddenRef.current &&
+        scrollY > READER_CHROME_HIDE_SCROLL_Y &&
+        readerChromeHideIntentPx.current >= READER_CHROME_SCROLL_INTENT_PX
+      ) {
+        readerChromeHiddenRef.current = true;
+        setReaderChromeHidden(true);
+        setReaderModeMenuOpen(false);
+        setActiveReaderToolbarPanel(null);
+        return;
+      }
+      if (
+        delta < 0 &&
+        readerChromeHiddenRef.current &&
+        readerChromeRevealIntentPx.current >= READER_CHROME_SCROLL_INTENT_PX
+      ) {
+        readerChromeHiddenRef.current = false;
+        setReaderChromeHidden(false);
+      }
+    };
+    window.addEventListener("scroll", handleReaderChromeScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleReaderChromeScroll);
+  }, [kindleMode]);
+
+  useEffect(() => {
+    if (searchParams.get("kindle") === "1") {
+      setReaderSurfaceMode("kindle");
+    }
+  }, [searchParams, setReaderSurfaceMode]);
+
+  useEffect(() => {
+    if (!kindleMode) return;
+    if (viewMode === "bilingual" || viewMode === "translation") return;
+    setReaderViewMode("bilingual");
+  }, [kindleMode, setReaderViewMode, viewMode]);
+
+  useEffect(() => {
+    if (!kindleMode) return;
+    setActiveReaderToolbarPanel(null);
+  }, [kindleMode]);
+
+  useEffect(() => {
     if (!termWikiEnabled || !readerFeaturePreferences.termCardsEnabled) return;
     setChaptersOpen(false);
-    setReaderPreferencesOpen(false);
+    setActiveReaderToolbarPanel(null);
   }, [readerFeaturePreferences.termCardsEnabled, termWikiEnabled]);
 
   useEffect(() => {
@@ -583,6 +699,10 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!pendingNavigationBlockUid) return undefined;
+    if (kindleMode) {
+      setPendingNavigationBlockUid(null);
+      return undefined;
+    }
     let frame = 0;
     frame = requestAnimationFrame(() => {
       globalThis.document?.getElementById(pendingNavigationBlockUid)?.scrollIntoView({
@@ -592,7 +712,7 @@ export function ReaderPage() {
       setPendingNavigationBlockUid(null);
     });
     return () => cancelAnimationFrame(frame);
-  }, [pendingNavigationBlockUid, forcedBlockUid]);
+  }, [kindleMode, pendingNavigationBlockUid, forcedBlockUid]);
 
   useEffect(() => {
     if (!exportResult || !currentExportDownloadUrl) return;
@@ -683,7 +803,21 @@ export function ReaderPage() {
       markReaderActivity();
       setForcedBlockUid(blockUid);
       setActiveBlockUid(blockUid);
-      setPendingNavigationBlockUid(blockUid);
+      setPendingNavigationBlockUid(kindleMode ? null : blockUid);
+      if (typeof window !== "undefined") {
+        const nextUrl = `${window.location.pathname}${window.location.search}#${encodeURIComponent(blockUid)}`;
+        window.history.replaceState(null, "", nextUrl);
+      }
+    },
+    [kindleMode, markReaderActivity]
+  );
+
+  const changeKindlePageBlock = useCallback(
+    (blockUid: string) => {
+      markReaderActivity();
+      setForcedBlockUid(blockUid);
+      setActiveBlockUid(blockUid);
+      setPendingNavigationBlockUid(null);
       if (typeof window !== "undefined") {
         const nextUrl = `${window.location.pathname}${window.location.search}#${encodeURIComponent(blockUid)}`;
         window.history.replaceState(null, "", nextUrl);
@@ -691,6 +825,17 @@ export function ReaderPage() {
     },
     [markReaderActivity]
   );
+
+  const hideKindleChrome = useCallback(() => {
+    if (!kindleMode) return;
+    setKindleChromeHidden(true);
+    setReaderModeMenuOpen(false);
+    setActiveReaderToolbarPanel(null);
+  }, [kindleMode]);
+
+  const showKindleChrome = useCallback(() => {
+    if (kindleMode) setKindleChromeHidden(false);
+  }, [kindleMode]);
 
   const moveReaderSearch = useCallback(
     (delta: number) => {
@@ -1398,8 +1543,120 @@ export function ReaderPage() {
     ]
   );
 
+  const renderKindleBlock = useCallback(
+    (block: DocumentBlock) => {
+      const asset = assetForBlock(block, assetById);
+      const assetId = asset?.asset_id;
+      return (
+        <ReaderBlock
+          key={block.block_uid}
+          block={block}
+          asset={asset}
+          assetUrl={assetId ? assetUrlByAssetId.get(assetId) : undefined}
+          assetFileUrls={
+            assetId
+              ? (assetFileUrlsByAssetId.get(assetId) ?? emptyReaderAssetFiles)
+              : emptyReaderAssetFiles
+          }
+          referenceTargets={referenceTargets}
+          citations={effectiveCitationLookup}
+          translation={translationByBlockUid.get(block.block_uid)}
+          viewMode={kindleBlockViewMode}
+          active={activeBlockUid === block.block_uid}
+          controlsVisible={false}
+          blockToolsEnabled={false}
+          colorMarkersEnabled={false}
+          sentenceHoverAccentEnabled={false}
+          imageLightboxEnabled={false}
+          searchActive={currentSearchBlockUid === block.block_uid}
+          blockColor="none"
+          termWikiEnabled={false}
+          readerCards={[]}
+          expandedReaderCardId={null}
+          onActivate={handleActiveBlockChange}
+        />
+      );
+    },
+    [
+      activeBlockUid,
+      assetById,
+      assetFileUrlsByAssetId,
+      assetUrlByAssetId,
+      currentSearchBlockUid,
+      effectiveCitationLookup,
+      handleActiveBlockChange,
+      kindleBlockViewMode,
+      referenceTargets,
+      translationByBlockUid
+    ]
+  );
+
+  const readerToolbarItems: {
+    panel: ReaderToolbarPanel;
+    label: string;
+    icon: ReactNode;
+    badge?: number;
+  }[] = [
+    {
+      panel: "tasks",
+      label: t("nav.tasks"),
+      icon: <TerminalSquare size={15} aria-hidden="true" />,
+      badge: jobSummary.data?.active ?? 0
+    },
+    {
+      panel: "providers",
+      label: t("reader.providerPanel"),
+      icon: <Sparkles size={15} aria-hidden="true" />,
+      badge: providers.data?.length ?? 0
+    },
+    {
+      panel: "ask",
+      label: t("reader.askPanel"),
+      icon: <MessageSquare size={15} aria-hidden="true" />
+    },
+    {
+      panel: "translate",
+      label: t("reader.translate"),
+      icon: <Languages size={15} aria-hidden="true" />
+    },
+    {
+      panel: "glossary",
+      label: t("reader.terms"),
+      icon: <BookMarked size={15} aria-hidden="true" />
+    },
+    {
+      panel: "notes",
+      label: t("reader.notes"),
+      icon: <FileText size={15} aria-hidden="true" />
+    },
+    {
+      panel: "export",
+      label: t("reader.export"),
+      icon: <Download size={15} aria-hidden="true" />
+    },
+    {
+      panel: "preferences",
+      label: t("reader.preferences"),
+      icon: <Type size={15} aria-hidden="true" />
+    }
+  ];
+
   return (
-    <div className="reader-page" style={readerPreferenceStyle}>
+    <div
+      className={`reader-page${kindleMode ? " reader-page-kindle" : ""}${
+        kindleMode && kindleBlockViewMode === "bilingual" ? " reader-page-kindle-landscape" : ""
+      }${
+        kindleMode && kindleChromeHidden ? " reader-kindle-chrome-hidden" : ""
+      }${!kindleMode && readerChromeHidden ? " reader-workbench-chrome-hidden" : ""}`}
+      style={readerPreferenceStyle}
+      onMouseMove={
+        kindleMode && kindleChromeHidden
+          ? (event) => {
+              if (event.clientY <= 42) showKindleChrome();
+            }
+          : undefined
+      }
+    >
       <Modal
         opened={Boolean(inspectedBlock)}
         onClose={() => setInspectedBlock(null)}
@@ -1496,21 +1753,59 @@ export function ReaderPage() {
         </Stack>
       </Modal>
       <main className="reader-main">
+        {kindleMode && kindleChromeHidden ? (
+          <button
+            type="button"
+            className="reader-kindle-chrome-reveal"
+            aria-label={t("reader.showKindleMenu")}
+            onClick={showKindleChrome}
+            onFocus={showKindleChrome}
+          />
+        ) : null}
         <section className="reader-command-center" aria-label={t("reader.readingControls")}>
           <div className="reader-command-actions">
             <div className="reader-command-zone reader-command-left">
               <Button
                 className="reader-chrome-button"
-                variant="subtle"
+                aria-pressed={readerArticleRailOpen}
+                title={t("reader.articleSwitcher")}
+                variant={readerArticleRailOpen ? "light" : "subtle"}
                 size="xs"
                 leftSection={<BookMarked size={15} aria-hidden="true" />}
-                onClick={openCurrentLibrary}
+                onClick={() => setReaderArticleRailOpen((open) => !open)}
               >
-                {readerLibraryName}
+                {t("nav.library")}
               </Button>
             </div>
-            <div className="reader-command-title">Ilios / 衔牍 · Research Paper Reader</div>
+            <button
+              type="button"
+              className="reader-command-title reader-command-title-button"
+              aria-label={t("reader.returnToLibrary")}
+              onClick={openCurrentLibrary}
+            >
+              Ilios
+            </button>
             <div className="reader-command-zone reader-command-right">
+              <div className="reader-surface-switch" aria-label={t("reader.surfaceMode")}>
+                <Button
+                  aria-pressed={!kindleMode}
+                  aria-label={t("reader.htmlMode")}
+                  className="reader-chrome-button reader-surface-button"
+                  variant={!kindleMode ? "light" : "subtle"}
+                  size="xs"
+                  leftSection={<FileText size={15} aria-hidden="true" />}
+                  onClick={() => setReaderSurfaceMode("workbench")}
+                />
+                <Button
+                  aria-pressed={kindleMode}
+                  aria-label={t("reader.kindleMode")}
+                  className="reader-chrome-button reader-surface-button"
+                  variant={kindleMode ? "light" : "subtle"}
+                  size="xs"
+                  leftSection={<BookOpenText size={15} aria-hidden="true" />}
+                  onClick={() => setReaderSurfaceMode("kindle")}
+                />
+              </div>
               <div
                 data-testid="reader-view-mode"
                 className="reader-mode-list"
@@ -1524,13 +1819,13 @@ export function ReaderPage() {
                   rightSection={<ChevronDown size={14} aria-hidden="true" />}
                   size="xs"
                   variant="subtle"
-                  onClick={() => setReaderModeMenuOpen((open) => !open)}
+                  onClick={toggleReaderModeMenu}
                 >
-                  {currentReaderModeLabel}
+                  {t("reader.modeShort")}
                 </Button>
                 <Collapse className="reader-mode-popover" in={readerModeMenuOpen}>
                   <div className="reader-mode-options">
-                    {readerModeOptions.map((option) => (
+                    {activeReaderModeOptions.map((option) => (
                       <button
                         key={option.value}
                         type="button"
@@ -1547,588 +1842,626 @@ export function ReaderPage() {
                   </div>
                 </Collapse>
               </div>
-              <Button
-                aria-expanded={readerPreferencesOpen}
-                aria-label={t("reader.preferences")}
-                className="reader-chrome-button reader-preferences-trigger"
-                title={t("reader.preferences")}
-                variant={readerPreferencesOpen ? "light" : "subtle"}
-                size="xs"
-                leftSection={<Type size={15} aria-hidden="true" />}
-                onClick={() => setReaderPreferencesOpen((open) => !open)}
-              >
-                {t("reader.preferences")}
-              </Button>
+              {!kindleMode ? (
+                <div className="reader-tool-menu" aria-label={t("reader.toolbar")}>
+                  {readerToolbarItems.map((item) => (
+                    <button
+                      key={item.panel}
+                      type="button"
+                      className="reader-toolbar-button"
+                      aria-label={item.label}
+                      aria-pressed={activeReaderToolbarPanel === item.panel}
+                      title={item.label}
+                      onClick={() => toggleReaderToolbarPanel(item.panel)}
+                    >
+                      {item.icon}
+                      {typeof item.badge === "number" && item.badge > 0 ? (
+                        <span className="reader-toolbar-badge">{item.badge}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
-          <Collapse className="reader-preferences-flyout" in={readerPreferencesOpen}>
-            <ReaderPreferencesPanel compact showTitle={false} />
-          </Collapse>
         </section>
-        <section
-          className={`reader-mosaic${readerArticleRailOpen ? "" : " reader-mosaic-left-collapsed"}${
-            readerRightRailOpen ? "" : " reader-mosaic-right-collapsed"
-          }`}
-        >
-          <aside
-            className={`reader-side-rail reader-article-rail${
-              readerArticleRailOpen ? "" : " reader-side-rail-collapsed"
-            }`}
-            aria-label={t("reader.articleSwitcher")}
+        {kindleMode ? (
+          <KindlePagedReader
+            blocks={blocks}
+            activeBlockUid={activeBlockUid}
+            title={title}
+            fontScale={readerPreferences.fontScale}
+            pageLayout={kindleBlockViewMode === "bilingual" ? "landscape" : "auto"}
+            getBlockText={blockTextForPlaceholder}
+            renderBlock={renderKindleBlock}
+            onPageBlockChange={changeKindlePageBlock}
+            onNavigateToBlock={navigateToBlock}
+            onPageTurn={hideKindleChrome}
+            previousLabel={t("reader.previousPage")}
+            nextLabel={t("reader.nextPage")}
+            pageLabel={(current, total) => t("reader.pageCount", { current, total })}
+          />
+        ) : (
+          <section
+            className={`reader-mosaic${
+              readerArticleRailOpen ? "" : " reader-mosaic-left-collapsed"
+            }${readerRightRailOpen ? "" : " reader-mosaic-right-collapsed"}`}
           >
-            {readerArticleRailOpen ? (
-              <>
-                <div className="reader-rail-header">
-                  <div>
-                    <Text fw={720} size="sm">
-                      {t("reader.articleSwitcher")}
-                    </Text>
-                    <Text c="dimmed" size="xs" lineClamp={1}>
-                      {currentArticleItem
-                        ? readerArticleTitle(currentArticleItem)
-                        : t("reader.noCurrentArticle")}
-                    </Text>
-                  </div>
-                  <ActionIcon
-                    aria-label={t("reader.collapseArticles")}
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => setReaderArticleRailOpen(false)}
-                  >
-                    <ChevronLeft size={15} aria-hidden="true" />
-                  </ActionIcon>
-                </div>
-                <TextInput
-                  className="reader-article-switch-search"
-                  aria-label={t("reader.searchLibraryArticles")}
-                  placeholder={t("reader.searchLibraryArticles")}
-                  value={readerArticleSearchQuery}
-                  leftSection={<Search size={14} aria-hidden="true" />}
-                  onChange={(event) => setReaderArticleSearchQuery(event.currentTarget.value)}
-                />
-                <div className="reader-article-switch-list">
-                  {libraryArticles.isLoading ? (
-                    <Group gap="xs" className="reader-side-loading">
-                      <Loader size="xs" />
-                      <Text c="dimmed" size="xs">
-                        {t("reader.loadingArticles")}
+            <aside
+              className={`reader-side-rail reader-article-rail${
+                readerArticleRailOpen ? "" : " reader-side-rail-collapsed"
+              }`}
+              aria-label={t("reader.articleSwitcher")}
+            >
+              {readerArticleRailOpen ? (
+                <>
+                  <div className="reader-rail-header">
+                    <div>
+                      <Text fw={720} size="sm">
+                        {t("reader.articleSwitcher")}
                       </Text>
-                    </Group>
-                  ) : null}
-                  {visibleReaderArticleItems.map((item) => {
-                    const isActive = item.article_revision.id === articleId;
-                    return (
-                      <button
-                        key={item.article_revision.id}
-                        type="button"
-                        className="reader-article-switch-item"
-                        aria-current={isActive ? "page" : undefined}
-                        data-active={isActive || undefined}
-                        onClick={() => switchReaderArticle(item)}
-                      >
-                        <span className="reader-article-switch-title">
-                          {readerArticleTitle(item)}
-                        </span>
-                        <span className="reader-article-switch-meta">
-                          {readerArticleSourceLabel(item)} · {readerArticleProgressLabel(item)}
-                        </span>
-                        <span className="reader-article-switch-progress" aria-hidden="true">
-                          <span
-                            style={{
-                              width: `${readerArticleProgressPercent(item)}%`
-                            }}
-                          />
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {!libraryArticles.isLoading && visibleReaderArticleItems.length === 0 ? (
-                    <Text c="dimmed" size="xs" className="reader-side-empty">
-                      {t("reader.noLibraryArticles")}
-                    </Text>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="reader-rail-collapsed-button"
-                aria-label={t("reader.expandArticles")}
-                onClick={() => setReaderArticleRailOpen(true)}
-              >
-                <ChevronRight size={16} aria-hidden="true" />
-                <span>{t("reader.articlesShort")}</span>
-              </button>
-            )}
-          </aside>
-          <section className="reader-paper-shell" aria-label={title}>
-            {readerFeaturePreferences.watermarkVisible ? (
-              <p className="reader-content-watermark">{t("reader.contentWatermark")}</p>
-            ) : null}
-            {readerActionMessage ? (
-              <div className="reader-action-status" role="status">
-                <Check size={15} aria-hidden="true" />
-                {readerActionMessage}
-              </div>
-            ) : null}
-            {!hasArticleContext ? (
-              <Alert color="yellow" mb="md">
-                {t("reader.noArticleContext")}
-              </Alert>
-            ) : null}
-            {hasArticleContext && document.isLoading ? (
-              <Group>
-                <Loader size="sm" />
-                <Text c="dimmed">{t("reader.loadingDocument")}</Text>
-              </Group>
-            ) : null}
-            {hasArticleContext && document.isError ? (
-              <Alert color="red" mb="md">
-                {t("reader.documentLoadError")}
-              </Alert>
-            ) : null}
-            <ReaderBlockList
-              blocks={blocks}
-              activeBlockUid={activeBlockUid}
-              fontScale={readerPreferences.fontScale}
-              paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
-              forcedBlockUid={forcedBlockUid}
-              searchTargetBlockUid={currentSearchBlockUid}
-              getBlockText={blockTextForPlaceholder}
-              onActiveBlockChange={handleActiveBlockChange}
-              onNavigateToBlock={navigateToBlock}
-              renderBlock={renderReaderBlock}
-            />
-          </section>
-          <aside
-            className={`reader-side-rail reader-right-rail${
-              readerRightRailOpen ? "" : " reader-side-rail-collapsed"
-            }`}
-            aria-label={t("reader.workspaceRail")}
-          >
-            {readerRightRailOpen ? (
-              <>
-                <div className="reader-rail-header">
-                  <div>
-                    <Text fw={720} size="sm">
-                      {t("reader.workspaceRail")}
-                    </Text>
-                    <Text c="dimmed" size="xs">
-                      {t("reader.workspaceRailHelp")}
-                    </Text>
+                      <Text c="dimmed" size="xs" lineClamp={1}>
+                        {currentArticleItem
+                          ? readerArticleTitle(currentArticleItem)
+                          : t("reader.noCurrentArticle")}
+                      </Text>
+                    </div>
+                    <ActionIcon
+                      aria-label={t("reader.collapseArticles")}
+                      variant="subtle"
+                      size="sm"
+                      onClick={() => setReaderArticleRailOpen(false)}
+                    >
+                      <ChevronLeft size={15} aria-hidden="true" />
+                    </ActionIcon>
                   </div>
-                  <ActionIcon
-                    aria-label={t("reader.collapseRightRail")}
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => setReaderRightRailOpen(false)}
-                  >
-                    <ChevronRight size={15} aria-hidden="true" />
-                  </ActionIcon>
-                </div>
-                <ReaderSideTile
-                  title={t("nav.tasks")}
-                  icon={<TerminalSquare size={15} aria-hidden="true" />}
-                  open={readerTasksOpen}
-                  onToggle={() => setReaderTasksOpen((open) => !open)}
-                  badge={
-                    <Badge size="sm" variant="light">
-                      {jobSummary.data?.active ?? 0}
-                    </Badge>
-                  }
-                >
-                  <div className="reader-dock-task-grid">
-                    <span>{t("task.statusQueued", { count: jobSummary.data?.queued ?? 0 })}</span>
-                    <span>{t("task.statusRunning", { count: jobSummary.data?.running ?? 0 })}</span>
-                    <span>
-                      {t("task.statusSucceeded", { count: jobSummary.data?.succeeded ?? 0 })}
-                    </span>
-                    <span>{t("task.statusFailed", { count: jobSummary.data?.failed ?? 0 })}</span>
-                  </div>
-                  <Button
-                    fullWidth
-                    size="xs"
-                    variant="light"
-                    leftSection={<TerminalSquare size={14} aria-hidden="true" />}
-                    onClick={openTaskDrawer}
-                  >
-                    {t("reader.manageTasks")}
-                  </Button>
-                </ReaderSideTile>
-                <ReaderSideTile
-                  title={t("reader.providerPanel")}
-                  icon={<Sparkles size={15} aria-hidden="true" />}
-                  open={readerProvidersOpen}
-                  onToggle={() => setReaderProvidersOpen((open) => !open)}
-                  badge={
-                    <Badge size="sm" variant="light">
-                      {providers.data?.length ?? 0}
-                    </Badge>
-                  }
-                >
-                  <Stack gap="xs">
-                    <Select
-                      label={t("reader.provider")}
-                      placeholder={t("reader.configureProvider")}
-                      value={selectedProviderId}
-                      onChange={setSelectedProviderId}
-                      data={(providers.data ?? []).map((provider) => ({
-                        label: `${provider.name} · ${
-                          provider.default_model ?? t("reader.noModel")
-                        }`,
-                        value: provider.id
-                      }))}
-                    />
-                    <Select
-                      label={t("reader.targetLanguage")}
-                      data={TRANSLATION_TARGET_LOCALES.map((item) => ({
-                        value: item.value,
-                        label: item.nativeLabel
-                      }))}
-                      searchable
-                      value={targetLanguage}
-                      onChange={(value) => {
-                        if (value) setTargetLanguage(value);
-                      }}
-                    />
-                    {(providers.data ?? []).slice(0, 3).map((provider) => (
-                      <div
-                        className="reader-provider-row"
-                        data-active={provider.id === selectedProviderId || undefined}
-                        key={provider.id}
-                      >
-                        <Text size="sm" fw={620} lineClamp={1}>
-                          {provider.name}
+                  <TextInput
+                    className="reader-article-switch-search"
+                    aria-label={t("reader.searchLibraryArticles")}
+                    placeholder={t("reader.searchLibraryArticles")}
+                    value={readerArticleSearchQuery}
+                    leftSection={<Search size={14} aria-hidden="true" />}
+                    onChange={(event) => setReaderArticleSearchQuery(event.currentTarget.value)}
+                  />
+                  <div className="reader-article-switch-list">
+                    {libraryArticles.isLoading ? (
+                      <Group gap="xs" className="reader-side-loading">
+                        <Loader size="xs" />
+                        <Text c="dimmed" size="xs">
+                          {t("reader.loadingArticles")}
                         </Text>
-                        <Text c="dimmed" size="xs" lineClamp={1}>
-                          {provider.default_model ?? t("reader.noModel")}
-                        </Text>
-                      </div>
-                    ))}
-                    {(providers.data ?? []).length === 0 ? (
-                      <Text c="dimmed" size="xs">
-                        {t("library.noProviderConfigured")}
+                      </Group>
+                    ) : null}
+                    {visibleReaderArticleItems.map((item) => {
+                      const isActive = item.article_revision.id === articleId;
+                      return (
+                        <button
+                          key={item.article_revision.id}
+                          type="button"
+                          className="reader-article-switch-item"
+                          aria-current={isActive ? "page" : undefined}
+                          data-active={isActive || undefined}
+                          onClick={() => switchReaderArticle(item)}
+                        >
+                          <span className="reader-article-switch-title">
+                            {readerArticleTitle(item)}
+                          </span>
+                          <span className="reader-article-switch-meta">
+                            {readerArticleSourceLabel(item)} · {readerArticleProgressLabel(item)}
+                          </span>
+                          <span className="reader-article-switch-progress" aria-hidden="true">
+                            <span
+                              style={{
+                                width: `${readerArticleProgressPercent(item)}%`
+                              }}
+                            />
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {!libraryArticles.isLoading && visibleReaderArticleItems.length === 0 ? (
+                      <Text c="dimmed" size="xs" className="reader-side-empty">
+                        {t("reader.noLibraryArticles")}
                       </Text>
                     ) : null}
-                    <Button size="xs" variant="subtle" onClick={() => navigate("/settings")}>
-                      {t("nav.settings")}
-                    </Button>
-                  </Stack>
-                </ReaderSideTile>
-                <ReaderSideTile
-                  className="reader-ask-tile"
-                  title={t("reader.askPanel")}
-                  icon={<MessageSquare size={15} aria-hidden="true" />}
-                  open={readerAskOpen}
-                  onToggle={() => setReaderAskOpen((open) => !open)}
-                >
-                  <ChatPanel
-                    messages={chat.data?.messages ?? []}
-                    citedBlocks={
-                      streamingCitedBlocks.length > 0
-                        ? streamingCitedBlocks
-                        : (askQuestion.data?.cited_blocks ?? [])
-                    }
-                    streamingAnswer={streamingAnswer}
-                    referenceTargets={referenceTargets}
-                    selectedBlockUid={chatBlockUid}
-                    question={question}
-                    nativeSearch={nativeSearch}
-                    nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
-                    isAsking={askQuestion.isPending}
-                    isCreatingNotePatch={createNotePatchFromChat.isPending}
-                    canAsk={Boolean(selectedProviderId)}
-                    canCreateNotePatch={Boolean(selectedProviderId)}
-                    error={askQuestion.isError}
-                    onQuestionChange={setQuestion}
-                    onNativeSearchChange={setNativeSearch}
-                    onClearBlock={() => setChatBlockUid(null)}
-                    onAsk={submitQuestion}
-                    onCreateNotePatch={createNotePatchFromMessage}
-                  />
-                </ReaderSideTile>
-                <ReaderSideTile
-                  className="reader-tool-tile"
-                  title={t("reader.translate")}
-                  icon={<Languages size={15} aria-hidden="true" />}
-                  open={readerTranslateOpen}
-                  onToggle={() => setReaderTranslateOpen((open) => !open)}
-                >
-                  <div className="panel reader-translation-panel">
-                    <Stack gap="sm">
-                      <Button
-                        fullWidth
-                        leftSection={<Languages size={16} />}
-                        onClick={queueArticleTranslation}
-                        loading={translateArticle.isPending}
-                        disabled={
-                          !selectedProviderId || !targetLanguage.trim() || blocks.length === 0
-                        }
-                      >
-                        {t("reader.translatePaper")}
-                      </Button>
-                      <Checkbox
-                        checked={autoTranslateOnLanguageSwitch}
-                        label={t("reader.autoTranslateOnLanguageSwitch")}
-                        onChange={(event) =>
-                          setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)
-                        }
-                      />
-                      <Text c="dimmed" size="sm">
-                        {t("reader.translationHelp")}
-                      </Text>
-                      {translateArticle.data ? (
-                        <Text c="dimmed" size="sm">
-                          {t("reader.translationQueued", {
-                            jobs: translateArticle.data.jobs_created,
-                            cached: translateArticle.data.cached_blocks
-                          })}
-                        </Text>
-                      ) : null}
-                      {translateArticle.isError || translateBlock.isError ? (
-                        <Text c="red" size="sm">
-                          {t("reader.translationQueueError")}
-                        </Text>
-                      ) : null}
-                    </Stack>
                   </div>
-                </ReaderSideTile>
-                <ReaderSideTile
-                  className="reader-tool-tile"
-                  title={t("reader.terms")}
-                  icon={<BookMarked size={15} aria-hidden="true" />}
-                  open={readerGlossaryOpen}
-                  onToggle={() => setReaderGlossaryOpen((open) => !open)}
+                </>
+              ) : null}
+            </aside>
+            <div
+              className={`reader-paper-layout${
+                chapterRailEnabled ? "" : " reader-paper-layout-no-chapters"
+              }${chapterRailOpen ? "" : " reader-paper-layout-chapters-collapsed"}`}
+            >
+              {chapterRailEnabled ? (
+                <aside
+                  className={`reader-chapter-rail${
+                    chapterRailOpen ? "" : " reader-chapter-rail-collapsed"
+                  }`}
+                  aria-label={t("reader.chapters")}
                 >
-                  <GlossaryPanel
-                    terms={glossary.data?.terms ?? []}
-                    targetLanguage={targetLanguage}
-                    activeVersion={glossary.data?.active_version ?? "glossary:none"}
-                    affectedBlockUids={glossary.data?.affected_block_uids ?? []}
-                    isLoading={glossary.isLoading}
-                    isExtracting={extractGlossary.isPending}
-                    isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
-                    canRetranslate={Boolean(selectedProviderId)}
-                    onExtract={() =>
-                      extractGlossary.mutate({
-                        target_language: targetLanguage,
-                        limit: 40
-                      })
+                  {chapterRailOpen ? (
+                    <>
+                      <div className="reader-chapter-rail-header">
+                        <div>
+                          <Text fw={720} size="sm">
+                            {t("reader.chapters")}
+                          </Text>
+                          <Text c="dimmed" size="xs" lineClamp={1}>
+                            {activeChapterLabel}
+                          </Text>
+                        </div>
+                        <ActionIcon
+                          aria-label={t("reader.collapsePanel", { panel: t("reader.chapters") })}
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => setChaptersOpen(false)}
+                        >
+                          <ChevronLeft size={15} aria-hidden="true" />
+                        </ActionIcon>
+                      </div>
+                      <nav className="reader-chapter-list" aria-label={t("reader.chapters")}>
+                        {navBlocks.map((block, index) => (
+                          <a
+                            key={block.block_uid}
+                            href={`#${block.block_uid}`}
+                            className={
+                              activeNavBlockUid === block.block_uid
+                                ? "reader-nav-active"
+                                : undefined
+                            }
+                            aria-current={
+                              activeNavBlockUid === block.block_uid ? "location" : undefined
+                            }
+                            onClick={(event) => {
+                              event.preventDefault();
+                              navigateToBlock(block.block_uid);
+                            }}
+                          >
+                            <Badge variant="light" size="sm">
+                              {chapterNumber(index, block)}
+                            </Badge>
+                            <span>{chapterTitle(block)}</span>
+                          </a>
+                        ))}
+                      </nav>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="reader-chapter-rail-tab"
+                      aria-expanded={false}
+                      onClick={() => setChaptersOpen(true)}
+                    >
+                      <ListTree size={15} aria-hidden="true" />
+                      <span>{t("reader.chapters")}</span>
+                    </button>
+                  )}
+                </aside>
+              ) : null}
+              <section className="reader-paper-shell" aria-label={title}>
+                {readerFeaturePreferences.watermarkVisible ? (
+                  <p className="reader-content-watermark">{t("reader.contentWatermark")}</p>
+                ) : null}
+                {readerActionMessage ? (
+                  <div className="reader-action-status" role="status">
+                    <Check size={15} aria-hidden="true" />
+                    {readerActionMessage}
+                  </div>
+                ) : null}
+                {!hasArticleContext ? (
+                  <Alert color="yellow" mb="md">
+                    {t("reader.noArticleContext")}
+                  </Alert>
+                ) : null}
+                {hasArticleContext && document.isLoading ? (
+                  <Group>
+                    <Loader size="sm" />
+                    <Text c="dimmed">{t("reader.loadingDocument")}</Text>
+                  </Group>
+                ) : null}
+                {hasArticleContext && document.isError ? (
+                  <Alert color="red" mb="md">
+                    {t("reader.documentLoadError")}
+                  </Alert>
+                ) : null}
+                <ReaderBlockList
+                  blocks={blocks}
+                  activeBlockUid={activeBlockUid}
+                  fontScale={readerPreferences.fontScale}
+                  paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
+                  forcedBlockUid={forcedBlockUid}
+                  searchTargetBlockUid={currentSearchBlockUid}
+                  getBlockText={blockTextForPlaceholder}
+                  onActiveBlockChange={handleActiveBlockChange}
+                  onNavigateToBlock={navigateToBlock}
+                  renderBlock={renderReaderBlock}
+                />
+              </section>
+            </div>
+            <aside
+              className={`reader-side-rail reader-right-rail${
+                readerRightRailOpen ? "" : " reader-side-rail-collapsed"
+              }`}
+              aria-label={t("reader.workspaceRail")}
+            >
+              {readerRightRailOpen ? (
+                <>
+                  <div className="reader-rail-header">
+                    <div>
+                      <Text fw={720} size="sm">
+                        {t("reader.workspaceRail")}
+                      </Text>
+                      <Text c="dimmed" size="xs">
+                        {t("reader.workspaceRailHelp")}
+                      </Text>
+                    </div>
+                    <ActionIcon
+                      aria-label={t("reader.collapseRightRail")}
+                      variant="subtle"
+                      size="sm"
+                      onClick={closeReaderToolbarPanel}
+                    >
+                      <ChevronRight size={15} aria-hidden="true" />
+                    </ActionIcon>
+                  </div>
+                  <ReaderSideTile
+                    title={t("nav.tasks")}
+                    icon={<TerminalSquare size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "tasks"}
+                    onToggle={() => toggleReaderToolbarPanel("tasks")}
+                    badge={
+                      <Badge size="sm" variant="light">
+                        {jobSummary.data?.active ?? 0}
+                      </Badge>
                     }
-                    onCreate={(sourceTerm, targetTerm) =>
-                      createGlossaryTerm.mutate({
-                        source_term: sourceTerm,
-                        target_term: targetTerm,
-                        language_direction: `en->${targetLanguage}`,
-                        status: "active",
-                        metadata: { target_language: targetLanguage }
-                      })
+                  >
+                    <div className="reader-dock-task-grid">
+                      <span>{t("task.statusQueued", { count: jobSummary.data?.queued ?? 0 })}</span>
+                      <span>
+                        {t("task.statusRunning", { count: jobSummary.data?.running ?? 0 })}
+                      </span>
+                      <span>
+                        {t("task.statusSucceeded", { count: jobSummary.data?.succeeded ?? 0 })}
+                      </span>
+                      <span>{t("task.statusFailed", { count: jobSummary.data?.failed ?? 0 })}</span>
+                    </div>
+                    <Button
+                      fullWidth
+                      size="xs"
+                      variant="light"
+                      leftSection={<TerminalSquare size={14} aria-hidden="true" />}
+                      onClick={openTaskDrawer}
+                    >
+                      {t("reader.manageTasks")}
+                    </Button>
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    title={t("reader.providerPanel")}
+                    icon={<Sparkles size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "providers"}
+                    onToggle={() => toggleReaderToolbarPanel("providers")}
+                    badge={
+                      <Badge size="sm" variant="light">
+                        {providers.data?.length ?? 0}
+                      </Badge>
                     }
-                    onConfirm={(term, targetTerm) =>
-                      updateGlossaryTerm.mutate({
-                        termId: term.id,
-                        payload: {
+                  >
+                    <Stack gap="xs">
+                      <Select
+                        label={t("reader.provider")}
+                        placeholder={t("reader.configureProvider")}
+                        value={selectedProviderId}
+                        onChange={setSelectedProviderId}
+                        data={(providers.data ?? []).map((provider) => ({
+                          label: `${provider.name} · ${
+                            provider.default_model ?? t("reader.noModel")
+                          }`,
+                          value: provider.id
+                        }))}
+                      />
+                      <Select
+                        label={t("reader.targetLanguage")}
+                        data={TRANSLATION_TARGET_LOCALES.map((item) => ({
+                          value: item.value,
+                          label: item.nativeLabel
+                        }))}
+                        searchable
+                        value={targetLanguage}
+                        onChange={(value) => {
+                          if (value) setTargetLanguage(value);
+                        }}
+                      />
+                      {(providers.data ?? []).slice(0, 3).map((provider) => (
+                        <div
+                          className="reader-provider-row"
+                          data-active={provider.id === selectedProviderId || undefined}
+                          key={provider.id}
+                        >
+                          <Text size="sm" fw={620} lineClamp={1}>
+                            {provider.name}
+                          </Text>
+                          <Text c="dimmed" size="xs" lineClamp={1}>
+                            {provider.default_model ?? t("reader.noModel")}
+                          </Text>
+                        </div>
+                      ))}
+                      {(providers.data ?? []).length === 0 ? (
+                        <Text c="dimmed" size="xs">
+                          {t("library.noProviderConfigured")}
+                        </Text>
+                      ) : null}
+                      <Button size="xs" variant="subtle" onClick={() => navigate("/settings")}>
+                        {t("nav.settings")}
+                      </Button>
+                    </Stack>
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-ask-tile"
+                    title={t("reader.askPanel")}
+                    icon={<MessageSquare size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "ask"}
+                    onToggle={() => toggleReaderToolbarPanel("ask")}
+                  >
+                    <ChatPanel
+                      messages={chat.data?.messages ?? []}
+                      citedBlocks={
+                        streamingCitedBlocks.length > 0
+                          ? streamingCitedBlocks
+                          : (askQuestion.data?.cited_blocks ?? [])
+                      }
+                      streamingAnswer={streamingAnswer}
+                      referenceTargets={referenceTargets}
+                      selectedBlockUid={chatBlockUid}
+                      question={question}
+                      nativeSearch={nativeSearch}
+                      nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
+                      isAsking={askQuestion.isPending}
+                      isCreatingNotePatch={createNotePatchFromChat.isPending}
+                      canAsk={Boolean(selectedProviderId)}
+                      canCreateNotePatch={Boolean(selectedProviderId)}
+                      error={askQuestion.isError}
+                      onQuestionChange={setQuestion}
+                      onNativeSearchChange={setNativeSearch}
+                      onClearBlock={() => setChatBlockUid(null)}
+                      onAsk={submitQuestion}
+                      onCreateNotePatch={createNotePatchFromMessage}
+                    />
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-tool-tile"
+                    title={t("reader.translate")}
+                    icon={<Languages size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "translate"}
+                    onToggle={() => toggleReaderToolbarPanel("translate")}
+                  >
+                    <div className="panel reader-translation-panel">
+                      <Stack gap="sm">
+                        <Button
+                          fullWidth
+                          leftSection={<Languages size={16} />}
+                          onClick={queueArticleTranslation}
+                          loading={translateArticle.isPending}
+                          disabled={
+                            !selectedProviderId || !targetLanguage.trim() || blocks.length === 0
+                          }
+                        >
+                          {t("reader.translatePaper")}
+                        </Button>
+                        <Checkbox
+                          checked={autoTranslateOnLanguageSwitch}
+                          label={t("reader.autoTranslateOnLanguageSwitch")}
+                          onChange={(event) =>
+                            setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)
+                          }
+                        />
+                        <Text c="dimmed" size="sm">
+                          {t("reader.translationHelp")}
+                        </Text>
+                        {translateArticle.data ? (
+                          <Text c="dimmed" size="sm">
+                            {t("reader.translationQueued", {
+                              jobs: translateArticle.data.jobs_created,
+                              cached: translateArticle.data.cached_blocks
+                            })}
+                          </Text>
+                        ) : null}
+                        {translateArticle.isError || translateBlock.isError ? (
+                          <Text c="red" size="sm">
+                            {t("reader.translationQueueError")}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </div>
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-tool-tile"
+                    title={t("reader.terms")}
+                    icon={<BookMarked size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "glossary"}
+                    onToggle={() => toggleReaderToolbarPanel("glossary")}
+                  >
+                    <GlossaryPanel
+                      terms={glossary.data?.terms ?? []}
+                      targetLanguage={targetLanguage}
+                      activeVersion={glossary.data?.active_version ?? "glossary:none"}
+                      affectedBlockUids={glossary.data?.affected_block_uids ?? []}
+                      isLoading={glossary.isLoading}
+                      isExtracting={extractGlossary.isPending}
+                      isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
+                      canRetranslate={Boolean(selectedProviderId)}
+                      onExtract={() =>
+                        extractGlossary.mutate({
+                          target_language: targetLanguage,
+                          limit: 40
+                        })
+                      }
+                      onCreate={(sourceTerm, targetTerm) =>
+                        createGlossaryTerm.mutate({
+                          source_term: sourceTerm,
                           target_term: targetTerm,
+                          language_direction: `en->${targetLanguage}`,
                           status: "active",
                           metadata: { target_language: targetLanguage }
-                        }
-                      })
-                    }
-                    onRetranslateAffected={queueAffectedRetranslation}
-                  />
-                </ReaderSideTile>
-                <ReaderSideTile
-                  className="reader-tool-tile"
-                  title={t("reader.notes")}
-                  icon={<FileText size={15} aria-hidden="true" />}
-                  open={readerNotesOpen}
-                  onToggle={() => setReaderNotesOpen((open) => !open)}
-                >
-                  <Stack gap="sm">
-                    <Group gap="xs" grow>
-                      <Button
-                        size="xs"
-                        variant={readerFeaturePreferences.termCardsEnabled ? "light" : "subtle"}
-                        leftSection={<StickyNote size={14} aria-hidden="true" />}
-                        onClick={() => {
-                          const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
-                          setReaderFeaturePreference("termCardsEnabled", nextEnabled);
-                          setTermWikiEnabled(nextEnabled);
-                        }}
-                      >
-                        {t("reader.termWiki")}
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        leftSection={<Sparkles size={14} aria-hidden="true" />}
-                        disabled={!hasArticleContext || extractReaderCards.isPending}
-                        loading={extractReaderCards.isPending}
-                        onClick={runCardExtraction}
-                      >
-                        {t("reader.extractCards")}
-                      </Button>
-                    </Group>
-                    <NotesPanel
-                      templates={noteTemplates.data ?? []}
-                      patches={notePatches.data?.patches ?? []}
-                      selectedTemplateId={selectedTemplateId}
-                      isLoading={noteTemplates.isLoading || notePatches.isLoading}
-                      isGenerating={generateNotePatch.isPending}
-                      isSavingPatch={updateNotePatch.isPending}
-                      isSavingTemplate={createNoteTemplate.isPending}
-                      isRejecting={rejectNotePatch.isPending}
-                      canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
-                      error={
-                        generateNotePatch.isError ||
-                        createNoteTemplate.isError ||
-                        updateNotePatch.isError ||
-                        rejectNotePatch.isError
+                        })
                       }
-                      onTemplateChange={setSelectedTemplateId}
-                      onGenerate={queueNoteGeneration}
-                      onCreateTemplate={(name, description) =>
-                        createNoteTemplate.mutate(
-                          { name, description, metadata: { source: "reader" } },
-                          { onSuccess: (template) => setSelectedTemplateId(template.id) }
-                        )
-                      }
-                      onSavePatch={(patchId, payload) =>
-                        updateNotePatch.mutate({ patchId, payload })
-                      }
-                      onAcceptEdited={(patchId, payload) =>
-                        updateNotePatch.mutate({
-                          patchId,
+                      onConfirm={(term, targetTerm) =>
+                        updateGlossaryTerm.mutate({
+                          termId: term.id,
                           payload: {
-                            ...payload,
-                            status: "accepted"
+                            target_term: targetTerm,
+                            status: "active",
+                            metadata: { target_language: targetLanguage }
                           }
                         })
                       }
-                      onReject={(patchId) => rejectNotePatch.mutate(patchId)}
+                      onRetranslateAffected={queueAffectedRetranslation}
                     />
-                  </Stack>
-                </ReaderSideTile>
-                <ReaderSideTile
-                  className="reader-tool-tile"
-                  title={t("reader.export")}
-                  icon={<Download size={15} aria-hidden="true" />}
-                  open={readerExportOpen}
-                  onToggle={() => setReaderExportOpen((open) => !open)}
-                >
-                  <ExportPanel
-                    exportKind={exportKind}
-                    targetLanguage={targetLanguage}
-                    result={exportResult}
-                    isExporting={exportArticle.isPending}
-                    error={exportArticle.isError}
-                    downloadUrl={currentExportDownloadUrl}
-                    onExportKindChange={setExportKind}
-                    onExport={queueExport}
-                  />
-                </ReaderSideTile>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="reader-rail-collapsed-button"
-                aria-label={t("reader.expandRightRail")}
-                onClick={() => setReaderRightRailOpen(true)}
-              >
-                <ChevronLeft size={16} aria-hidden="true" />
-                <span>{t("reader.workspaceShort")}</span>
-              </button>
-            )}
-          </aside>
-        </section>
-        {readerFeaturePreferences.bottomProgressVisible ||
-        readerFeaturePreferences.chapterIndexVisible ? (
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-tool-tile"
+                    title={t("reader.notes")}
+                    icon={<FileText size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "notes"}
+                    onToggle={() => toggleReaderToolbarPanel("notes")}
+                  >
+                    <Stack gap="sm">
+                      <Group gap="xs" grow>
+                        <Button
+                          size="xs"
+                          variant={readerFeaturePreferences.termCardsEnabled ? "light" : "subtle"}
+                          leftSection={<StickyNote size={14} aria-hidden="true" />}
+                          onClick={() => {
+                            const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
+                            setReaderFeaturePreference("termCardsEnabled", nextEnabled);
+                            setTermWikiEnabled(nextEnabled);
+                          }}
+                        >
+                          {t("reader.termWiki")}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          leftSection={<Sparkles size={14} aria-hidden="true" />}
+                          disabled={!hasArticleContext || extractReaderCards.isPending}
+                          loading={extractReaderCards.isPending}
+                          onClick={runCardExtraction}
+                        >
+                          {t("reader.extractCards")}
+                        </Button>
+                      </Group>
+                      <NotesPanel
+                        templates={noteTemplates.data ?? []}
+                        patches={notePatches.data?.patches ?? []}
+                        selectedTemplateId={selectedTemplateId}
+                        isLoading={noteTemplates.isLoading || notePatches.isLoading}
+                        isGenerating={generateNotePatch.isPending}
+                        isSavingPatch={updateNotePatch.isPending}
+                        isSavingTemplate={createNoteTemplate.isPending}
+                        isRejecting={rejectNotePatch.isPending}
+                        canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
+                        error={
+                          generateNotePatch.isError ||
+                          createNoteTemplate.isError ||
+                          updateNotePatch.isError ||
+                          rejectNotePatch.isError
+                        }
+                        onTemplateChange={setSelectedTemplateId}
+                        onGenerate={queueNoteGeneration}
+                        onCreateTemplate={(name, description) =>
+                          createNoteTemplate.mutate(
+                            { name, description, metadata: { source: "reader" } },
+                            { onSuccess: (template) => setSelectedTemplateId(template.id) }
+                          )
+                        }
+                        onSavePatch={(patchId, payload) =>
+                          updateNotePatch.mutate({ patchId, payload })
+                        }
+                        onAcceptEdited={(patchId, payload) =>
+                          updateNotePatch.mutate({
+                            patchId,
+                            payload: {
+                              ...payload,
+                              status: "accepted"
+                            }
+                          })
+                        }
+                        onReject={(patchId) => rejectNotePatch.mutate(patchId)}
+                      />
+                    </Stack>
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-tool-tile"
+                    title={t("reader.export")}
+                    icon={<Download size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "export"}
+                    onToggle={() => toggleReaderToolbarPanel("export")}
+                  >
+                    <ExportPanel
+                      exportKind={exportKind}
+                      targetLanguage={targetLanguage}
+                      result={exportResult}
+                      isExporting={exportArticle.isPending}
+                      error={exportArticle.isError}
+                      downloadUrl={currentExportDownloadUrl}
+                      onExportKindChange={setExportKind}
+                      onExport={queueExport}
+                    />
+                  </ReaderSideTile>
+                  <ReaderSideTile
+                    className="reader-tool-tile"
+                    title={t("reader.preferences")}
+                    icon={<Type size={15} aria-hidden="true" />}
+                    open={activeReaderToolbarPanel === "preferences"}
+                    onToggle={() => toggleReaderToolbarPanel("preferences")}
+                  >
+                    <ReaderPreferencesPanel compact showTitle={false} />
+                  </ReaderSideTile>
+                </>
+              ) : null}
+            </aside>
+          </section>
+        )}
+        {!kindleMode && readerFeaturePreferences.bottomProgressVisible ? (
           <section
             className="reader-bottom-status"
             aria-label={t("reader.readingProgress", { progress: readerProgress })}
           >
-            {readerFeaturePreferences.chapterIndexVisible ? (
-              <div className="reader-bottom-chapters">
-                <button
-                  type="button"
-                  aria-label={t("reader.chapters")}
-                  aria-expanded={chaptersOpen}
-                  onClick={() => setChaptersOpen((open) => !open)}
-                  disabled={navBlocks.length === 0}
-                >
-                  <ListTree size={14} aria-hidden="true" />
-                  <span>{activeChapterLabel}</span>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </button>
-                {navBlocks.length > 0 ? (
-                  <Collapse className="reader-bottom-chapter-popover" in={chaptersOpen}>
-                    <nav className="reader-bottom-chapter-list" aria-label={t("reader.chapters")}>
-                      {navBlocks.map((block, index) => (
-                        <a
-                          key={block.block_uid}
-                          href={`#${block.block_uid}`}
-                          className={
-                            activeNavBlockUid === block.block_uid ? "reader-nav-active" : undefined
-                          }
-                          aria-current={
-                            activeNavBlockUid === block.block_uid ? "location" : undefined
-                          }
-                          onClick={(event) => {
-                            event.preventDefault();
-                            navigateToBlock(block.block_uid);
-                            setChaptersOpen(false);
-                          }}
-                        >
-                          <Badge variant="light" size="sm">
-                            {chapterNumber(index, block)}
-                          </Badge>
-                          <span>{chapterTitle(block)}</span>
-                        </a>
-                      ))}
-                    </nav>
-                  </Collapse>
-                ) : null}
-              </div>
-            ) : null}
-            {readerFeaturePreferences.bottomProgressVisible ? (
-              <>
-                <div className="reader-progress-group">
-                  <span>
-                    {readerSearchQuery
-                      ? readerSearchMatches.length > 0
-                        ? t("reader.searchCount", {
-                            current: Math.min(readerSearchCursor + 1, readerSearchMatches.length),
-                            total: readerSearchMatches.length
-                          })
-                        : t("reader.searchNoMatches")
-                      : t("reader.readingProgress", { progress: readerProgress })}
-                  </span>
-                  <progress value={readerProgress} max={100} />
-                </div>
-                <div className="reader-block-counter" aria-live="polite">
-                  <button
-                    type="button"
-                    onClick={() => moveReaderSearch(-1)}
-                    disabled={readerSearchMatches.length === 0}
-                  >
-                    <ChevronLeft size={14} aria-hidden="true" />
-                  </button>
-                  <span>
-                    {activeBlockOrdinal} / {Math.max(blocks.length, 1)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => moveReaderSearch(1)}
-                    disabled={readerSearchMatches.length === 0}
-                  >
-                    <ChevronRight size={14} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="reader-status-context">
-                  <span>{currentReaderModeLabel}</span>
-                </div>
-              </>
-            ) : null}
+            <div className="reader-progress-group">
+              <span>
+                {readerSearchQuery
+                  ? readerSearchMatches.length > 0
+                    ? t("reader.searchCount", {
+                        current: Math.min(readerSearchCursor + 1, readerSearchMatches.length),
+                        total: readerSearchMatches.length
+                      })
+                    : t("reader.searchNoMatches")
+                  : t("reader.readingProgress", { progress: readerProgress })}
+              </span>
+              <progress value={readerProgress} max={100} />
+            </div>
+            <div className="reader-block-counter" aria-live="polite">
+              <button
+                type="button"
+                onClick={() => moveReaderSearch(-1)}
+                disabled={readerSearchMatches.length === 0}
+              >
+                <ChevronLeft size={14} aria-hidden="true" />
+              </button>
+              <span>
+                {activeBlockOrdinal} / {Math.max(blocks.length, 1)}
+              </span>
+              <button
+                type="button"
+                onClick={() => moveReaderSearch(1)}
+                disabled={readerSearchMatches.length === 0}
+              >
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="reader-status-context">
+              <span>{currentReaderModeLabel}</span>
+            </div>
           </section>
         ) : null}
       </main>
@@ -2566,6 +2899,7 @@ function ChatPanel({
         </div>
       ) : null}
       <Textarea
+        className="reader-chat-question"
         label="Question"
         placeholder="Ask about the current paragraph or the whole paper"
         autosize
@@ -2574,7 +2908,7 @@ function ChatPanel({
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
       />
-      <Group justify="space-between" align="center" mt="sm">
+      <Group className="reader-chat-actions" justify="space-between" align="center" mt="sm">
         <Checkbox
           label="Use model-native search"
           checked={nativeSearch}

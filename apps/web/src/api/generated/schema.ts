@@ -3610,6 +3610,7 @@ export interface operations {
                 target_language?: string | null;
                 review_status?: components["schemas"]["TranslationMemoryReviewStatus"] | null;
                 reuse_enabled?: boolean | null;
+                include_non_candidates?: boolean;
                 limit?: number;
             };
             header?: never;

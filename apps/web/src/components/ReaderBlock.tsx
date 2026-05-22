@@ -908,6 +908,23 @@ function ReaderQuickAskCard({
 }) {
   const t = useT();
   const [question, setQuestion] = useState("");
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const [placement, setPlacement] = useState<CSSProperties>({});
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const updatePlacement = () => {
+      const readerBlock = formRef.current?.closest(".reader-block") as HTMLElement | null;
+      if (!readerBlock) return;
+      setPlacement(readerQuickAskPlacement(readerBlock));
+    };
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement, { passive: true });
+    window.addEventListener("scroll", updatePlacement, { passive: true });
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement);
+    };
+  }, []);
   const submit = () => {
     const trimmed = question.trim();
     if (!trimmed || !canAsk || pending) return;
@@ -916,7 +933,9 @@ function ReaderQuickAskCard({
   };
   return (
     <form
+      ref={formRef}
       className="reader-quick-ask-card"
+      style={placement}
       aria-label={t("reader.quickAsk")}
       onSubmit={(event) => {
         event.preventDefault();
@@ -955,6 +974,37 @@ function ReaderQuickAskCard({
       </Button>
     </form>
   );
+}
+
+function readerQuickAskPlacement(target: HTMLElement): CSSProperties {
+  const rect = target.getBoundingClientRect();
+  const margin = 12;
+  const gap = 12;
+  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+  const viewportHeight = Math.max(
+    1,
+    window.innerHeight || document.documentElement.clientHeight || 1
+  );
+  const width = Math.min(260, Math.max(220, viewportWidth - margin * 2));
+  const preferredRight = rect.right + gap;
+  const preferredLeft = rect.left - gap - width;
+  let left =
+    preferredRight + width <= viewportWidth - margin
+      ? preferredRight
+      : preferredLeft >= margin
+        ? preferredLeft
+        : rect.right - width - 8;
+  left = Math.min(viewportWidth - margin - width, Math.max(margin, left));
+  const top = Math.min(
+    Math.max(margin, rect.top + 8),
+    Math.max(margin, viewportHeight - margin - 170)
+  );
+  return {
+    left: Math.round(left),
+    top: Math.round(top),
+    width: Math.round(width),
+    maxHeight: `calc(100vh - ${Math.round(top)}px - ${margin}px)`
+  };
 }
 
 function cardLabel(card: ReaderCard) {

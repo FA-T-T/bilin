@@ -42,9 +42,9 @@ The Chinese name is **衔牍**. The English name is **Ilios**. The Japanese name
 
 ## Current Release
 
-Ilios v0.3.1 stabilizes local LaTeX parsing with structured diagnostics, compatibility profiles, and local corpus regression checks while keeping the app's local-first research workflow intact.
+Ilios v0.3.2 tightens the reader workspace, adds an HTML/Kindle surface switch, reduces default reader chrome, and keeps translation-memory review focused on real reuse candidates.
 
-The reader no longer uses the home navigation. Its own command band shows the current library on the left, `Ilios / 衔牍 · Research Paper Reader` in the center, and reading mode plus preferences on the right. The left rail switches between papers in the same library. The right rail contains collapsible tiles for tasks, model provider, paper chat, translation, glossary, notes, and export, with only the question tile expanded by default.
+The reader no longer uses the home navigation. Its own command band keeps the library switcher, compact Ilios title, icon-only HTML/Kindle surface switch, fixed `mode` reading selector, and a stable tool row at the top. The left rail switches between papers in the same library. The right rail opens one tool panel at a time for tasks, model provider, paper chat, translation, glossary, notes, export, or reading preferences.
 
 The backend can track article reading progress, rename libraries, expose provider presets, import arXiv source packages, import local TeX archives, import Markdown as weak structured documents, save PDFs as source artifacts, parse TeX with LaTeXML when installed, store structured document blocks and assets, display recovered figures and tables, translate paragraph and caption blocks through OpenAI-compatible or Anthropic-compatible providers, preserve translation variants, review translation memory, manage glossary terms, store provider keys in macOS Keychain when available, stream article-grounded Q&A, save bilingual excerpts to Obsidian, create editable lecture-note patches, edit custom note templates, manage lightweight reader cards, and export source, translated, bilingual, lecture-note, or full bundle artifacts through browser downloads.
 

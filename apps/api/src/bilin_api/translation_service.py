@@ -43,13 +43,16 @@ from bilin_api.schemas import (
     TranslationMemoryLookupResult,
     TranslationVariant,
 )
+from bilin_api.translation_rules import (
+    is_translatable_source,
+    is_translation_invariant_markdown,
+)
 
 Translator = Callable[
     [ProviderProfile, str, str, str, str, str, str | None],
     Awaitable[LLMResponse],
 ]
 
-TRANSLATABLE_BLOCK_TYPES = {"paragraph", "list", "figure", "table"}
 _PROVIDER_SEMAPHORES: dict[tuple[str, int], asyncio.Semaphore] = {}
 _PROVIDER_RATE_LOCKS: dict[str, asyncio.Lock] = {}
 _PROVIDER_NEXT_REQUEST_AT: dict[str, float] = {}
@@ -476,7 +479,7 @@ async def create_variant_from_translation_memory(
 
 
 def is_translatable_block(block: DocumentBlock) -> bool:
-    return block.block_type in TRANSLATABLE_BLOCK_TYPES and bool(block.source_markdown.strip())
+    return is_translatable_source(block.block_type, block.source_markdown)
 
 
 async def find_existing_translation_job(
@@ -593,18 +596,6 @@ def validate_translation_markdown(source_markdown: str, translated_markdown: str
     if source_fences and translated_fences != source_fences:
         return "code_fence_count_changed"
     return "ok"
-
-
-def is_translation_invariant_markdown(markdown: str) -> bool:
-    text = markdown.strip()
-    if not text:
-        return False
-    visible = re.sub(r"\[([^\]]+)]\([^)]*\)", r"\1", text)
-    visible = re.sub(r"[^A-Za-z0-9]+", " ", visible).strip()
-    words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", visible)
-    if not words:
-        return True
-    return len(words) <= 4 and all(word.upper() == word for word in words)
 
 
 @asynccontextmanager

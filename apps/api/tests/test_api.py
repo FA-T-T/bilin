@@ -477,9 +477,26 @@ async def test_translation_memory_review_api(bilin_home: Path) -> None:
         validation_status="ok",
         glossary_version="glossary:none",
     )
+    non_candidate = await record_translation_memory_entry(
+        source_hash="hash-review-non-candidate",
+        source_markdown="An old source paragraph.",
+        target_language="zh-CN",
+        raw_markdown="旧译文。",
+        provider_profile_id=None,
+        model=None,
+        validation_status="ok",
+        glossary_version="glossary:none",
+        metadata={
+            "review_candidate": False,
+            "non_candidate_reason": "bulk_existing_queue_cleanup",
+        },
+    )
 
     with TestClient(app) as client:
         list_response = client.get("/translation-memory?review_status=pending")
+        list_with_non_candidates_response = client.get(
+            "/translation-memory?review_status=pending&include_non_candidates=true"
+        )
         patch_response = client.patch(
             f"/translation-memory/{entry.id}",
             json={"review_status": "approved", "reuse_enabled": True},
@@ -490,6 +507,12 @@ async def test_translation_memory_review_api(bilin_home: Path) -> None:
 
     assert list_response.status_code == 200
     assert list_response.json()["entries"][0]["id"] == entry.id
+    assert [item["id"] for item in list_response.json()["entries"]] == [entry.id]
+    assert list_with_non_candidates_response.status_code == 200
+    assert {item["id"] for item in list_with_non_candidates_response.json()["entries"]} == {
+        entry.id,
+        non_candidate.id,
+    }
     assert patch_response.status_code == 200
     assert patch_response.json()["review_status"] == TranslationMemoryReviewStatus.approved
     assert patch_response.json()["reuse_enabled"] is True

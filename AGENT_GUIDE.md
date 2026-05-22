@@ -241,9 +241,9 @@ Create source archives with the release script.
 Verify checksums and inspect that forbidden local artifacts were excluded.
 
 ```sh
-shasum -a 256 -c release/bilin-v0.3.1-source.tar.gz.sha256
-shasum -a 256 -c release/bilin-v0.3.1-source.zip.sha256
-tar -tzf release/bilin-v0.3.1-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
+shasum -a 256 -c release/bilin-v0.3.2-source.tar.gz.sha256
+shasum -a 256 -c release/bilin-v0.3.2-source.zip.sha256
+tar -tzf release/bilin-v0.3.2-source.tar.gz | rg 'node_modules|\.venv|\.bilin|papers/|libraries/|\.sqlite|__pycache__|\.DS_Store|test-results' || true
 ```
 
 The final archive should include `README.md`, `README.en.md`, localized README files such as `README.ja.md`, `README.ko.md`, `README.es.md`, `README.fr.md`, and `README.de.md`, `AGENT_GUIDE.md`, `LICENSE`, `NOTICE`, `RELEASE_NOTES.md`, `docs/`, `fixtures/`, `apps/`, root package files, and release scripts.

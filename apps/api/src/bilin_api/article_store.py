@@ -41,8 +41,7 @@ from bilin_api.schemas import (
     ReadingProgressUpdate,
     TranslationVariant,
 )
-
-TRANSLATABLE_BLOCK_TYPES = {"paragraph", "list", "figure", "table"}
+from bilin_api.translation_rules import is_translatable_source
 
 
 def sha256_bytes(content: bytes) -> str:
@@ -333,6 +332,7 @@ async def article_translation_statuses(
     if not revision_ids:
         return {}
     translatable: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
+    translatable_uids: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
     translated: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
     invalid: dict[str, set[str]] = {revision_id: set() for revision_id in revision_ids}
     placeholders = ",".join("?" for _ in revision_ids)
@@ -358,6 +358,7 @@ async def article_translation_statuses(
         if not _is_translatable_block_row(row):
             continue
         translatable[revision_id].add(row["block_id"])
+        translatable_uids[revision_id].add(row["block_uid"])
         if (
             row["variant_id"]
             and row["variant_validation_status"] == "ok"
@@ -367,7 +368,12 @@ async def article_translation_statuses(
         elif row["variant_id"] and _translation_variant_row_matches_block(row):
             invalid[revision_id].add(row["block_id"])
 
-    job_counts = await _translation_job_counts_by_revision(library, revision_ids, target_language)
+    job_counts = await _translation_job_counts_by_revision(
+        library,
+        revision_ids,
+        target_language,
+        translatable_uids,
+    )
     statuses: dict[str, ArticleTranslationStatus] = {}
     for revision_id in revision_ids:
         counts = job_counts.get(revision_id, Counter()).copy()
@@ -552,6 +558,7 @@ async def _translation_job_counts_by_revision(
     library: Library,
     revision_ids: list[str],
     target_language: str,
+    translatable_uids: dict[str, set[str]],
 ) -> dict[str, Counter[str]]:
     revision_set = set(revision_ids)
     counts: dict[str, Counter[str]] = {revision_id: Counter() for revision_id in revision_ids}
@@ -576,18 +583,22 @@ async def _translation_job_counts_by_revision(
     for row in rows:
         payload = _loads(row["payload_json"], {})
         revision_id = payload.get("article_revision_id")
+        block_uid = payload.get("block_uid")
         if (
             payload.get("library_id") == library.id
             and revision_id in revision_set
             and payload.get("target_language") == target_language
+            and (
+                not isinstance(block_uid, str)
+                or block_uid in translatable_uids.get(str(revision_id), set())
+            )
         ):
             counts[revision_id][row["status"]] += 1
     return counts
 
 
 def _is_translatable_block_row(row: aiosqlite.Row) -> bool:
-    source_markdown = row["source_markdown"] or ""
-    return row["block_type"] in TRANSLATABLE_BLOCK_TYPES and bool(source_markdown.strip())
+    return is_translatable_source(row["block_type"], row["source_markdown"] or "")
 
 
 def _translation_variant_row_matches_block(row: aiosqlite.Row) -> bool:
