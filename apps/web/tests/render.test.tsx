@@ -1719,6 +1719,50 @@ I_{n}\\[1.0pt]
     });
   });
 
+  it("opens a library article on the second row click", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/providers")) return jsonResponse([provider]);
+      if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
+      if (url.includes("/libraries/library-1/articles?target_language=")) {
+        return jsonResponse([article]);
+      }
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MantineProvider>
+          <MemoryRouter initialEntries={["/libraries/library-1"]}>
+            <Routes>
+              <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
+              <Route
+                path="/articles/:articleId"
+                element={<div data-testid="article-reader">Reader opened</div>}
+              />
+            </Routes>
+          </MemoryRouter>
+        </MantineProvider>
+      </QueryClientProvider>
+    );
+
+    const articleRow = await screen.findByRole("button", {
+      name: /A Minimal Bilin Test Paper/
+    });
+    await userEvent.click(articleRow);
+    expect(screen.queryByTestId("article-reader")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Read" })).toHaveAttribute(
+      "href",
+      "/articles/revision-1?libraryId=library-1"
+    );
+    await userEvent.click(articleRow);
+    expect(await screen.findByTestId("article-reader")).toBeInTheDocument();
+  });
+
   it("does not render arXiv Daily or request recommendation data", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -2093,9 +2137,13 @@ I_{n}\\[1.0pt]
     );
     const mosaic = container.querySelector(".reader-mosaic");
     const readerPage = container.querySelector(".reader-page");
+    const homeButton = screen.getByRole("button", { name: "Home" });
     const libraryArticleButton = screen.getByRole("button", { name: "Library" });
     expect(screen.queryByRole("button", { name: "Papers" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Return to library" })).toHaveTextContent("Ilios");
+    expect(homeButton).toHaveTextContent("Home");
+    expect(homeButton.compareDocumentPosition(libraryArticleButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
     expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
     expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
     expect(libraryArticleButton).toHaveAttribute("aria-pressed", "false");
@@ -2164,18 +2212,7 @@ I_{n}\\[1.0pt]
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
-          const kindleDocument = syntheticDocumentPayload(120);
-          return jsonResponse({
-            ...kindleDocument,
-            blocks: kindleDocument.blocks.map((block) =>
-              block.block_type === "paragraph"
-                ? {
-                    ...block,
-                    source_markdown: `${block.source_markdown} First context sentence. **Middle context sentence.** Tail context sentence with \`code\`.`
-                  }
-                : block
-            )
-          });
+          return jsonResponse(syntheticDocumentPayload(120));
         }
         if (url.endsWith("/providers")) return jsonResponse([provider]);
         if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
@@ -2204,9 +2241,10 @@ I_{n}\\[1.0pt]
     );
     expect(await screen.findByTestId("reader-block-list")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "HTML" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "HTML" }).textContent?.trim()).toBe("");
+    expect(screen.getByRole("button", { name: "HTML" })).toHaveTextContent("HTML");
     expect(screen.getByRole("button", { name: "Kindle" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Kindle" }).textContent?.trim()).toBe("");
+    expect(screen.getByRole("button", { name: "Kindle" })).toHaveTextContent("Kindle");
+    expect(screen.getByLabelText("Reader surface").closest(".reader-command-middle")).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: "Kindle" }));
 
@@ -2215,6 +2253,9 @@ I_{n}\\[1.0pt]
     expect(screen.getByRole("button", { name: "HTML" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Kindle" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Reading mode" })).toHaveTextContent("mode");
+    expect(screen.getByLabelText("Kindle font size")).toHaveTextContent("100%");
+    await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+    expect(screen.getByLabelText("Kindle font size")).toHaveTextContent("103%");
     expect(await screen.findByTestId("kindle-paged-reader")).toHaveAttribute(
       "data-page-mode",
       "paged"
@@ -2240,14 +2281,9 @@ I_{n}\\[1.0pt]
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("kindle-page-counter")).toHaveTextContent(/^Page 1 \/ \d+$/);
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Next page" }).at(-1)!);
+    fireEvent.wheel(screen.getByTestId("kindle-paged-reader"), { deltaY: 120 });
     expect(screen.getByTestId("kindle-page-counter")).toHaveTextContent(/^Page 2 \/ \d+$/);
-    const contextBlock = screen.getAllByTestId(/^kindle-context-block-/)[0];
-    expect(contextBlock).toHaveTextContent("Middle context sentence.");
-    expect(within(contextBlock).getByText("Middle context sentence.").tagName).toBe("STRONG");
-    expect(contextBlock).toHaveTextContent("Tail context sentence with code.");
-    expect(within(contextBlock).getByText("code").tagName).toBe("CODE");
-    expect(contextBlock).not.toHaveTextContent("First context sentence.");
+    expect(screen.queryAllByTestId(/^kindle-context-block-/)).toHaveLength(0);
     expect(container.querySelector(".reader-page")).toHaveClass("reader-kindle-chrome-hidden");
 
     fireEvent.mouseMove(container.querySelector(".reader-page") as HTMLElement, { clientY: 8 });
@@ -2314,6 +2350,53 @@ I_{n}\\[1.0pt]
 
     expect(await screen.findByText("Translation pending.")).toBeInTheDocument();
     expect(screen.queryByText("第一段 technical content 的译文。")).not.toBeInTheDocument();
+  });
+
+  it("does not reuse translations from another target language", async () => {
+    useUiStore.getState().setTranslationTargetLanguage("ja");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+        return jsonResponse(documentPayload);
+      }
+      if (url.endsWith("/providers")) return jsonResponse([provider]);
+      if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+        return jsonResponse(translationsPayload);
+      }
+      if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+        return jsonResponse(glossaryPayload);
+      }
+      if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+        return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+      }
+      if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+        return jsonResponse(noteTemplatesPayload);
+      }
+      if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+        return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+      }
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    const sourcePane = await findReaderSourcePane();
+    expect(sourcePane).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
+    fireEvent.pointerDown(within(sourcePane).getByRole("button", { name: "Show translation" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes(
+            "/libraries/library-1/articles/revision-1/translations?target_language=ja"
+          )
+        )
+      ).toBe(true);
+    });
+    expect(await screen.findByText("Translation pending.")).toBeInTheDocument();
+    expect(screen.queryByText("第一段 technical content 的译文。")).not.toBeInTheDocument();
+    expect(screen.queryByText("第一段 技术内容 的译文。")).not.toBeInTheDocument();
   });
 
   it("keeps long reader pages virtualized without a reader full-text search bar", async () => {
@@ -3640,7 +3723,12 @@ I_{n}\\[1.0pt]
     await userEvent.click(screen.getAllByLabelText("Language")[0]);
     await userEvent.click(await screen.findByRole("option", { name: "简体中文" }));
     expect(await screen.findByText("界面语言")).toBeInTheDocument();
+    expect(useUiStore.getState().translationTargetLanguage).toBe("zh-CN");
     expect(screen.queryByText("产品名称")).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByLabelText("语言")[0]);
+    await userEvent.click(await screen.findByRole("option", { name: "日本語" }));
+    expect(await screen.findByText("インターフェース")).toBeInTheDocument();
+    expect(useUiStore.getState().translationTargetLanguage).toBe("ja");
   });
 
   it("queues article translation from the reader", async () => {

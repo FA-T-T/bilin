@@ -4,6 +4,7 @@ import { localeInfo, productNameForLocale } from "./product";
 
 const en = {
   "app.subtitle": "Local paper reader",
+  "nav.home": "Home",
   "nav.library": "Library",
   "nav.readTranslate": "Read & Translate",
   "nav.notesStudy": "Notes & Study",
@@ -169,7 +170,7 @@ const en = {
   "settings.missing": "missing",
   "settings.languageTitle": "Interface language",
   "settings.languageHelp":
-    "The interface follows the browser language on first launch and can be changed here at any time.",
+    "The interface follows the browser language on first launch. Changing it also switches the default translation target.",
   "settings.language": "Language",
   "settings.languageTier": "Maintenance level",
   "settings.coreLanguages":
@@ -306,6 +307,9 @@ const en = {
     "Sets the single-column article measure as a percentage of the reader.",
   "reader.prefFontScale": "Font size",
   "reader.prefFontScaleHelp": "Scales source, translation, formulas, and table text together.",
+  "reader.kindleFontSize": "Kindle font size",
+  "reader.decreaseFontSize": "Decrease font size",
+  "reader.increaseFontSize": "Increase font size",
   "reader.prefParagraphSpacing": "Paragraph spacing",
   "reader.prefParagraphSpacingHelp": "Raises or lowers vertical breathing room between paragraphs.",
   "reader.prefBilingualRatio": "Bilingual ratio",
@@ -451,6 +455,7 @@ type MessageMap = Partial<Record<MessageKey, string>>;
 
 const zh: MessageMap = {
   "app.subtitle": "本地论文阅读器",
+  "nav.home": "首页",
   "nav.library": "文库",
   "nav.readTranslate": "阅读与翻译",
   "nav.notesStudy": "笔记与精读",
@@ -608,7 +613,7 @@ const zh: MessageMap = {
   "settings.configured": "已配置",
   "settings.missing": "缺失",
   "settings.languageTitle": "界面语言",
-  "settings.languageHelp": "首次启动时跟随浏览器语言，也可以随时在这里切换。",
+  "settings.languageHelp": "首次启动时跟随浏览器语言；切换界面语言也会同步默认译文目标语言。",
   "settings.language": "语言",
   "settings.languageTier": "维护等级",
   "settings.coreLanguages": "简体中文和 English 是核心维护语言，每个版本都应保持准确同步。",
@@ -739,6 +744,9 @@ const zh: MessageMap = {
   "reader.prefLineWidthHelp": "用阅读器宽度百分比控制单栏正文宽度。",
   "reader.prefFontScale": "字号",
   "reader.prefFontScaleHelp": "同步缩放原文、译文、公式和表格文字。",
+  "reader.kindleFontSize": "Kindle 字号",
+  "reader.decreaseFontSize": "减小字号",
+  "reader.increaseFontSize": "增大字号",
   "reader.prefParagraphSpacing": "段距",
   "reader.prefParagraphSpacingHelp": "调节段落之间的垂直留白。",
   "reader.prefBilingualRatio": "双语比例",
@@ -866,6 +874,7 @@ const dictionaries: Record<AppLocale, MessageMap> = {
   "zh-CN": zh,
   ja: {
     "app.subtitle": "ローカル論文リーダー",
+    "nav.home": "ホーム",
     "nav.library": "ライブラリ",
     "nav.settings": "設定",
     "settings.interface": "インターフェース",

@@ -528,6 +528,57 @@ def test_normalize_latexml_html_preserves_inline_math_as_markdown_math(tmp_path:
     assert "$(x_1,\\ldots,x_n)$" in render_source_markdown(blocks)
 
 
+def test_normalize_latexml_html_preserves_bibliography_items(tmp_path: Path) -> None:
+    html_path = tmp_path / "latexml.html"
+    html_path.write_text(
+        r"""
+        <html>
+          <body>
+            <h2>References</h2>
+            <ul class="ltx_biblist">
+              <li id="bib.bib1" class="ltx_bibitem">
+                <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[1]</span>
+                <span class="ltx_bibblock">
+                  Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton.
+                </span>
+                <span class="ltx_bibblock">Layer normalization.</span>
+                <span class="ltx_bibblock">
+                  <span class="ltx_text ltx_font_italic">
+                    arXiv preprint arXiv:1607.06450
+                  </span>, 2016.
+                </span>
+              </li>
+              <li id="bib.bib2" class="ltx_bibitem">
+                <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[2]</span>
+                <span class="ltx_bibblock">
+                  Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio.
+                </span>
+                <span class="ltx_bibblock">
+                  Neural machine translation by jointly learning to align and translate.
+                </span>
+              </li>
+            </ul>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == ["section", "list"]
+    assert blocks[1].metadata["list_kind"] == "bibliography"
+    assert blocks[1].metadata["item_count"] == 2
+    assert blocks[1].metadata["bibliography_ids"] == ["bib.bib1", "bib.bib2"]
+    assert r"[\[1\]](#bib.bib1)" in blocks[1].source_markdown
+    assert "Layer normalization" in blocks[1].source_markdown
+    assert r"[\[2\]](#bib.bib2)" in blocks[1].source_markdown
+    assert "Neural machine translation by jointly learning" in blocks[1].source_markdown
+    rendered = render_source_markdown(blocks)
+    assert "## References" in rendered
+    assert r"- [\[1\]](#bib.bib1)" in rendered
+
+
 def test_normalize_latexml_html_preserves_missing_citation_brackets(
     tmp_path: Path,
 ) -> None:

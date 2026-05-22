@@ -26,9 +26,12 @@ import {
   Columns2,
   Download,
   FileText,
+  House,
   Languages,
   ListTree,
   MessageSquare,
+  Minus,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -163,6 +166,7 @@ export function ReaderPage() {
   const setReaderSurfaceMode = useUiStore((state) => state.setReaderSurfaceMode);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const readerPreferences = useUiStore((state) => state.readerPreferences);
+  const setReaderPreference = useUiStore((state) => state.setReaderPreference);
   const readerFeaturePreferences = useUiStore((state) => state.readerFeaturePreferences);
   const setReaderFeaturePreference = useUiStore((state) => state.setReaderFeaturePreference);
   const targetLanguage = useUiStore((state) => state.translationTargetLanguage);
@@ -318,7 +322,9 @@ export function ReaderPage() {
   }, [articleId, assets, libraryId]);
   const variantsByBlockUid = useMemo(() => {
     const map = new Map<string, TranslationVariant[]>();
+    if (translations.data?.target_language !== targetLanguage) return map;
     for (const variant of translations.data?.variants ?? []) {
+      if (variant.target_language !== targetLanguage) continue;
       if (variant.validation_status !== "ok") continue;
       const blockUid = variant.metadata?.block_uid;
       if (typeof blockUid !== "string") continue;
@@ -333,7 +339,7 @@ export function ReaderPage() {
       });
     }
     return map;
-  }, [translations.data?.variants]);
+  }, [targetLanguage, translations.data?.target_language, translations.data?.variants]);
   const selectedVariantByBlockUid = useMemo(() => {
     const map = new Map<string, TranslationVariant>();
     for (const [blockUid, variants] of variantsByBlockUid.entries()) {
@@ -463,6 +469,13 @@ export function ReaderPage() {
     },
     [kindleBlockViewMode, translationByBlockUid]
   );
+  const kindleFontScalePercent = Math.round(readerPreferences.fontScale * 100);
+  const decreaseKindleFontSize = useCallback(() => {
+    setReaderPreference("fontScale", readerPreferences.fontScale - 0.03);
+  }, [readerPreferences.fontScale, setReaderPreference]);
+  const increaseKindleFontSize = useCallback(() => {
+    setReaderPreference("fontScale", readerPreferences.fontScale + 0.03);
+  }, [readerPreferences.fontScale, setReaderPreference]);
 
   const markReaderActivity = useCallback(() => {
     lastReaderActivityAt.current = Date.now();
@@ -1788,6 +1801,17 @@ export function ReaderPage() {
           <div className="reader-command-actions">
             <div className="reader-command-zone reader-command-left">
               <Button
+                className="reader-chrome-button reader-home-button"
+                aria-label={t("nav.home")}
+                title={t("nav.home")}
+                variant="light"
+                size="xs"
+                leftSection={<House size={15} aria-hidden="true" />}
+                onClick={openCurrentLibrary}
+              >
+                {t("nav.home")}
+              </Button>
+              <Button
                 className="reader-chrome-button"
                 aria-pressed={readerArticleRailOpen}
                 title={t("reader.articleSwitcher")}
@@ -1799,15 +1823,7 @@ export function ReaderPage() {
                 {t("nav.library")}
               </Button>
             </div>
-            <button
-              type="button"
-              className="reader-command-title reader-command-title-button"
-              aria-label={t("reader.returnToLibrary")}
-              onClick={openCurrentLibrary}
-            >
-              Ilios
-            </button>
-            <div className="reader-command-zone reader-command-right">
+            <div className="reader-command-middle">
               <div className="reader-surface-switch" aria-label={t("reader.surfaceMode")}>
                 <Button
                   aria-pressed={!kindleMode}
@@ -1817,7 +1833,9 @@ export function ReaderPage() {
                   size="xs"
                   leftSection={<FileText size={15} aria-hidden="true" />}
                   onClick={() => setReaderSurfaceMode("workbench")}
-                />
+                >
+                  {t("reader.htmlMode")}
+                </Button>
                 <Button
                   aria-pressed={kindleMode}
                   aria-label={t("reader.kindleMode")}
@@ -1826,8 +1844,12 @@ export function ReaderPage() {
                   size="xs"
                   leftSection={<BookOpenText size={15} aria-hidden="true" />}
                   onClick={() => setReaderSurfaceMode("kindle")}
-                />
+                >
+                  {t("reader.kindleMode")}
+                </Button>
               </div>
+            </div>
+            <div className="reader-command-zone reader-command-right">
               <div
                 data-testid="reader-view-mode"
                 className="reader-mode-list"
@@ -1864,6 +1886,32 @@ export function ReaderPage() {
                   </div>
                 </Collapse>
               </div>
+              {kindleMode ? (
+                <div className="reader-kindle-font-controls" aria-label={t("reader.kindleFontSize")}>
+                  <ActionIcon
+                    aria-label={t("reader.decreaseFontSize")}
+                    disabled={readerPreferences.fontScale <= 0.9}
+                    variant="subtle"
+                    size="sm"
+                    onClick={decreaseKindleFontSize}
+                  >
+                    <Minus size={14} aria-hidden="true" />
+                  </ActionIcon>
+                  <span className="reader-kindle-font-value" aria-live="polite">
+                    <Type size={14} aria-hidden="true" />
+                    {kindleFontScalePercent}%
+                  </span>
+                  <ActionIcon
+                    aria-label={t("reader.increaseFontSize")}
+                    disabled={readerPreferences.fontScale >= 1.18}
+                    variant="subtle"
+                    size="sm"
+                    onClick={increaseKindleFontSize}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                  </ActionIcon>
+                </div>
+              ) : null}
               {!kindleMode ? (
                 <div className="reader-tool-menu" aria-label={t("reader.toolbar")}>
                   {readerToolbarItems.map((item) => (

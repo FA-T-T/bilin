@@ -2004,6 +2004,12 @@ class _DocumentBuilder:
         if _is_algorithm_container(element):
             self.add_environment(element, "algorithm")
             return
+        if _is_latexml_bibliography_list(element):
+            self.add_bibliography_list(element)
+            return
+        if _is_latexml_bibliography_item(element):
+            self.add_bibliography_item(element)
+            return
         if _is_latexml_list_container(element):
             self.add_list(element)
             return
@@ -2134,6 +2140,48 @@ class _DocumentBuilder:
             metadata={
                 "list_kind": _list_kind(element),
                 "item_count": item_count,
+                **({"references": references} if references else {}),
+            },
+        )
+
+    def add_bibliography_list(self, element: ET.Element) -> None:
+        items = _direct_bibliography_items(element)
+        lines = [
+            f"- {markdown}" for item in items if (markdown := _bibliography_item_markdown(item))
+        ]
+        if not lines:
+            return
+        self.list_count += 1
+        references = _references(element)
+        bibliography_ids = [item_id for item in items if (item_id := item.attrib.get("id"))]
+        self.add_block(
+            "list",
+            f"lst-{self.list_count:04d}",
+            "\n".join(lines),
+            metadata={
+                "list_kind": "bibliography",
+                "item_count": len(lines),
+                "bibliography_ids": bibliography_ids,
+                **({"references": references} if references else {}),
+            },
+        )
+
+    def add_bibliography_item(self, element: ET.Element) -> None:
+        markdown = _bibliography_item_markdown(element)
+        if not markdown:
+            return
+        self.list_count += 1
+        references = _references(element)
+        self.add_block(
+            "list",
+            f"lst-{self.list_count:04d}",
+            f"- {markdown}",
+            metadata={
+                "list_kind": "bibliography",
+                "item_count": 1,
+                **(
+                    {"bibliography_ids": [element.attrib["id"]]} if element.attrib.get("id") else {}
+                ),
                 **({"references": references} if references else {}),
             },
         )
@@ -2594,6 +2642,18 @@ def _is_latexml_list_container(element: Any) -> bool:
     return any(token in class_name for token in ("ltx_itemize", "ltx_enumerate", "ltx_description"))
 
 
+def _is_latexml_bibliography_list(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    return tag in {"ul", "ol", "dl"} and "ltx_biblist" in class_name
+
+
+def _is_latexml_bibliography_item(element: Any) -> bool:
+    tag = _local_name(element.tag)
+    class_name = element.attrib.get("class", "").lower()
+    return tag == "li" and "ltx_bibitem" in class_name
+
+
 def _is_latexml_generated_navigation(element: Any) -> bool:
     tag = _local_name(element.tag)
     class_name = element.attrib.get("class", "").lower()
@@ -2617,6 +2677,48 @@ def _is_latexml_list_item(element: Any) -> bool:
     if "ltx_bibitem" in class_name:
         return False
     return tag in {"li", "dt", "dd"} or "ltx_item" in class_name.split()
+
+
+def _direct_bibliography_items(element: Any) -> list[Any]:
+    return [child for child in list(element) if _is_latexml_bibliography_item(child)]
+
+
+def _bibliography_item_markdown(element: Any) -> str:
+    parts: list[str] = []
+    if element.text and element.text.strip():
+        parts.append(element.text)
+    for child in list(element):
+        if _is_latexml_bibliography_label(child):
+            if child.tail and child.tail.strip():
+                parts.append(child.tail)
+            continue
+        text = _markdown_text(child)
+        if text:
+            parts.append(text)
+        if child.tail and child.tail.strip():
+            parts.append(child.tail)
+    content = _clean_latexml_markdown_artifacts(_collapse_markdown_whitespace(" ".join(parts)))
+    if not content:
+        return ""
+    label = _bibliography_item_label(element)
+    item_id = element.attrib.get("id")
+    if not label or not item_id:
+        return content
+    escaped_label = label.replace("[", r"\[").replace("]", r"\]")
+    return f"[\\[{escaped_label}\\]](#{item_id}) {content}".strip()
+
+
+def _is_latexml_bibliography_label(element: Any) -> bool:
+    class_name = element.attrib.get("class", "").lower()
+    return "ltx_tag_bibitem" in class_name
+
+
+def _bibliography_item_label(element: Any) -> str:
+    for child in element.iter():
+        if not _is_latexml_bibliography_label(child):
+            continue
+        return _clean_text(child).strip().strip("[]")
+    return ""
 
 
 def _is_latexml_list_marker(element: Any) -> bool:

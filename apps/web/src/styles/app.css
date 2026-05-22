@@ -1433,13 +1433,13 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .reader-command-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   justify-content: space-between;
   width: 100%;
   max-width: 100%;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
 .reader-page-kindle .reader-command-actions {
@@ -1456,12 +1456,22 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 
 .reader-command-left {
   justify-content: flex-start;
-  flex: 0 1 auto;
+  justify-self: stretch;
+  flex: 1 1 auto;
   max-width: 100%;
+}
+
+.reader-command-middle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  min-width: 0;
 }
 
 .reader-command-right {
   justify-content: flex-end;
+  justify-self: stretch;
   flex: 1 1 auto;
   max-width: 100%;
 }
@@ -1475,6 +1485,11 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.reader-command-left .reader-command-title {
+  flex: 0 1 auto;
+  max-width: min(172px, 20vw);
 }
 
 .reader-tool-menu {
@@ -1492,6 +1507,7 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 .reader-surface-switch {
   display: flex;
   align-items: center;
+  justify-content: center;
   min-width: 0;
   gap: 2px;
   padding: 2px;
@@ -1501,13 +1517,18 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .reader-surface-button.mantine-Button-root {
-  width: 28px;
-  min-width: 28px;
-  padding-inline: 0;
+  width: auto;
+  min-width: 78px;
+  padding-inline: 9px;
+}
+
+.reader-surface-button .mantine-Button-inner {
+  justify-content: center;
+  gap: 6px;
 }
 
 .reader-surface-button .mantine-Button-section {
-  margin: 0;
+  margin-inline-end: 0;
 }
 
 .reader-tool-button.mantine-Button-root {
@@ -1711,6 +1732,37 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.reader-kindle-font-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid var(--bilin-panel-border);
+  border-radius: 8px;
+  background: light-dark(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.045));
+}
+
+.reader-kindle-font-controls .mantine-ActionIcon-root {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  color: var(--bilin-text);
+}
+
+.reader-kindle-font-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 48px;
+  padding: 0 5px;
+  color: var(--bilin-text);
+  font-size: 0.72rem;
+  font-weight: 680;
+  line-height: 1;
 }
 
 .reader-preferences-flyout {
@@ -2216,27 +2268,14 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  touch-action: pan-y;
 }
 
 .kindle-page-block {
   min-width: 0;
-}
-
-.kindle-page-context-block {
-  margin-bottom: 5px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid light-dark(rgba(0, 0, 0, 0.16), rgba(255, 255, 255, 0.14));
-  color: light-dark(rgba(0, 0, 0, 0.58), rgba(255, 255, 255, 0.58));
-}
-
-.kindle-page-context-block .reader-block {
-  opacity: 0.72;
-}
-
-.kindle-page-context-block .reader-block p,
-.kindle-page-context-block .reader-block li {
-  font-size: 0.92em;
-  line-height: 1.42;
+  min-height: 0;
 }
 
 .reader-page-kindle .reader-block-virtual-shell {
@@ -4189,6 +4228,11 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
     font-size: 0.74rem;
   }
 
+  .reader-command-left .reader-command-title {
+    width: auto;
+    max-width: 112px;
+  }
+
   .reader-command-actions {
     grid-template-columns: 1fr;
     justify-items: center;
@@ -4198,8 +4242,19 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
   .reader-command-left,
   .reader-command-right {
     justify-self: stretch;
-    justify-content: center;
     flex-wrap: wrap;
+  }
+
+  .reader-command-left {
+    justify-content: flex-start;
+  }
+
+  .reader-command-right {
+    justify-content: center;
+  }
+
+  .reader-command-middle {
+    justify-self: center;
   }
 
   .reader-card-rail {
@@ -4256,7 +4311,7 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
   }
 
   .reader-page-kindle .reader-command-actions {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: 1fr;
   }
 
   .reader-page-kindle .reader-command-left .reader-chrome-button .mantine-Button-label {

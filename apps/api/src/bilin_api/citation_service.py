@@ -109,7 +109,11 @@ async def queue_citation_library_import(
 
 async def citation_by_id(library: Library, revision_id: str, citation_id: str) -> CitationEntry:
     citations = await get_article_citations(library, revision_id)
-    citation = next((item for item in citations.citations if item.id == citation_id), None)
+    normalized_id = citation_id.removeprefix("#").strip()
+    citation = next(
+        (item for item in citations.citations if normalized_id in citation_entry_aliases(item)),
+        None,
+    )
     if citation is None:
         raise ValueError(f"Citation not found: {citation_id}")
     return citation
@@ -236,7 +240,7 @@ def extract_latexml_citations(html: str) -> list[CitationEntry]:
                 metadata={
                     "source": "latexml",
                     "bib_blocks": blocks,
-                    "aliases": citation_id_aliases(citation_id),
+                    "aliases": citation_id_aliases(citation_id, label=label),
                 },
             )
         )
@@ -249,13 +253,35 @@ def merge_citation_entries(
     fallback: list[CitationEntry],
 ) -> list[CitationEntry]:
     entries = list(primary)
-    seen = {entry.id for entry in entries}
+    seen: dict[str, CitationEntry] = {}
+    for entry in entries:
+        for alias in citation_entry_aliases(entry):
+            seen.setdefault(alias, entry)
     for entry in fallback:
-        if entry.id in seen:
+        matching = next(
+            (seen[alias] for alias in citation_entry_aliases(entry) if alias in seen), None
+        )
+        if matching is not None:
+            merge_citation_metadata(matching, entry)
+            for alias in citation_entry_aliases(matching) | citation_entry_aliases(entry):
+                seen.setdefault(alias, matching)
             continue
         entries.append(entry)
-        seen.add(entry.id)
+        for alias in citation_entry_aliases(entry):
+            seen.setdefault(alias, entry)
     return entries
+
+
+def merge_citation_metadata(primary: CitationEntry, fallback: CitationEntry) -> None:
+    aliases = citation_entry_aliases(primary) | citation_entry_aliases(fallback)
+    metadata = dict(primary.metadata)
+    metadata["aliases"] = sorted(aliases)
+    primary.metadata = metadata
+    if not primary.citation_key or re.fullmatch(r"bib\d+[a-z]?", primary.citation_key):
+        primary.citation_key = fallback.citation_key or primary.citation_key
+    for field in ("authors", "year", "arxiv_id", "doi", "url"):
+        if getattr(primary, field) is None and getattr(fallback, field) is not None:
+            setattr(primary, field, getattr(fallback, field))
 
 
 def extract_source_bibliography_citations(bundle_path: Path) -> list[CitationEntry]:
@@ -416,7 +442,7 @@ def missing_latexml_citation_entries(
                 metadata={
                     "source": "missing_latexml_citation",
                     "citation_key": key,
-                    "aliases": citation_id_aliases(citation_id),
+                    "aliases": citation_id_aliases(citation_id, label=label),
                 },
             )
         )
@@ -517,8 +543,10 @@ def citation_title(blocks: list[str], raw_text: str) -> str:
     quoted_title = quoted_citation_title(raw_text)
     if quoted_title:
         return quoted_title
-    for block in blocks:
+    for index, block in enumerate(blocks):
         candidate = normalize_title_candidate(block)
+        if index == 0 and len(blocks) > 1 and is_probable_author_block(candidate):
+            continue
         if is_probable_citation_title(candidate):
             return candidate
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", raw_text).strip()
@@ -574,6 +602,8 @@ def is_probable_author_block(value: str) -> bool:
         return False
     if is_probable_venue_block(value):
         return False
+    if looks_like_author_name_list(value):
+        return True
     initials = len(re.findall(r"\b[A-Z]\.", value))
     comma_count = value.count(",")
     has_author_joiner = bool(re.search(r"\b(?:and|et al\.?)\b", value, flags=re.IGNORECASE))
@@ -588,6 +618,45 @@ def is_probable_author_block(value: str) -> bool:
     if comma_count > 0 and len(capitalized_words) >= 2 and len(title_words) <= 2:
         return True
     return bool(has_author_joiner and initials > 0 and len(title_words) <= 2)
+
+
+def looks_like_author_name_list(value: str) -> bool:
+    candidate = value.strip(" ,;.")
+    if not candidate or len(candidate) > 180:
+        return False
+    if re.search(
+        r"[:?!]|\b(?:method|learning|network|model|algorithm|translation)\b", candidate, re.I
+    ):
+        return False
+    parts = [
+        part.strip()
+        for part in re.split(r"\s*,\s*|\s+(?:and|&)\s+", candidate, flags=re.IGNORECASE)
+        if part.strip()
+    ]
+    if not parts:
+        return False
+    if len(parts) == 1:
+        return is_probable_person_name(parts[0])
+    return all(is_probable_person_name(part) for part in parts)
+
+
+def is_probable_person_name(value: str) -> bool:
+    candidate = value.strip(" ,;.")
+    if not candidate:
+        return False
+    tokens = re.findall(r"[^\W\d_][\w'’.-]*|[A-Z]\.", candidate, flags=re.UNICODE)
+    if len(tokens) < 2 or len(tokens) > 5:
+        return False
+    particles = {"bin", "da", "de", "del", "der", "di", "du", "la", "le", "van", "von"}
+    meaningful = [token for token in tokens if token.casefold().strip(".") not in particles]
+    if len(meaningful) < 2:
+        return False
+    return all(is_name_token(token) for token in meaningful)
+
+
+def is_name_token(value: str) -> bool:
+    token = value.strip()
+    return bool(token) and (re.fullmatch(r"[A-Z]\.", token) is not None or token[0].isupper())
 
 
 def is_probable_venue_block(value: str) -> bool:
@@ -606,7 +675,21 @@ def is_probable_venue_block(value: str) -> bool:
             flags=re.IGNORECASE,
         )
     )
-    return has_archive_or_identifier or (has_venue_word and has_bibliographic_detail)
+    starts_like_venue = bool(
+        re.search(
+            r"^\s*(?:In\s+)?(?:Proceedings|Proc\.|"
+            r"Advances in Neural Information Processing Systems|"
+            r"International Conference|Conference|Workshop|Symposium|"
+            r"ICLR|ACL|EMNLP|NAACL|NeurIPS|NIPS)\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+    return (
+        has_archive_or_identifier
+        or starts_like_venue
+        or (has_venue_word and has_bibliographic_detail)
+    )
 
 
 def quoted_citation_title(raw_text: str) -> str:
@@ -681,7 +764,7 @@ def build_citation_entry(
     query = scholar_query(title, authors)
     metadata: dict[str, object] = {
         "source": source,
-        "aliases": citation_id_aliases(citation_id, citation_key),
+        "aliases": citation_id_aliases(citation_id, citation_key, label=label),
     }
     if citation_key:
         metadata["citation_key"] = citation_key
@@ -711,7 +794,7 @@ def scholar_query(title: str, authors: str | None) -> str:
     if authors:
         first_author = normalize_author_candidate(
             re.split(r",|\band\b", authors, maxsplit=1)[0].strip()
-        )
+        ).rstrip(".")
         if first_author:
             return f"{title} {first_author}"
     return title
@@ -741,7 +824,20 @@ def citation_key_from_id(citation_id: str) -> str | None:
     return None
 
 
-def citation_id_aliases(citation_id: str, citation_key: str | None = None) -> list[str]:
+def citation_entry_aliases(citation: CitationEntry) -> set[str]:
+    aliases = set(citation_id_aliases(citation.id, citation.citation_key, label=citation.label))
+    metadata_aliases = citation.metadata.get("aliases")
+    if isinstance(metadata_aliases, list):
+        aliases.update(alias.strip() for alias in metadata_aliases if isinstance(alias, str))
+    return {alias for alias in aliases if alias}
+
+
+def citation_id_aliases(
+    citation_id: str,
+    citation_key: str | None = None,
+    *,
+    label: str | None = None,
+) -> list[str]:
     aliases = {citation_id}
     if citation_id.startswith("bib:"):
         aliases.add(f"bib.{citation_id[4:]}")
@@ -751,6 +847,11 @@ def citation_id_aliases(citation_id: str, citation_key: str | None = None) -> li
         aliases.add(citation_key)
         aliases.add(bibliography_entry_id(citation_key))
         aliases.add(f"bib.{citation_key}")
+    if label:
+        stripped_label = label.strip().strip("[]")
+        if re.fullmatch(r"\d+[a-z]?", stripped_label):
+            aliases.add(f"bib.bib{stripped_label}")
+            aliases.add(f"bib:bib{stripped_label}")
     return sorted(alias for alias in aliases if alias)
 
 

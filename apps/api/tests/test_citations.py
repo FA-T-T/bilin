@@ -157,6 +157,59 @@ def test_extract_latexml_citations_skips_author_fragments_in_scholar_query() -> 
     assert "[2020] J" not in citations[0].scholar_query
 
 
+def test_extract_latexml_citations_handles_attention_author_blocks() -> None:
+    html = """
+    <section id="bib" class="ltx_bibliography">
+    <ul class="ltx_biblist">
+    <li id="bib.bib6" class="ltx_bibitem">
+    <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[6]</span>
+    <span class="ltx_bibblock">Francois Chollet.</span>
+    <span class="ltx_bibblock">
+      Xception: Deep learning with depthwise separable convolutions.
+    </span>
+    <span class="ltx_bibblock">
+      <span class="ltx_text ltx_font_italic">arXiv preprint arXiv:1610.02357</span>, 2016.
+    </span>
+    </li>
+    <li id="bib.bib16" class="ltx_bibitem">
+    <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[16]</span>
+    <span class="ltx_bibblock">Łukasz Kaiser and Samy Bengio.</span>
+    <span class="ltx_bibblock">Can active memory replace attention?</span>
+    <span class="ltx_bibblock">
+      In <span class="ltx_text ltx_font_italic">
+      Advances in Neural Information Processing Systems, (NIPS)</span>, 2016.
+    </span>
+    </li>
+    <li id="bib.bib20" class="ltx_bibitem">
+    <span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">[20]</span>
+    <span class="ltx_bibblock">Diederik Kingma and Jimmy Ba.</span>
+    <span class="ltx_bibblock">Adam: A method for stochastic optimization.</span>
+    <span class="ltx_bibblock">
+      In <span class="ltx_text ltx_font_italic">ICLR</span>, 2015.
+    </span>
+    </li>
+    </ul>
+    </section>
+    """
+
+    citations = extract_latexml_citations(html)
+
+    assert citations[0].title == "Xception: Deep learning with depthwise separable convolutions"
+    assert citations[0].authors == "Francois Chollet."
+    assert citations[0].arxiv_id == "1610.02357"
+    assert citations[0].scholar_query == (
+        "Xception: Deep learning with depthwise separable convolutions Francois Chollet"
+    )
+    assert citations[1].title == "Can active memory replace attention?"
+    assert citations[1].authors == "Łukasz Kaiser and Samy Bengio."
+    assert citations[1].scholar_query == ("Can active memory replace attention? Łukasz Kaiser")
+    assert citations[2].title == "Adam: A method for stochastic optimization"
+    assert citations[2].authors == "Diederik Kingma and Jimmy Ba."
+    assert (
+        citations[2].scholar_query == "Adam: A method for stochastic optimization Diederik Kingma"
+    )
+
+
 @pytest.mark.asyncio
 async def test_get_article_citations_falls_back_to_source_bbl_without_latexml_bibliography(
     bilin_home: Path,
@@ -254,6 +307,7 @@ async def test_get_article_citations_falls_back_to_source_bib_without_latexml_bi
     assert result.citations[0].doi == "10.48550/arXiv.1607.06450"
     assert result.citations[0].source == "bib"
     assert result.citations[0].scholar_query.startswith("Layer normalization Jimmy Lei Ba")
+    assert "bib.bib1" in result.citations[0].metadata["aliases"]
 
 
 def test_extract_latexml_citations_does_not_read_issn_as_year() -> None:

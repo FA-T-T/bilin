@@ -126,9 +126,9 @@ function initialReaderFeaturePreferences(): ReaderFeaturePreferences {
 
 function initialTranslationTargetLanguage(): string {
   try {
-    return globalThis.localStorage?.getItem(translationTargetLanguageStorageKey) || "zh-CN";
+    return globalThis.localStorage?.getItem(translationTargetLanguageStorageKey) || initialLocale();
   } catch {
-    return "zh-CN";
+    return initialLocale();
   }
 }
 
@@ -227,6 +227,14 @@ function saveReaderFeaturePreferences(preferences: ReaderFeaturePreferences) {
   }
 }
 
+function saveTranslationTargetLanguage(language: string) {
+  try {
+    globalThis.localStorage?.setItem(translationTargetLanguageStorageKey, language);
+  } catch {
+    // Translation target changes should still work if localStorage is unavailable.
+  }
+}
+
 export const useUiStore = create<UiState>((set) => ({
   locale: initialLocale(),
   taskDrawerOpen: false,
@@ -242,7 +250,8 @@ export const useUiStore = create<UiState>((set) => ({
     } catch {
       // Language switching should still work if localStorage is unavailable.
     }
-    set({ locale });
+    saveTranslationTargetLanguage(locale);
+    set({ locale, translationTargetLanguage: locale });
   },
   openTaskDrawer: () => set({ taskDrawerOpen: true }),
   closeTaskDrawer: () => set({ taskDrawerOpen: false }),
@@ -257,11 +266,7 @@ export const useUiStore = create<UiState>((set) => ({
   },
   setTranslationTargetLanguage: (language) => {
     const next = language.trim() || "zh-CN";
-    try {
-      globalThis.localStorage?.setItem(translationTargetLanguageStorageKey, next);
-    } catch {
-      // Language switching should still work if localStorage is unavailable.
-    }
+    saveTranslationTargetLanguage(next);
     set({ translationTargetLanguage: next });
   },
   setAutoTranslateOnLanguageSwitch: (enabled) => {

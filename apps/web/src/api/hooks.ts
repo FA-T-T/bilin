@@ -403,6 +403,9 @@ export function useTranslateArticle(libraryId?: string, revisionId?: string) {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.articleTranslations(libraryId, revisionId, payload.target_language)
         });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articles(libraryId, payload.target_language)
+        });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     }
@@ -436,6 +439,9 @@ export function useTranslateBlock(libraryId?: string, revisionId?: string) {
             revisionId,
             variables.payload.target_language
           )
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.articles(libraryId, variables.payload.target_language)
         });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });

@@ -1,4 +1,10 @@
-import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import type {
+  CSSProperties,
+  MouseEvent,
+  ReactNode,
+  TouchEvent as ReactTouchEvent,
+  WheelEvent as ReactWheelEvent
+} from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DocumentBlock } from "../api/types";
@@ -21,7 +27,6 @@ interface KindlePagedReaderProps {
 
 interface KindlePage {
   id: string;
-  contextBlocks: DocumentBlock[];
   blocks: DocumentBlock[];
   startBlockUid: string;
 }
@@ -40,6 +45,9 @@ interface MeasuredKindleBlocks {
 const defaultGetBlockText = (block: DocumentBlock) => block.source_markdown;
 const KINDLE_MEASURE_WINDOW_RADIUS = 36;
 const KINDLE_MEASURE_INITIAL_LIMIT = 80;
+const KINDLE_PAGE_SLICE_OVERLAP_PX = 28;
+const KINDLE_WHEEL_PAGE_TURN_DELTA_PX = 18;
+const KINDLE_TOUCH_PAGE_TURN_DELTA_PX = 34;
 
 export function KindlePagedReader({
   blocks,
@@ -58,6 +66,10 @@ export function KindlePagedReader({
 }: KindlePagedReaderProps) {
   const viewport = useViewportSize();
   const measureRoot = useRef<HTMLDivElement | null>(null);
+  const pageContentRoot = useRef<HTMLDivElement | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const [pageContentOffset, setPageContentOffset] = useState(0);
+  const [pageOverflow, setPageOverflow] = useState({ clientHeight: 0, scrollHeight: 0 });
   const metrics = useMemo(
     () => kindlePageMetrics(viewport.width, viewport.height, fontScale),
     [fontScale, viewport.height, viewport.width]
@@ -103,6 +115,13 @@ export function KindlePagedReader({
   const currentPage = pages[activePageIndex];
   const canGoPrevious = activePageIndex > 0;
   const canGoNext = activePageIndex < pages.length - 1;
+  const maxPageContentOffset = Math.max(0, pageOverflow.scrollHeight - pageOverflow.clientHeight);
+  const pageSliceStep = Math.max(
+    1,
+    pageOverflow.clientHeight - KINDLE_PAGE_SLICE_OVERLAP_PX
+  );
+  const canTurnPrevious = pageContentOffset > 0 || canGoPrevious;
+  const canTurnNext = pageContentOffset < maxPageContentOffset || canGoNext;
   const measurementBlocks = useMemo(
     () => kindleMeasurementBlocks(blocks, pages, activePageIndex),
     [activePageIndex, blocks, pages]
@@ -118,13 +137,87 @@ export function KindlePagedReader({
     [onPageBlockChange, onPageTurn, pages]
   );
 
-  const goPrevious = useCallback(() => {
+  useLayoutEffect(() => {
+    setPageContentOffset(0);
+  }, [currentPage?.id]);
+
+  const updatePageOverflow = useCallback(() => {
+    const root = pageContentRoot.current;
+    if (!root) return;
+    const nextOverflow = {
+      clientHeight: root.clientHeight,
+      scrollHeight: root.scrollHeight
+    };
+    setPageOverflow((current) =>
+      current.clientHeight === nextOverflow.clientHeight &&
+      current.scrollHeight === nextOverflow.scrollHeight
+        ? current
+        : nextOverflow
+    );
+    setPageContentOffset((current) =>
+      Math.min(current, Math.max(0, nextOverflow.scrollHeight - nextOverflow.clientHeight))
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    updatePageOverflow();
+  }, [currentPage?.id, pageLayout, updatePageOverflow]);
+
+  useEffect(() => {
+    const root = pageContentRoot.current;
+    if (!root || typeof ResizeObserver === "undefined") return undefined;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updatePageOverflow);
+    });
+    observer.observe(root);
+    for (const element of root.children) observer.observe(element);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [currentPage?.id, updatePageOverflow]);
+
+  useLayoutEffect(() => {
+    if (pageContentRoot.current) pageContentRoot.current.scrollTop = pageContentOffset;
+  }, [pageContentOffset]);
+
+  const turnPrevious = useCallback(() => {
+    if (pageContentOffset > 0) {
+      setPageContentOffset((current) => Math.max(0, current - pageSliceStep));
+      onPageTurn?.();
+      return;
+    }
     if (canGoPrevious) goToPage(activePageIndex - 1);
-  }, [activePageIndex, canGoPrevious, goToPage]);
+  }, [activePageIndex, canGoPrevious, goToPage, onPageTurn, pageContentOffset, pageSliceStep]);
+
+  const turnNext = useCallback(() => {
+    if (pageContentOffset < maxPageContentOffset) {
+      setPageContentOffset((current) =>
+        Math.min(maxPageContentOffset, current + pageSliceStep)
+      );
+      onPageTurn?.();
+      return;
+    }
+    if (canGoNext) goToPage(activePageIndex + 1);
+  }, [
+    activePageIndex,
+    canGoNext,
+    goToPage,
+    maxPageContentOffset,
+    onPageTurn,
+    pageContentOffset,
+    pageSliceStep
+  ]);
+
+  const goPrevious = useCallback(() => {
+    turnPrevious();
+  }, [turnPrevious]);
 
   const goNext = useCallback(() => {
-    if (canGoNext) goToPage(activePageIndex + 1);
-  }, [activePageIndex, canGoNext, goToPage]);
+    turnNext();
+  }, [turnNext]);
 
   useEffect(() => {
     const firstBlockUid = currentPage?.startBlockUid;
@@ -183,10 +276,10 @@ export function KindlePagedReader({
       ) {
         return;
       }
-      if (["ArrowRight", "PageDown", " "].includes(event.key)) {
+      if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key)) {
         event.preventDefault();
         goNext();
-      } else if (["ArrowLeft", "PageUp"].includes(event.key)) {
+      } else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) {
         event.preventDefault();
         goPrevious();
       } else if (event.key === "Home") {
@@ -216,6 +309,42 @@ export function KindlePagedReader({
     [blocks, onNavigateToBlock]
   );
 
+  const handleWheel = useCallback(
+    (event: ReactWheelEvent<HTMLElement>) => {
+      if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+      if (Math.abs(event.deltaY) < KINDLE_WHEEL_PAGE_TURN_DELTA_PX) return;
+      event.preventDefault();
+      if (event.deltaY > 0) {
+        goNext();
+      } else {
+        goPrevious();
+      }
+    },
+    [goNext, goPrevious]
+  );
+
+  const handleTouchStart = useCallback((event: ReactTouchEvent<HTMLElement>) => {
+    touchStartY.current = event.touches[0]?.clientY ?? null;
+  }, []);
+
+  const handleTouchEnd = useCallback(
+    (event: ReactTouchEvent<HTMLElement>) => {
+      const startY = touchStartY.current;
+      touchStartY.current = null;
+      const endY = event.changedTouches[0]?.clientY;
+      if (startY === null || typeof endY !== "number") return;
+      const deltaY = startY - endY;
+      if (Math.abs(deltaY) < KINDLE_TOUCH_PAGE_TURN_DELTA_PX) return;
+      event.preventDefault();
+      if (deltaY > 0) {
+        goNext();
+      } else {
+        goPrevious();
+      }
+    },
+    [goNext, goPrevious]
+  );
+
   if (blocks.length === 0 || pages.length === 0) {
     return (
       <section
@@ -234,32 +363,26 @@ export function KindlePagedReader({
       data-page-mode="paged"
       data-measured-block-count={measuredBlockCount}
       data-measure-window-size={measurementBlocks.length}
+      data-page-content-offset={pageContentOffset}
+      data-page-content-max-offset={maxPageContentOffset}
       data-testid="kindle-paged-reader"
       aria-label={title}
+      onWheel={handleWheel}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
       <div className="kindle-page-frame">
         <button
           type="button"
           className="kindle-page-turn kindle-page-turn-previous"
           aria-label={previousLabel}
-          disabled={!canGoPrevious}
+          disabled={!canTurnPrevious}
           onClick={goPrevious}
         >
           <span aria-hidden="true">‹</span>
         </button>
         <article className="kindle-page-body" onClickCapture={handleClickCapture}>
-          <div className="kindle-page-content">
-            {currentPage.contextBlocks.map((block) => (
-              <div
-                className="kindle-page-block kindle-page-context-block"
-                data-kindle-context="true"
-                data-reader-block-uid={block.block_uid}
-                data-testid={`kindle-context-block-${block.block_uid}`}
-                key={`context-${block.block_uid}`}
-              >
-                {renderBlock(block)}
-              </div>
-            ))}
+          <div ref={pageContentRoot} className="kindle-page-content">
             {currentPage.blocks.map((block) => (
               <div
                 className="kindle-page-block"
@@ -276,20 +399,20 @@ export function KindlePagedReader({
           type="button"
           className="kindle-page-turn kindle-page-turn-next"
           aria-label={nextLabel}
-          disabled={!canGoNext}
+          disabled={!canTurnNext}
           onClick={goNext}
         >
           <span aria-hidden="true">›</span>
         </button>
       </div>
       <footer className="kindle-page-footer">
-        <button type="button" disabled={!canGoPrevious} onClick={goPrevious}>
+        <button type="button" disabled={!canTurnPrevious} onClick={goPrevious}>
           {previousLabel}
         </button>
         <span data-testid="kindle-page-counter">
           {pageLabel(activePageIndex + 1, pages.length)}
         </span>
-        <button type="button" disabled={!canGoNext} onClick={goNext}>
+        <button type="button" disabled={!canTurnNext} onClick={goNext}>
           {nextLabel}
         </button>
       </footer>
@@ -359,21 +482,17 @@ function paginateKindlePages(
 ): KindlePage[] {
   const pages: KindlePage[] = [];
   let current: DocumentBlock[] = [];
-  let currentContext: DocumentBlock | null = null;
   let usedChars = 0;
 
   const pushCurrent = () => {
     if (current.length === 0) return;
-    const contextBlocks = currentContext ? [currentContext] : [];
     pages.push({
-      id: [...contextBlocks, ...current].map((block) => block.block_uid).join(":"),
-      contextBlocks,
+      id: current.map((block) => block.block_uid).join(":"),
       blocks: current,
       startBlockUid: current[0].block_uid
     });
-    currentContext = contextBlockForNextPage(current, getBlockText);
     current = [];
-    usedChars = currentContext ? estimateKindleContextCost(currentContext, getBlockText) : 0;
+    usedChars = 0;
   };
 
   for (const block of blocks) {
@@ -408,7 +527,6 @@ function paginateMeasuredKindlePages(
 ): KindlePage[] {
   const pages: KindlePage[] = [];
   let current: DocumentBlock[] = [];
-  let currentContext: DocumentBlock | null = null;
   let usedHeight = 0;
   const pageHeight = metrics.contentHeight;
 
@@ -419,16 +537,13 @@ function paginateMeasuredKindlePages(
 
   const pushCurrent = () => {
     if (current.length === 0) return;
-    const contextBlocks = currentContext ? [currentContext] : [];
     pages.push({
-      id: [...contextBlocks, ...current].map((block) => block.block_uid).join(":"),
-      contextBlocks,
+      id: current.map((block) => block.block_uid).join(":"),
       blocks: current,
       startBlockUid: current[0].block_uid
     });
-    currentContext = contextBlockForNextPage(current, getBlockText);
     current = [];
-    usedHeight = currentContext ? measuredBlockHeight(currentContext) * 0.58 + 16 : 0;
+    usedHeight = 0;
   };
 
   for (const block of blocks) {
@@ -519,79 +634,6 @@ function shallowNumberRecordEqual(left: Record<string, number>, right: Record<st
   const rightKeys = Object.keys(right);
   if (leftKeys.length !== rightKeys.length) return false;
   return leftKeys.every((key) => left[key] === right[key]);
-}
-
-function contextBlockForNextPage(
-  blocks: DocumentBlock[],
-  getBlockText: (block: DocumentBlock) => string
-) {
-  const tailParagraph = findLastBlockOfType(blocks, "paragraph");
-  const tailBlock = tailParagraph ?? findLastBlockOfType(blocks, "abstract");
-  if (!tailBlock) return null;
-  const contextMarkdown = tailSentencesForContext(getBlockText(tailBlock));
-  if (!contextMarkdown) return null;
-  return {
-    ...tailBlock,
-    id: `${tailBlock.id}:kindle-context`,
-    block_uid: `${tailBlock.block_uid}:kindle-context`,
-    source_markdown: contextMarkdown,
-    source_latex: null
-  };
-}
-
-function findLastBlockOfType(blocks: DocumentBlock[], blockType: DocumentBlock["block_type"]) {
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    if (blocks[index].block_type === blockType) return blocks[index];
-  }
-  return null;
-}
-
-function estimateKindleContextCost(
-  block: DocumentBlock,
-  getBlockText: (block: DocumentBlock) => string
-) {
-  return Math.round(estimateKindleBlockCost(block, getBlockText(block)) * 0.52) + 48;
-}
-
-function tailSentencesForContext(markdown: string) {
-  const normalized = markdown.replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  const sentences = markdownSentences(normalized);
-  if (sentences.length <= 2) return sentences.join(" ");
-  return sentences.slice(-2).join(" ");
-}
-
-function markdownSentences(markdown: string) {
-  const sentences: string[] = [];
-  let start = 0;
-
-  for (let index = 0; index < markdown.length; index += 1) {
-    if (!isSentencePunctuation(markdown[index])) continue;
-    let end = index + 1;
-    while (end < markdown.length && isSentenceClosingMarkdown(markdown[end])) {
-      end += 1;
-    }
-    if (end < markdown.length && !/\s/.test(markdown[end])) continue;
-    const sentence = markdown.slice(start, end).trim();
-    if (sentence) sentences.push(sentence);
-    while (end < markdown.length && /\s/.test(markdown[end])) {
-      end += 1;
-    }
-    start = end;
-    index = end - 1;
-  }
-
-  const tail = markdown.slice(start).trim();
-  if (tail) sentences.push(tail);
-  return sentences.length > 0 ? sentences : [markdown];
-}
-
-function isSentencePunctuation(character: string) {
-  return [".", "!", "?", "。", "！", "？"].includes(character);
-}
-
-function isSentenceClosingMarkdown(character: string) {
-  return ['"', "'", "”", "’", "）", ")", "]", "*", "_", "`"].includes(character);
 }
 
 function estimateKindleBlockCost(block: DocumentBlock, text: string) {

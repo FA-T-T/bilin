@@ -206,6 +206,49 @@ async def test_translation_queue_runs_block_job_and_reuses_cache(
 
 
 @pytest.mark.asyncio
+async def test_translation_status_is_scoped_to_target_language(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    _ = bilin_home
+    library, provider, revision_id = await prepare_translation_fixture(tmp_path)
+    block = await get_block_by_uid(library, revision_id, "p-0001")
+    assert block is not None
+    await create_translation_variant(
+        library=library,
+        block=block,
+        target_language="zh-CN",
+        raw_markdown="中文译文。",
+        provider_profile_id=provider.id,
+        model=provider.default_model,
+        glossary_version=None,
+        validation_status="ok",
+        metadata={
+            "block_uid": block.block_uid,
+            "content_hash": block.content_hash,
+        },
+    )
+
+    chinese_item = (await list_article_items(library, "zh-CN"))[0]
+    assert chinese_item.translation_status.target_language == "zh-CN"
+    assert chinese_item.translation_status.status == ArticleTranslationState.translated
+    assert chinese_item.translation_status.translated_blocks == 1
+
+    japanese_item = (await list_article_items(library, "ja"))[0]
+    assert japanese_item.translation_status.target_language == "ja"
+    assert japanese_item.translation_status.status == ArticleTranslationState.not_started
+    assert japanese_item.translation_status.translated_blocks == 0
+
+    japanese_result = await queue_article_translation(
+        library,
+        revision_id,
+        TranslationBatchRequest(target_language="ja", provider_profile_id=provider.id),
+    )
+    assert japanese_result.jobs_created == 1
+    assert japanese_result.cached_blocks == 0
+
+
+@pytest.mark.asyncio
 async def test_library_missing_translation_queue_only_targets_untranslated_blocks(
     bilin_home: Path,
     tmp_path: Path,

@@ -29,97 +29,92 @@ AI agents: Read [AGENT_GUIDE.md](AGENT_GUIDE.md) instead — structured for LLM 
 
 衔牍是一个**本地优先、结构化**的论文阅读工作台，专为需要跨语言理解英文论文的研究者设计。
 
-它不依赖云端，而是从 arXiv 源文件或 LaTeX 源码出发，将论文拆解为章节、段落、公式、图表、引用等可对齐的阅读单元。你只需配置自己的 OpenAI/Anthropic 兼容 API（如 DeepSeek），即可用母语逐段翻译全文，再随时切回英文原文校准术语。同时支持对全文提问，回答会保留原文出处（block id），方便核实。
+完全本地化, 支持 arXiv 源或 LaTeX 包.
 
-所有论文、解析结果、翻译缓存、问答记录和笔记都保存在你指定的本地文件夹，**无需注册，不托管后端，不上传文件**。翻译成本极低：测试用 DeepSeek V4 Flash 处理 10 篇共 240 页论文，总花费仅 2 元。
+所有论文、解析结果、翻译缓存、问答记录和笔记都保存在你指定的本地文件夹，**无需注册，不托管后端，不上传文件**。
 
-## 主要能力
+翻译成本极低：测试用 DeepSeek V4 Flash 处理 10 篇共 240 页论文，总花费仅 2 元。
 
-| 范围 | 衔牍提供什么 |
-| --- | --- |
-| 文库工作台 | 首页集中管理文库、论文列表、搜索、筛选、排序、阅读进度、翻译状态、导入与批量翻译；点击行选中论文，Read 进入阅读器。 |
-| 导入与解析 | 输入 arXiv ID 自动下载源码包与 PDF，或导入本地 TeX 压缩包；安装 LaTeXML 后可解析章节、段落、公式、图表；兼容老旧 arXiv 源码、`.ltx`、无扩展名 TeX 及常见宏包。 |
-| 阅读模式 | Study（原文为主，逐段展开译文）、Bilingual（原文译文并排校准）、Translation（纯母语通读）、Source（原文与 LaTeX 源码）；左侧切换同文库文章，右侧折叠任务、模型、提问、翻译、术语、笔记与导出。 |
-| 段落工作流 | 每个 block 支持标色、复制、查看源码、重新翻译、针对当前段落提问，并将中英文摘录导出到 Obsidian。 |
-| 问答与笔记 | 右侧提问区默认展开，回答基于文章证据并保留引用 block id；笔记与学习过程合一，可生成可编辑讲义 patch、术语卡片与 Obsidian 摘录。 |
-| 模型供应商 | 提供 OpenAI、Anthropic、DeepSeek、Gemini、Qwen DashScope、Kimi、Groq、OpenRouter、xAI 等预设，也可手动配置任意 OpenAI-compatible 或 Anthropic-compatible 接口。 |
-| 本地数据 | 一个 library 即一个可携带文件夹，内含 SQLite、源码包、解析结果、资产、翻译缓存、笔记、导出物与清单；可用 iCloud、OneDrive 或 Syncthing 同步，冲突请交由外部工具处理。 |
-| 导出 | 支持源文、译文、双语、讲义和完整 bundle artifact；导出的 Markdown 与讲义自动嵌入不可见来源提示，提醒遵守原论文许可。 |
+## 主要功能
 
-完整功能说明见 [docs/user-feature-guide.md](docs/user-feature-guide.md)。这份文档覆盖 Reader 模式、颜色标记、Obsidian 联动、段落工具栏、术语、问答、讲义和导出的实际用法。
+##### 主页面
 
-## 应用截图
+<img src="./assets/image-20260522204321612.png" alt="image-20260522204321612" style="zoom:33%;" />
+
+##### **多语言**
 
 截图中的论文正文、图表和公式属于原论文作者或相应权利人，这里只用于展示衔牍的本地阅读、翻译、问答和结构化渲染能力。
 
-### 阅读模式
+中文示例:
 
-截图使用本地文库中的论文 *Deep Residual Learning for Image Recognition* 作为示例。
+<img src="./assets/image-20260522193937577.png" alt="image-20260522193937577" style="zoom: 25%;" />
 
-<table>
-  <tr>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/02-mode-study.png" alt="精读模式">
-      <br><sub>精读模式：英文原文为主，逐段展开译文，不打断阅读节奏。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/03-mode-bilingual.png" alt="双语模式">
-      <br><sub>双语模式：原文与译文并排校准，适合核对术语与论证。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/04-mode-translation.png" alt="译文模式">
-      <br><sub>译文模式：先用母语通读，再回原文校准。</sub>
-    </td>
-  </tr>
-</table>
+法语示例:
 
-### 主要功能
+<img src="./assets/image-20260522194355907.png" alt="image-20260522194355907" style="zoom:25%;" />
 
-<table>
-  <tr>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/01-library-and-article-list.png" alt="本地文库和论文列表">
-      <br><sub>本地文库：论文、解析状态、翻译进度、阅读进度和 Read 入口集中管理。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/05-side-ask-panel.png" alt="侧边栏提问">
-      <br><sub>论文问答：右侧提问区默认展开，回答限定在文章证据内并保留 block id。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/04-paragraph-highlight-and-translation.png" alt="段落标色、句子强调和段落提问">
-      <br><sub>段落工作流：标色、句子强调、译文展开和段落提问一气呵成。</sub>
-    </td>
-  </tr>
-</table>
+日语示例:
 
-### 图文结构展示
+<img src="./assets/image-20260522193846703.png" alt="image-20260522193846703" style="zoom:25%;" />
 
-<table>
-  <tr>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/06-figure-and-caption.png" alt="图片和 caption 展示">
-      <br><sub>图片与 caption：真实图表资产、英文说明与中文译文完整保留。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/07-equation-rendering.png" alt="公式渲染">
-      <br><sub>公式渲染：LaTeX 结构、编号与引用在阅读器中清晰可读。</sub>
-    </td>
-    <td width="33.33%">
-      <img src="docs/screenshots/readme/08-table-rendering.png" alt="表格渲染">
-      <br><sub>表格渲染：结构化展示论文表格，保留 caption 语义。</sub>
-    </td>
-  </tr>
-</table>
+德语示例:
 
-## 界面语言
+<img src="./assets/image-20260522194717793.png" alt="image-20260522194717793" style="zoom:25%;" />
 
-衔牍提供简体中文、English、日本語、한국어、Español、Français 和 Deutsch 界面。首次启动跟随系统语言，之后可在 Settings → Interface 随时切换。部分语言可能回退到英文，但不影响导入、阅读、翻译、问答和导出等核心流程。
+韩语示例:
+
+<img src="./assets/image-20260522194157385.png" alt="image-20260522194157385" style="zoom:25%;" />
+
+##### 图
+
+<img src="./assets/image-20260522194901555.png" alt="image-20260522194901555" style="zoom: 25%;" />
+
+##### 公式
+
+Katex 渲染
+
+<img src="./assets/image-20260522195038561.png" alt="image-20260522195038561" style="zoom:25%;" />
+
+##### 表格
+
+HTML 重新渲染
+
+<img src="./assets/image-20260522195134674.png" alt="image-20260522195134674" style="zoom:25%;" />
+
+##### 句子悬停强调
+
+按句子划分, 便于双语对照
+
+![image-20260522195506879](./assets/image-20260522195506879.png)
+
+##### 引文预览
+
+引文自动解析, 支持 Google Scholar, arxiv 搜索, 也支持一键加入文库, 自动翻译.
+
+<img src="./assets/image-20260522202145628.png" alt="image-20260522202145628" style="zoom: 33%;" />
+
+##### 原文或译文的 markdown 导出
+
+支持原文的 markdown 导出或者译文的 markdown 导出, 可以直接作为知识库文档.
+
+<img src="./assets/image-20260522202353196.png" alt="image-20260522202353196" style="zoom:25%;" />
+
+##### Kindle 模式
+
+kindle 模式方便局域网中的墨水屏设备通过浏览器访问, 降低了资源消耗, 取消滑动, 左右两侧增加翻页按键.
+建议 10 英寸以上墨水屏设备横屏使用.
+
+![image-20260522202534656](./assets/image-20260522202534656.png)
 
 ## 快速开始
 
 ### Agent 用户 (codex, claude, deepseek-tui, opencode...)
 
-将本页面链接直接发给 agent，它会自动完成依赖安装、部署和应用启动。
+将本页面链接直接发给 agent, 然后对他说:
+
+" https://github.com/FA-T-T/bilin 请帮我部署该服务, 安装必要依赖, 并启动服务"
+
+它会自动完成依赖安装、部署和应用启动。
 
 ### 普通用户
 

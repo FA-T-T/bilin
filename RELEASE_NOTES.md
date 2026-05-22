@@ -1,20 +1,21 @@
-# Ilios v0.3.2
+# Ilios v0.3.4
 
-本版本集中修复阅读器工具栏、Kindle 阅读入口、默认功能开关和翻译记忆候选逻辑。目标是让默认阅读界面更轻，减少菜单重叠和闪烁，并避免把明显不适合作为复用候选的翻译记忆继续暴露给审核流。
+本版本继续把阅读器从原型状态推向可复用的研究工具。重点是修复多语言翻译状态、Attention Is All You Need 这类 LaTeXML 文献列表解析、Markdown 导出稳定性、Kindle 分页体验，以及同步多语言 README。
 
 ## 主要变化
 
-- 工具与阅读偏好合并为常驻顶部工具栏；点击一个工具只展开对应面板，切换到另一个工具时自动收起前一个面板。
-- HTML 与 Kindle 成为并列阅读界面入口；默认进入 HTML，Kindle 入口可切换到分页阅读。
-- Kindle 模式保留阅读模式切换，但只提供双语和译文；双语在 Kindle 中使用横屏分页，译文可自动适配横竖屏。
-- 顶部菜单进一步压缩：HTML/Kindle 默认只显示图标，阅读模式入口默认只显示 `mode`，完整标签仍保留在可访问名称和展开菜单中。
-- 阅读工具功能开关的默认值调整为更轻的阅读体验，章节索引、阅读进度、颜色标记、术语卡片、段落提问、句子悬停强调、内容提示和任务抽屉自动打开默认关闭。
-- 段落提问框重新计算定位，避免工具栏或问答框超出页面宽度。
-- 已有翻译记忆审核候选收紧，默认隐藏标记为非候选的条目；明显源文复制或非翻译内容不再进入普通候选审核视图。
+- 多语言翻译状态按目标语言区分，简体中文下完成的块不会在切换到日文、韩文、法文、德文或其他目标语言时误显示为已翻译。
+- Library 文章列表改为第一次点击选中、第二次点击进入阅读，减少误触进入阅读器。
+- LaTeXML bibliography list 现在会生成结构化参考文献块，正文 citation alias 能关联到 bibliography metadata，Attention Is All You Need 这类论文的引文预览不再缺失。
+- 引文跳转查询优先使用标题、DOI、arXiv ID 和更完整的 bibliography metadata，避免只拿作者年份片段去搜 Google Scholar 或 arXiv。
+- Markdown 导出继续补强标题去重、独立公式块、KaTeX 兼容命令替换、图片插入和 HTML 表格转 Markdown 表格。
+- Kindle 模式去掉上一页上下文尾巴，改为更接近电子书的上下翻页体验，并保留字体大小调节。
+- 顶部 HTML / Kindle 入口居中显示图标和文字，首页入口放到最左侧，文库入口紧随其后。
+- 简体中文 README 改为截图驱动的功能展示，并同步更新 English、日本語、한국어、Español、Français、Deutsch README；新增截图资产随 release package 一起发布。
 
 ## 验证
 
-- `pnpm --dir apps/web typecheck`
-- `pnpm --dir apps/web lint`
-- `pnpm --dir apps/web test:run -- tests/render.test.tsx`
-- `pnpm --dir apps/api test`
+- `git diff --check`
+- `apps/api/.venv/bin/python -m pytest -q apps/api/tests/test_export.py apps/api/tests/test_translation.py apps/api/tests/test_latexml_parser.py apps/api/tests/test_citations.py apps/api/tests/test_docs.py`，101 passed
+- `pnpm --filter @bilin/web test:run -- render.test.tsx`，70 passed
+- 文档图片引用检查：12 张 README 图片均存在于 `assets/`

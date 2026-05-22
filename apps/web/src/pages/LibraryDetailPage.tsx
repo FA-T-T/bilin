@@ -34,7 +34,7 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   useArchiveArticle,
@@ -62,6 +62,7 @@ type ArticleSort = "updated" | "title" | "progress";
 export function LibraryDetailPage() {
   const t = useT();
   const { libraryId } = useParams();
+  const navigate = useNavigate();
   const library = useLibrary(libraryId);
   const targetLanguage = useUiStore((state) => state.translationTargetLanguage);
   const setTargetLanguage = useUiStore((state) => state.setTranslationTargetLanguage);
@@ -103,6 +104,7 @@ export function LibraryDetailPage() {
     kind: "success" | "error";
     text: string;
   } | null>(null);
+  const armedArticleRevisionId = useRef<string | null>(null);
   const lastImportJobId = useRef<string | null>(null);
   const lastLocalImportRevisionId = useRef<string | null>(null);
   const providerOptions = useMemo(
@@ -160,7 +162,14 @@ export function LibraryDetailPage() {
   useEffect(() => {
     if (visibleArticleItems.length === 0) {
       setSelectedRevisionId(null);
+      armedArticleRevisionId.current = null;
       return;
+    }
+    if (
+      armedArticleRevisionId.current &&
+      !visibleArticleItems.some((item) => item.article_revision.id === armedArticleRevisionId.current)
+    ) {
+      armedArticleRevisionId.current = null;
     }
     if (
       selectedRevisionId &&
@@ -168,6 +177,7 @@ export function LibraryDetailPage() {
     ) {
       return;
     }
+    armedArticleRevisionId.current = null;
     setSelectedRevisionId(visibleArticleItems[0].article_revision.id);
   }, [selectedRevisionId, visibleArticleItems]);
 
@@ -221,6 +231,16 @@ export function LibraryDetailPage() {
 
   const articleRoute = (item: ArticleListItem) =>
     `/articles/${item.article_revision.id}?libraryId=${encodeURIComponent(libraryId ?? "")}`;
+
+  const activateArticleRow = (item: ArticleListItem) => {
+    const revisionId = item.article_revision.id;
+    if (armedArticleRevisionId.current === revisionId) {
+      navigate(articleRoute(item));
+      return;
+    }
+    armedArticleRevisionId.current = revisionId;
+    setSelectedRevisionId(revisionId);
+  };
 
   const archiveRevision = (revisionId: string) => {
     setArticleActionMessage(null);
@@ -757,25 +777,21 @@ export function LibraryDetailPage() {
                         tabIndex={0}
                         data-selected={selected || undefined}
                         title={readingProgressTitle(item.reading_progress)}
-                        onClick={() => setSelectedRevisionId(item.article_revision.id)}
+                        onClick={() => activateArticleRow(item)}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();
-                          setSelectedRevisionId(item.article_revision.id);
+                          activateArticleRow(item);
                         }}
                       >
                         <span className="library-paper-icon" aria-hidden="true">
                           <FileText size={16} />
                         </span>
                         <span className="library-paper-main">
-                          <Link
-                            className="library-paper-title library-paper-title-link"
-                            to={articleRoute(item)}
-                            onClick={(event) => event.stopPropagation()}
-                          >
+                          <span className="library-paper-title library-paper-title-link">
                             <ReadingProgressTitleBackground progress={item.reading_progress} />
                             <span>{item.family.title ?? item.family.external_id}</span>
-                          </Link>
+                          </span>
                           <span className="library-paper-meta">
                             {articleSourceLabel(item)} · {item.family.external_id}
                             {item.article_revision.version} · {item.block_count}{" "}
