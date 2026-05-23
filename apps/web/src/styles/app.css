@@ -1875,7 +1875,7 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .reader-mosaic-left-collapsed {
-  --reader-left-rail-width: 0px;
+  --reader-left-rail-width: 48px;
 }
 
 .reader-mosaic-right-collapsed {
@@ -1909,6 +1909,10 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 .reader-side-rail-collapsed {
   display: none;
   overflow: visible;
+}
+
+.reader-article-rail.reader-side-rail-collapsed {
+  display: grid;
 }
 
 .reader-rail-header,
@@ -4024,6 +4028,55 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
     grid-template-columns: 1fr;
   }
 
+  .library-table-panel .table-scroll {
+    overflow-x: visible;
+  }
+
+  .library-table-panel .data-table {
+    min-width: 0;
+  }
+
+  .library-table-panel .data-table .mantine-Table-thead {
+    display: none;
+  }
+
+  .library-table-panel .data-table .mantine-Table-table,
+  .library-table-panel .data-table .mantine-Table-tbody,
+  .library-table-panel .data-table .mantine-Table-tr,
+  .library-table-panel .data-table .mantine-Table-td {
+    display: block;
+    width: 100%;
+  }
+
+  .library-table-panel .data-table .mantine-Table-tr {
+    padding: 12px;
+    border: 1px solid var(--bilin-panel-border);
+    border-radius: 8px;
+    background: light-dark(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.035));
+  }
+
+  .library-table-panel .data-table .mantine-Table-tr + .mantine-Table-tr {
+    margin-top: 10px;
+  }
+
+  .library-table-panel .data-table .mantine-Table-td {
+    padding: 7px 0;
+    overflow-wrap: anywhere;
+  }
+
+  .library-table-panel .data-table .mantine-Table-td::before {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--bilin-faint);
+    font-size: 0.72rem;
+    font-weight: 680;
+    content: attr(data-label);
+  }
+
+  .library-table-panel .data-table .mantine-Table-td:last-child .mantine-Group-root {
+    justify-content: flex-start;
+  }
+
   .provider-form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -4127,6 +4180,17 @@ html[data-mantine-color-scheme="dark"] .reader-card-tag[aria-expanded="true"] {
     position: relative;
     top: auto;
     max-height: none;
+  }
+
+  .reader-right-rail:not(.reader-side-rail-collapsed) {
+    position: fixed;
+    top: 74px;
+    right: 10px;
+    left: 10px;
+    z-index: 44;
+    max-height: calc(100dvh - 92px);
+    padding-bottom: 10px;
+    overscroll-behavior: contain;
   }
 
   .reader-chapter-rail {

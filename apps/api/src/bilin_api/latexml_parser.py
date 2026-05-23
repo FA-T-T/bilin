@@ -1689,6 +1689,19 @@ def _timeout_failure(
 
 
 async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    if not hasattr(os, "killpg"):
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+            return
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            return
+
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:

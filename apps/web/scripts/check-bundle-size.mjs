@@ -1,7 +1,8 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const assetsDir = new URL("../dist/assets/", import.meta.url);
+const assetsDir = fileURLToPath(new URL("../dist/assets/", import.meta.url));
 const maxChunkBytes = 500_000;
 
 const files = await readdir(assetsDir);
@@ -9,7 +10,7 @@ const jsChunks = [];
 
 for (const file of files) {
   if (!file.endsWith(".js")) continue;
-  const path = join(assetsDir.pathname, file);
+  const path = join(assetsDir, file);
   const fileStat = await stat(path);
   jsChunks.push({ file, bytes: fileStat.size });
 }

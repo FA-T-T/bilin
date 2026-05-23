@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -107,7 +108,7 @@ async def save_obsidian_term_cards(
 
 
 def default_obsidian_vault_path() -> Path:
-    home = Path.home()
+    home = Path(os.environ.get("HOME") or Path.home()).expanduser()
     cloud_storage = home / "Library" / "CloudStorage"
     candidates = sorted(cloud_storage.glob("OneDrive*")) if cloud_storage.exists() else []
     candidates.extend(sorted(home.glob("OneDrive*")))
