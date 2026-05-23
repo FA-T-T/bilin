@@ -249,12 +249,18 @@ def stable_document_summary(
                 "kind": asset.kind,
                 "caption": asset.caption,
                 "label": asset.label,
-                "source_path": asset.source_path,
-                "web_path": asset.web_path,
+                "source_path": stable_path_text(asset.source_path),
+                "web_path": stable_path_text(asset.web_path),
             }
             for asset in assets
         ],
     }
+
+
+def stable_path_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.replace("\\", "/")
 
 
 def latex_corpus_summary(summary: dict[str, Any]) -> dict[str, Any]:

@@ -195,7 +195,7 @@ export function LibraryHomePage() {
                   const isEditingName = editingLibrary?.id === library.id;
                   return (
                     <Table.Tr key={library.id}>
-                      <Table.Td>
+                      <Table.Td data-label={t("library.name")}>
                         {isEditingName ? (
                           <Group gap="xs" wrap="nowrap">
                             <TextInput
@@ -257,7 +257,7 @@ export function LibraryHomePage() {
                           </Group>
                         )}
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label={t("library.status")}>
                         <Badge
                           color={library.status === "archived" ? "gray" : undefined}
                           variant="light"
@@ -265,9 +265,11 @@ export function LibraryHomePage() {
                           {library.status}
                         </Badge>
                       </Table.Td>
-                      <Table.Td>{library.path}</Table.Td>
-                      <Table.Td>{new Date(library.updated_at).toLocaleString()}</Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label={t("library.path")}>{library.path}</Table.Td>
+                      <Table.Td data-label={t("library.updated")}>
+                        {new Date(library.updated_at).toLocaleString()}
+                      </Table.Td>
+                      <Table.Td data-label={t("library.actions")}>
                         <Group gap="xs" justify="flex-end" wrap="nowrap">
                           <Button
                             disabled={library.status === "archived" || archiveLibrary.isPending}

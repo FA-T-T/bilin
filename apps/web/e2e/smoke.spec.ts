@@ -3,6 +3,13 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const timestamp = "2026-04-30T00:00:00.000Z";
 
 test("opens the reader shell", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "iiios-reader-feature-preferences",
+      JSON.stringify({ bottomProgressVisible: true })
+    );
+  });
+
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
 
@@ -27,13 +34,15 @@ test("opens the reader shell", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Expand Tasks" })).toBeVisible();
   await page.getByRole("button", { name: "Expand Tasks" }).click();
   await expect(page.getByRole("button", { name: "Collapse Tasks" })).toBeVisible();
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Collapse Ask" })).toBeVisible();
   await page.getByRole("textbox", { name: "Question" }).fill("What is the main point?");
   await expect(page.getByRole("button", { name: "Ask paper" })).toBeEnabled();
   await expect(page.getByText("A parsed paragraph from the mocked article API.")).toBeVisible();
   await expect(page.getByText("来自 mocked article API 的译文。")).toHaveCount(0);
   await page.getByRole("button", { name: "Show translation" }).click();
   await expect(page.getByText("来自 mocked article API 的译文。")).toBeVisible();
-  await expect(page.locator(".reader-bottom-chapters")).toBeVisible();
+  await expect(page.locator(".reader-bottom-status")).toBeVisible();
   await expect(page.locator(".reader-command-center")).toBeVisible();
   const sourceContent = page.locator(".study-block-translation-open .study-source-content").first();
   const translationPanel = page
@@ -56,6 +65,7 @@ test("opens the reader shell", async ({ page }) => {
   await page.getByLabel("Reading mode").click();
   await page.getByRole("button", { name: "Source" }).click();
   await expect(page.getByText("Translation pending.")).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByRole("button", { name: "Manage tasks" }).click();
   await expect(page.getByText("Background tasks")).toBeVisible();
 
@@ -82,6 +92,14 @@ test("keeps long reader pages bounded while scrolling", async ({ page }) => {
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2))
     .toBe(true);
+  const postScrollMetrics = await page.evaluate(() => ({
+    nodeCount: document.querySelectorAll("*").length,
+    renderedBlocks: document.querySelectorAll("[data-reader-block-rendered='true']").length,
+    placeholders: document.querySelectorAll("[data-reader-block-placeholder='true']").length
+  }));
+  expect(postScrollMetrics.nodeCount).toBeLessThan(4_600);
+  expect(postScrollMetrics.renderedBlocks).toBeLessThan(60);
+  expect(postScrollMetrics.placeholders).toBeGreaterThan(220);
 });
 
 async function mockArticleApi(page: Page) {
@@ -140,14 +158,15 @@ async function mockArticleApi(page: Page) {
       );
     }
     if (pathname.endsWith("/articles/revision-smoke/translations")) {
+      const targetLanguage = url.searchParams.get("target_language") ?? "zh-CN";
       return fulfillJson(route, {
         article_revision_id: "revision-smoke",
-        target_language: url.searchParams.get("target_language") ?? "zh-CN",
+        target_language: targetLanguage,
         variants: [
           {
             id: "translation-smoke",
             block_id: "block-p-smoke",
-            target_language: "zh-CN",
+            target_language: targetLanguage,
             provider_profile_id: "provider-smoke",
             model: "smoke-model",
             raw_markdown: "来自 mocked article API 的译文。",

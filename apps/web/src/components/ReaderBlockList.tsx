@@ -46,9 +46,9 @@ const defaultGetBlockText = (block: DocumentBlock) => block.source_markdown;
 
 const defaultVirtualizationOptions: Required<ReaderVirtualizationOptions> = {
   enabled: true,
-  overscanBefore: 12,
-  overscanAfter: 18,
-  forceRenderFirstBlocks: 6,
+  overscanBefore: 5,
+  overscanAfter: 8,
+  forceRenderFirstBlocks: 4,
   structuralRenderLimit: 180
 };
 

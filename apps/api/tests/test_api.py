@@ -32,6 +32,20 @@ def test_health_endpoint(bilin_home: Path) -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_cors_allows_fallback_local_web_ports(bilin_home: Path) -> None:
+    with TestClient(app) as client:
+        response = client.options(
+            "/libraries",
+            headers={
+                "Origin": "http://127.0.0.1:4173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
+
+
 def test_library_and_jobs_api(bilin_home: Path, tmp_path: Path) -> None:
     with TestClient(app) as client:
         library_response = client.post(

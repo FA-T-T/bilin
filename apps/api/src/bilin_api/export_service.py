@@ -312,7 +312,7 @@ async def write_markdown_export_package(
     markdown = with_export_notice(clean_user_markdown(markdown))
     markdown = rewrite_asset_tokens(markdown, asset_paths, f"{base_name}.assets")
     markdown_path = package_dir / f"{base_name}.md"
-    markdown_path.write_text(markdown, encoding="utf-8")
+    markdown_path.write_text(markdown, encoding="utf-8", newline="\n")
     output_path = export_dir / f"{base_name}.zip"
     if output_path.exists():
         output_path.unlink()

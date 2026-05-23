@@ -134,6 +134,12 @@ const READING_PROGRESS_MAX_IDLE_MS = 60_000;
 const READER_CHROME_HIDE_SCROLL_Y = 128;
 const READER_CHROME_REVEAL_SCROLL_Y = 48;
 const READER_CHROME_SCROLL_INTENT_PX = 32;
+const DESKTOP_READER_RAIL_QUERY = "(min-width: 1181px)";
+
+function defaultDesktopReaderRailOpen() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia(DESKTOP_READER_RAIL_QUERY).matches;
+}
 
 interface ReaderCardDraft {
   cardId?: string;
@@ -182,7 +188,10 @@ export function ReaderPage() {
   const [chatBlockUid, setChatBlockUid] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [readerArticleSearchQuery, setReaderArticleSearchQuery] = useState("");
-  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(false);
+  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(defaultDesktopReaderRailOpen);
+  const [readerRightRailVisible, setReaderRightRailVisible] = useState(
+    defaultDesktopReaderRailOpen
+  );
   const [activeReaderToolbarPanel, setActiveReaderToolbarPanel] =
     useState<ReaderToolbarPanel | null>(null);
   const [nativeSearch, setNativeSearch] = useState(false);
@@ -300,7 +309,7 @@ export function ReaderPage() {
     ? citationLookup
     : emptyCitationLookup;
   const kindleMode = readerSurfaceMode === "kindle";
-  const readerRightRailOpen = activeReaderToolbarPanel !== null;
+  const readerRightRailOpen = readerRightRailVisible || activeReaderToolbarPanel !== null;
 
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.asset_id, asset] as const)),
@@ -483,10 +492,12 @@ export function ReaderPage() {
 
   const toggleReaderToolbarPanel = useCallback((panel: ReaderToolbarPanel) => {
     setReaderModeMenuOpen(false);
+    setReaderRightRailVisible(true);
     setActiveReaderToolbarPanel((current) => (current === panel ? null : panel));
   }, []);
 
   const closeReaderToolbarPanel = useCallback(() => {
+    setReaderRightRailVisible(false);
     setActiveReaderToolbarPanel(null);
   }, []);
 
@@ -2036,7 +2047,18 @@ export function ReaderPage() {
                     ) : null}
                   </div>
                 </>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  className="reader-rail-collapsed-button"
+                  aria-label={t("reader.expandArticles")}
+                  aria-expanded={false}
+                  onClick={() => setReaderArticleRailOpen(true)}
+                >
+                  <BookMarked size={15} aria-hidden="true" />
+                  <span>{t("reader.articleSwitcher")}</span>
+                </button>
+              )}
             </aside>
             <div
               className={`reader-paper-layout${
@@ -2559,9 +2581,12 @@ function ReaderSideTile({
   className
 }: ReaderSideTileProps) {
   const t = useT();
-  if (!open) return null;
   return (
-    <section className={`reader-side-tile reader-side-tile-open${className ? ` ${className}` : ""}`}>
+    <section
+      className={`reader-side-tile${open ? " reader-side-tile-open" : ""}${
+        className ? ` ${className}` : ""
+      }`}
+    >
       <button
         type="button"
         className="reader-side-tile-toggle"
@@ -2972,6 +2997,7 @@ function ChatPanel({
       ) : null}
       <Textarea
         className="reader-chat-question"
+        aria-label={t("reader.chatQuestion")}
         label={t("reader.chatQuestion")}
         placeholder={t("reader.chatQuestionPlaceholder")}
         autosize
