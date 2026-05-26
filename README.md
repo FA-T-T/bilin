@@ -1,6 +1,6 @@
 <h1 align="center">
   衔牍 (LLM 辅助论文阅读)<br>
-  <sub><sub>Ilios · 理紐</sub></sub>
+  <sub><sub>Ilios</sub></sub>
 </h1>
 
 <p align="center">
@@ -233,7 +233,5 @@ pnpm --filter @bilin/web test:e2e
   <br>
   <strong>衔牍</strong><br>
   凿壁借光，衔牍而来。将文献的逻辑与智慧，衔至你的案前。<br><br>
-  <strong>理紐</strong><br>
-  論理の紐を結ぶ者。あなたと著者の思考をつなぐ架け橋。<br><br>
   <em>如果衔牍帮你少熬一个读论文的夜晚，给项目一个 Star，让更多科研新人找到这束光。</em>
 </p>
