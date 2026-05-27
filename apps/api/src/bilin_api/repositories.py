@@ -1557,7 +1557,8 @@ async def retry_failed_job(job_id: str) -> Job | None:
             """
             UPDATE jobs
             SET status = ?, error_json = NULL, result_json = NULL, attempts = 0,
-                started_at = NULL, finished_at = NULL, lease_owner = NULL, updated_at = ?
+                progress = 0, started_at = NULL, finished_at = NULL,
+                lease_owner = NULL, updated_at = ?
             WHERE id = ? AND status = ?
             """,
             (
