@@ -19,6 +19,7 @@ from bilin_api.arxiv import (
     download_bytes,
     metadata_from_entry,
     parse_arxiv_identity,
+    resolve_arxiv_metadata,
 )
 from bilin_api.importer import import_arxiv, import_local_file
 from bilin_api.repositories import create_library, list_jobs
@@ -114,6 +115,44 @@ async def test_download_bytes_surfaces_timeout_context() -> None:
     assert "arXiv download failed" in message
     assert url in message
     assert "ReadTimeout" in message
+
+
+@pytest.mark.asyncio
+async def test_resolve_arxiv_metadata_retries_after_rate_limit(monkeypatch) -> None:
+    monkeypatch.setenv("BILIN_ARXIV_API_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("BILIN_ARXIV_API_RETRIES", "1")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, text=ATOM_RESPONSE)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        metadata = await resolve_arxiv_metadata("2401.00001", client=client)
+
+    assert calls == 2
+    assert metadata.concrete_id == "2401.00001v2"
+
+
+@pytest.mark.asyncio
+async def test_resolve_arxiv_metadata_surfaces_rate_limit_message(monkeypatch) -> None:
+    monkeypatch.setenv("BILIN_ARXIV_API_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("BILIN_ARXIV_API_RETRIES", "0")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "30"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ArxivFetchError) as exc_info:
+            await resolve_arxiv_metadata("1405.4980", client=client)
+
+    message = str(exc_info.value)
+    assert "rate limited by arXiv" in message
+    assert "HTTP 429" in message
+    assert "Retry after 30 seconds" in message
 
 
 @pytest.mark.asyncio

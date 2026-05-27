@@ -212,6 +212,36 @@ class JobSummary(BaseModel):
     updated_at: datetime | None = None
 
 
+class ArticleTaskProgress(BaseModel):
+    id: str
+    library_id: str | None = None
+    article_revision_id: str | None = None
+    article_title: str | None = None
+    source_id: str | None = None
+    status: JobStatus
+    stage: str
+    message: str
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    current: int = 0
+    total: int = 0
+    queued_jobs: int = 0
+    running_jobs: int = 0
+    paused_jobs: int = 0
+    succeeded_jobs: int = 0
+    failed_jobs: int = 0
+    cancelled_jobs: int = 0
+    active_jobs: int = 0
+    job_ids: list[str] = Field(default_factory=list)
+    failed_job_ids: list[str] = Field(default_factory=list)
+    error: JsonDict | None = None
+    updated_at: datetime | None = None
+
+
+class ArticleTaskSummary(JobSummary):
+    failed_items: int = 0
+    items: list[ArticleTaskProgress] = Field(default_factory=list)
+
+
 class ArticleFamily(BaseModel):
     id: str
     source: str

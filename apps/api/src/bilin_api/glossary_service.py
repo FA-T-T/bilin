@@ -11,6 +11,7 @@ from bilin_api.article_store import (
     list_translation_variants,
     sha256_text,
     update_glossary_term,
+    upsert_article_glossary_term,
 )
 from bilin_api.schemas import (
     ArticleGlossary,
@@ -155,12 +156,6 @@ async def create_article_glossary_term(
     payload: GlossaryTermCreate,
 ) -> GlossaryTerm:
     target_language = target_language_from_direction(payload.language_direction)
-    existing = await find_glossary_term_by_source(
-        library,
-        revision_id,
-        payload.source_term,
-        target_language,
-    )
     metadata = {
         "article_revision_id": revision_id,
         "target_language": target_language,
@@ -168,21 +163,10 @@ async def create_article_glossary_term(
         "preserve_source": False,
     }
     metadata.update(payload.metadata)
-    if existing is not None:
-        updated = await update_glossary_term(
-            library,
-            existing.id,
-            target_term=payload.target_term,
-            status=payload.status,
-            metadata=metadata,
-        )
-        if updated is None:
-            msg = f"Glossary term not found after update: {existing.id}"
-            raise ValueError(msg)
-        return updated
-    return await create_glossary_term(
-        library=library,
-        scope="article",
+    return await upsert_article_glossary_term(
+        library,
+        revision_id=revision_id,
+        target_language=target_language,
         source_term=payload.source_term,
         target_term=payload.target_term,
         language_direction=payload.language_direction,

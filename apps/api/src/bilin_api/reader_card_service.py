@@ -165,7 +165,41 @@ async def create_manual_reader_card(
         payload.abbreviation,
         payload.full_form or payload.anchor_text or payload.title,
     )
-    return await create_reader_card(
+    body_markdown = strip_card_body(payload.body_markdown)
+    metadata = {
+        **payload.metadata,
+        "user_created": True,
+        "user_edited": bool(payload.body_markdown.strip()),
+    }
+    existing = await find_reader_card_by_canonical_key(
+        library,
+        revision_id,
+        canonical_key,
+        payload.target_language,
+    )
+    if existing is not None:
+        updated = await update_reader_card(
+            library,
+            revision_id,
+            existing.id,
+            anchor_text=payload.anchor_text,
+            abbreviation=payload.abbreviation,
+            full_form=payload.full_form,
+            title=payload.title,
+            body_markdown=body_markdown,
+            source_url=payload.source_url,
+            position=payload.position,
+            status=payload.status,
+            metadata=metadata,
+            canonical_key=canonical_key,
+            source_type=payload.source_type,
+        )
+        if updated is None:
+            msg = f"Reader card disappeared during manual upsert: {existing.id}"
+            raise RuntimeError(msg)
+        return updated
+
+    card = await create_reader_card(
         library,
         revision_id=revision_id,
         card_type=payload.card_type,
@@ -175,18 +209,34 @@ async def create_manual_reader_card(
         abbreviation=payload.abbreviation,
         full_form=payload.full_form,
         title=payload.title,
-        body_markdown=strip_card_body(payload.body_markdown),
+        body_markdown=body_markdown,
         target_language=payload.target_language,
         source_type=payload.source_type,
         source_url=payload.source_url,
         position=payload.position,
         status=payload.status,
-        metadata={
-            **payload.metadata,
-            "user_created": True,
-            "user_edited": bool(payload.body_markdown.strip()),
-        },
+        metadata=metadata,
     )
+    if not manual_reader_card_matches_payload(card, payload, canonical_key, body_markdown):
+        updated = await update_reader_card(
+            library,
+            revision_id,
+            card.id,
+            anchor_text=payload.anchor_text,
+            abbreviation=payload.abbreviation,
+            full_form=payload.full_form,
+            title=payload.title,
+            body_markdown=body_markdown,
+            source_url=payload.source_url,
+            position=payload.position,
+            status=payload.status,
+            metadata=metadata,
+            canonical_key=canonical_key,
+            source_type=payload.source_type,
+        )
+        if updated is not None:
+            return updated
+    return card
 
 
 async def update_article_reader_card(
@@ -428,6 +478,43 @@ async def generate_article_reader_card(
             status=ReaderCardStatus.pinned,
             metadata=metadata,
         )
+        if not generated_reader_card_matches_payload(
+            card,
+            payload,
+            canonical_key,
+            title,
+            body,
+            source_type,
+        ):
+            if card.metadata.get("user_edited"):
+                updated = await update_reader_card(
+                    library,
+                    revision_id,
+                    card.id,
+                    metadata={
+                        "suggested_body_markdown": body,
+                        "suggested_source_type": source_type.value,
+                        "suggested_at": True,
+                    },
+                )
+                card = updated or card
+            else:
+                updated = await update_reader_card(
+                    library,
+                    revision_id,
+                    card.id,
+                    anchor_text=payload.anchor_text,
+                    abbreviation=payload.abbreviation,
+                    full_form=payload.full_form,
+                    title=title,
+                    body_markdown=body,
+                    source_type=source_type,
+                    status=ReaderCardStatus.pinned,
+                    metadata=metadata,
+                    canonical_key=canonical_key,
+                )
+                if updated is not None:
+                    card = updated
     return ReaderCardGenerationResult(
         article_revision_id=revision_id,
         card=card,
@@ -652,6 +739,49 @@ def visible_reader_cards(cards: list[ReaderCard]) -> list[ReaderCard]:
             continue
         visible.append(card)
     return visible
+
+
+def manual_reader_card_matches_payload(
+    card: ReaderCard,
+    payload: ReaderCardCreate,
+    canonical_key: str,
+    body_markdown: str,
+) -> bool:
+    return (
+        card.anchor_block_uid == payload.anchor_block_uid
+        and card.anchor_text == payload.anchor_text
+        and card.canonical_key == canonical_key
+        and card.abbreviation == payload.abbreviation
+        and card.full_form == payload.full_form
+        and card.title == payload.title
+        and card.body_markdown == body_markdown
+        and card.target_language == payload.target_language
+        and card.source_type == payload.source_type
+        and card.source_url == payload.source_url
+        and card.position == payload.position
+        and card.status == payload.status
+    )
+
+
+def generated_reader_card_matches_payload(
+    card: ReaderCard,
+    payload: ReaderCardGenerationRequest,
+    canonical_key: str,
+    title: str,
+    body_markdown: str,
+    source_type: ReaderCardSourceType,
+) -> bool:
+    return (
+        card.anchor_text == payload.anchor_text
+        and card.canonical_key == canonical_key
+        and card.abbreviation == payload.abbreviation
+        and card.full_form == payload.full_form
+        and card.title == title
+        and card.body_markdown == body_markdown
+        and card.target_language == payload.target_language
+        and card.source_type == source_type
+        and card.status == ReaderCardStatus.pinned
+    )
 
 
 def auto_extracted_card_is_valid(card: ReaderCard) -> bool:

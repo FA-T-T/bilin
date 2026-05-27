@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import uuid4
 
 from bilin_api.article_store import resolve_library
+from bilin_api.database import init_global_db, open_db, utc_now
 from bilin_api.embedding_service import build_article_embeddings, queue_article_embedding
 from bilin_api.export_service import export_article
 from bilin_api.importer import import_arxiv, import_result_to_json
@@ -16,7 +21,7 @@ from bilin_api.reader_card_service import (
 from bilin_api.repositories import (
     claim_next_job,
     complete_job,
-    create_job,
+    create_parse_job_if_absent,
     fail_job,
     get_job,
     list_provider_profiles,
@@ -52,6 +57,7 @@ MODEL_JOB_TYPES = (
     JobType.translate_block,
     JobType.generate_reader_card,
 )
+WorkerProgressCallback = Callable[[str, str, float], Awaitable[None]]
 
 
 async def run_worker(
@@ -160,9 +166,11 @@ async def run_import_arxiv_job(job: Job) -> None:
         download_pdf=bool(job.payload.get("download_pdf", True)),
         parse_after_import=False,
     )
-    await update_job_progress(job.id, 0.1)
-    result = await import_arxiv(library, request)
+    progress = job_progress_callback(job.id)
+    await progress("arxiv_metadata", "解析 arXiv 元数据", 0.05)
+    result = await call_import_arxiv(library, request, progress)
     if parse_after_import:
+        await progress("queue_parse", "排队解析", 0.9)
         parse_payload: dict[str, object] = {
             "library_id": library.id,
             "article_revision_id": result.article_revision_id,
@@ -173,16 +181,16 @@ async def run_import_arxiv_job(job: Job) -> None:
             parse_payload["translate_after_parse"] = job.payload["translate_after_parse"]
         parse_job = await create_parse_job(parse_payload)
         result = result.model_copy(update={"parse_job_id": parse_job.id})
-    await update_job_progress(job.id, 1.0)
     await complete_job(job.id, import_result_to_json(result))
 
 
 async def run_parse_article_job(job: Job) -> None:
     library = await resolve_library(str(job.payload["library_id"]))
     revision_id = str(job.payload["article_revision_id"])
+    progress = job_progress_callback(job.id)
     try:
-        await update_job_progress(job.id, 0.1)
-        result = await parse_article_revision(library, revision_id)
+        await progress("source_unpack", "解包源文件", 0.08)
+        result = await call_parse_article_revision(library, revision_id, progress)
         embed_job = await queue_article_embedding(library, revision_id)
         result["embed_job_id"] = embed_job.id
         card_job = await queue_reader_card_extraction(
@@ -207,8 +215,90 @@ async def run_parse_article_job(job: Job) -> None:
         await fail_job(job.id, {"code": exc.code, "message": exc.message, "details": exc.details})
 
 
+async def call_import_arxiv(
+    library: Any,
+    request: ImportArxivRequest,
+    progress: WorkerProgressCallback,
+) -> Any:
+    if accepts_progress_callback(import_arxiv):
+        return await import_arxiv(library, request, progress=progress)
+    return await import_arxiv(library, request)
+
+
+async def call_parse_article_revision(
+    library: Any,
+    revision_id: str,
+    progress: WorkerProgressCallback,
+) -> dict[str, Any]:
+    if accepts_progress_callback(parse_article_revision):
+        return await parse_article_revision(library, revision_id, progress=progress)
+    return await parse_article_revision(library, revision_id)
+
+
+def accepts_progress_callback(function: Any) -> bool:
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return False
+    return "progress" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def job_progress_callback(job_id: str) -> WorkerProgressCallback:
+    async def progress(stage: str, message: str, value: float) -> None:
+        await update_job_progress_metadata(job_id, stage, message, value)
+
+    return progress
+
+
+async def update_job_progress_metadata(
+    job_id: str,
+    stage: str,
+    message: str,
+    progress: float,
+) -> Job | None:
+    progress_value = max(0.0, min(progress, 1.0))
+    metadata = {
+        "stage": stage,
+        "message": message,
+        "progress": progress_value,
+    }
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT payload_json FROM jobs WHERE id = ? AND status = ?",
+            (job_id, JobStatus.running.value),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"] or "{}")
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["progress_metadata"] = metadata
+        await conn.execute(
+            """
+            UPDATE jobs
+            SET payload_json = ?, progress = ?, updated_at = ?
+            WHERE id = ? AND status = ?
+            """,
+            (
+                json.dumps(payload),
+                progress_value,
+                utc_now(),
+                job_id,
+                JobStatus.running.value,
+            ),
+        )
+        await conn.commit()
+    return await get_job(job_id)
+
+
 async def create_parse_job(payload: dict[str, object]) -> Job:
-    return await create_job(JobType.parse_article, payload=payload)
+    job, _created = await create_parse_job_if_absent(payload)
+    return job
 
 
 async def translation_request_after_parse(job: Job) -> TranslationBatchRequest | None:

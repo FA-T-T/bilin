@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from bilin_api.llm import LLMClientError, list_provider_models
+from bilin_api.network_security import NetworkPolicyError, validate_provider_base_url
 from bilin_api.provider_presets import PROVIDER_PRESETS
 from bilin_api.repositories import (
     create_provider_profile,
@@ -30,14 +31,22 @@ async def get_providers() -> list[ProviderProfile]:
 
 @router.post("", response_model=ProviderProfile, status_code=status.HTTP_201_CREATED)
 async def post_provider(payload: ProviderProfileCreate) -> ProviderProfile:
-    return await create_provider_profile(payload)
+    try:
+        return await create_provider_profile(payload)
+    except NetworkPolicyError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/discover-models", response_model=ProviderModelDiscoveryResult)
 async def post_discover_models(
     payload: ProviderModelDiscoveryRequest,
 ) -> ProviderModelDiscoveryResult:
-    base_url = payload.base_url or default_provider_base_url(payload.protocol)
+    try:
+        base_url = validate_provider_base_url(
+            payload.base_url or default_provider_base_url(payload.protocol)
+        )
+    except NetworkPolicyError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     try:
         models = await list_provider_models(payload.protocol, payload.api_key, base_url)
     except LLMClientError as exc:
@@ -75,7 +84,10 @@ async def get_provider(provider_id: str) -> ProviderProfile:
 
 @router.put("/{provider_id}", response_model=ProviderProfile)
 async def put_provider(provider_id: str, payload: ProviderProfileUpdate) -> ProviderProfile:
-    provider = await update_provider_profile(provider_id, payload)
+    try:
+        provider = await update_provider_profile(provider_id, payload)
+    except NetworkPolicyError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
     return provider

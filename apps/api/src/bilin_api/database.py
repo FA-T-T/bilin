@@ -14,6 +14,10 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def split_sql_script(sql: str) -> list[str]:
+    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+
 async def connect(db_path: Path) -> aiosqlite.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = await aiosqlite.connect(db_path)
@@ -39,6 +43,7 @@ async def apply_migrations(db_path: Path, scope: str) -> None:
         raise ValueError(msg)
 
     async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -55,7 +60,8 @@ async def apply_migrations(db_path: Path, scope: str) -> None:
             if version in applied:
                 continue
             sql = migration_path.read_text(encoding="utf-8")
-            await conn.executescript(sql)
+            for statement in split_sql_script(sql):
+                await conn.execute(statement)
             await conn.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                 (version, utc_now()),

@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from html import escape, unescape
 from html.parser import HTMLParser
@@ -34,6 +35,8 @@ from bilin_api.article_store import (
 from bilin_api.citation_keys import humanize_missing_citation_text
 from bilin_api.doctor import detect_version
 from bilin_api.schemas import AssetRecord, DocumentBlock, Library, ParseErrorInfo
+
+ParseProgressCallback = Callable[[str, str, float], Awaitable[None]]
 
 WEB_ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 CONVERTIBLE_ASSET_SUFFIXES = {".pdf", ".eps"}
@@ -68,6 +71,16 @@ MARKDOWN_CONVERSION_OPTIONS = ConversionOptions(
     convert_as_inline=False,
 )
 LATEXML_ENTRY_FILE = "__bilin_latexml_entry.tex"
+LATEXML_SPLIT_OUTPUT_DIR = "latexml-split"
+LATEXML_XML_RECOVERY_MODE = "xml_fallback_after_split_timeout"
+LATEXML_XML_RECOVERY_FIDELITY = "structure_only"
+LATEXML_CHAPTER_SPLIT_DOCUMENT_CLASSES = {
+    "book",
+    "report",
+    "memoir",
+    "scrbook",
+    "scrreprt",
+}
 LATEXML_LAYOUT_ONLY_DOCUMENT_CLASSES = {
     "cas-dc",
     "cas-sc",
@@ -342,13 +355,18 @@ class ParserPreparation:
     profile: ParserProfile
 
 
-async def parse_article_revision(library: Library, revision_id: str) -> dict[str, Any]:
+async def parse_article_revision(
+    library: Library,
+    revision_id: str,
+    progress: ParseProgressCallback | None = None,
+) -> dict[str, Any]:
     revision = await get_article_revision(library, revision_id)
     if revision is None:
         msg = f"Article revision not found: {revision_id}"
         raise ParseFailure("not_found:article_revision", msg)
     bundle_path = Path(revision.bundle_path)
     manifest = read_manifest(bundle_path) or empty_manifest(revision)
+    previous_errors = list(manifest.errors)
     manifest.parse_status = "running"
     manifest.errors = []
     manifest.generated_artifacts.pop("parse_error_log", None)
@@ -358,6 +376,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
     stage = "source_intake"
     profile: ParserProfile | None = None
     try:
+        await emit_parse_progress(progress, "source_unpack", "解包源文件", 0.08)
         source_archive, unpack_dir = prepare_latexml_source_intake(bundle_path)
         stage = "preflight_classification"
         preparation = prepare_latexml_preflight(source_archive, unpack_dir)
@@ -369,6 +388,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         manifest.metadata["latexml_compatibility_rules"] = list(profile.compatibility_rules)
 
         stage = "dependency_check"
+        await emit_parse_progress(progress, "dependency_check", "依赖检查", 0.2)
         latexml = shutil.which("latexml")
         latexmlpost = shutil.which("latexmlpost")
         if not latexml or not latexmlpost:
@@ -394,22 +414,43 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         logs_dir.mkdir(parents=True, exist_ok=True)
         xml_path = document_dir / "latexml.xml"
         html_path = document_dir / "latexml.html"
+        resume_from_html = should_resume_parse_from_html(previous_errors, html_path)
+        resume_from_latexmlpost = should_resume_parse_from_latexmlpost(previous_errors, xml_path)
+        previous_latexmlpost_timeout = previous_failure_was_latexmlpost_timeout(previous_errors)
         latexml_command = [latexml, "--includestyles"]
         for search_path in _latexml_search_paths(unpack_dir, main_tex.parent):
             latexml_command.extend(["--path", str(search_path)])
         latexml_command.extend(["--destination", str(xml_path), latexml_entry.name])
         latexmlpost_command = [
             latexmlpost,
+            "--verbose",
             "--format=html5",
             "--xsltparameter=SIMPLIFY_HTML:true",
             "--destination",
             str(html_path),
             str(xml_path),
         ]
+        split_dir = document_dir / LATEXML_SPLIT_OUTPUT_DIR
+        split_index_path = split_dir / "index.html"
+        split_level = preferred_latexml_split_level(profile, main_tex)
+        latexmlpost_split_command = [
+            latexmlpost,
+            "--verbose",
+            "--format=html5",
+            "--xsltparameter=SIMPLIFY_HTML:true",
+            "--split",
+            f"--splitat={split_level}",
+            "--splitnaming=id",
+            "--navigationtoc=none",
+            "--destination",
+            str(split_index_path),
+            str(xml_path),
+        ]
         manifest.latexml_command = latexml_command + ["&&"] + latexmlpost_command
         manifest.metadata["latexml_entry_file"] = str(latexml_entry.relative_to(unpack_dir))
         manifest.metadata["latexml_disabled_packages"] = sorted(LATEXML_DISABLED_PACKAGES)
         manifest.metadata["latexml_binding_dir"] = str(_latexml_binding_dir())
+        manifest.metadata["latexml_split_level"] = split_level
         manifest.tool_versions = {
             "latexml": detect_version(latexml),
             "latexmlpost": detect_version(latexmlpost),
@@ -421,22 +462,118 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
             "latexmlpost": asdict(latexmlpost_timeout),
         }
 
-        await run_command(
-            latexml_command,
-            cwd=latexml_entry.parent,
-            log_path=logs_dir / "latexml.log",
-            timeout_budget=latexml_timeout,
-            activity_paths=[xml_path],
-        )
-        stage = "latexmlpost_execution"
-        await run_command(
-            latexmlpost_command,
-            cwd=main_tex.parent,
-            log_path=logs_dir / "latexmlpost.log",
-            timeout_budget=latexmlpost_timeout,
-            activity_paths=[html_path],
-        )
+        if resume_from_html:
+            manifest.metadata["parse_resume_from"] = "html_normalization"
+        else:
+            if resume_from_latexmlpost:
+                manifest.metadata["parse_resume_from"] = "latexmlpost_execution"
+                await emit_parse_progress(
+                    progress,
+                    "latexmlpost_execution",
+                    "从失败阶段继续：渲染 HTML",
+                    0.6,
+                )
+            else:
+                await emit_parse_progress(progress, "latexml_execution", "执行 LaTeXML", 0.35)
+                await run_command(
+                    latexml_command,
+                    cwd=latexml_entry.parent,
+                    log_path=logs_dir / "latexml.log",
+                    timeout_budget=latexml_timeout,
+                    activity_paths=[xml_path],
+                )
+            stage = "latexmlpost_execution"
+            if should_split_latexmlpost_by_default(
+                profile,
+                main_tex,
+            ) or (resume_from_latexmlpost and previous_latexmlpost_timeout):
+                await emit_parse_progress(
+                    progress,
+                    "latexmlpost_split_execution",
+                    (
+                        "从失败阶段继续：按章节渲染 HTML"
+                        if resume_from_latexmlpost
+                        else "按章节渲染 HTML"
+                    ),
+                    0.6,
+                )
+                try:
+                    await run_latexmlpost_split(
+                        latexmlpost_split_command,
+                        cwd=main_tex.parent,
+                        log_path=logs_dir / "latexmlpost-split.log",
+                        timeout_budget=latexmlpost_timeout,
+                        split_index_path=split_index_path,
+                        html_path=html_path,
+                    )
+                    manifest.metadata["latexmlpost_mode"] = (
+                        "split_after_retry" if resume_from_latexmlpost else "split"
+                    )
+                except ParseFailure as exc:
+                    if exc.code != "latexml_timeout":
+                        raise
+                    await emit_parse_progress(
+                        progress,
+                        "latexml_xml_recovery",
+                        "latexmlpost 仍超时，使用 XML 快速恢复",
+                        0.72,
+                    )
+                    latexml_xml_to_html(xml_path, html_path)
+                    mark_latexml_xml_recovery_manifest(manifest, exc.details)
+            else:
+                await emit_parse_progress(
+                    progress,
+                    "latexmlpost_execution",
+                    "执行 latexmlpost",
+                    0.6,
+                )
+                try:
+                    await run_command(
+                        latexmlpost_command,
+                        cwd=main_tex.parent,
+                        log_path=logs_dir / "latexmlpost.log",
+                        timeout_budget=latexmlpost_timeout,
+                        activity_paths=[html_path],
+                    )
+                    manifest.metadata["latexmlpost_mode"] = "single"
+                except ParseFailure as exc:
+                    if exc.code != "latexml_timeout":
+                        raise
+                    await emit_parse_progress(
+                        progress,
+                        "latexmlpost_split_execution",
+                        "latexmlpost 超时，按章节渲染 HTML",
+                        0.65,
+                    )
+                    manifest.metadata["latexmlpost_single_timeout"] = exc.details
+                    try:
+                        await run_latexmlpost_split(
+                            latexmlpost_split_command,
+                            cwd=main_tex.parent,
+                            log_path=logs_dir / "latexmlpost-split.log",
+                            timeout_budget=latexmlpost_timeout,
+                            split_index_path=split_index_path,
+                            html_path=html_path,
+                        )
+                    except ParseFailure as split_exc:
+                        if split_exc.code != "latexml_timeout":
+                            split_exc.details.setdefault(
+                                "single_latexmlpost_timeout",
+                                exc.details,
+                            )
+                            raise split_exc from exc
+                        await emit_parse_progress(
+                            progress,
+                            "latexml_xml_recovery",
+                            "latexmlpost 仍超时，使用 XML 快速恢复",
+                            0.72,
+                        )
+                        latexml_xml_to_html(xml_path, html_path)
+                        mark_latexml_xml_recovery_manifest(manifest, split_exc.details)
+                    else:
+                        manifest.metadata["latexmlpost_mode"] = "split_after_timeout"
         stage = "html_normalization"
+        await emit_parse_progress(progress, "html_normalization", "规范化 HTML", 0.78)
         blocks, assets = normalize_latexml_html(
             html_path,
             revision.id,
@@ -444,6 +581,7 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
             source_root=unpack_dir,
         )
         source_md = render_source_markdown(blocks)
+        await emit_parse_progress(progress, "document_write", "写入文档", 0.9)
         manifest.parse_status = "parsed"
         manifest.generated_artifacts.update(
             {
@@ -485,9 +623,19 @@ async def parse_article_revision(library: Library, revision_id: str) -> dict[str
         if "diagnostics_path" in failure.details:
             manifest.generated_artifacts["parser_diagnostics"] = str(
                 failure.details["diagnostics_path"]
-            )
+        )
         await mark_revision_status(library, revision.id, "parse_failed", manifest)
         raise failure from exc
+
+
+async def emit_parse_progress(
+    progress: ParseProgressCallback | None,
+    stage: str,
+    message: str,
+    value: float,
+) -> None:
+    if progress is not None:
+        await progress(stage, message, value)
 
 
 def write_parse_failure_log(bundle_path: Path, failure: ParseFailure) -> Path:
@@ -1489,6 +1637,494 @@ def _disable_latexml_incompatible_packages(source: str) -> str:
     return package_pattern.sub(replace, source)
 
 
+def preferred_latexml_split_level(profile: ParserProfile, main_tex: Path) -> str:
+    document_class = (profile.document_class or "").casefold()
+    if document_class in LATEXML_CHAPTER_SPLIT_DOCUMENT_CLASSES:
+        return "chapter"
+    if source_has_chapters(main_tex):
+        return "chapter"
+    return "section"
+
+
+def should_resume_parse_from_html(errors: list[ParseErrorInfo], html_path: Path) -> bool:
+    if not html_path.exists():
+        return False
+    return previous_failure_stage(errors) == "html_normalization"
+
+
+def should_resume_parse_from_latexmlpost(errors: list[ParseErrorInfo], xml_path: Path) -> bool:
+    if not xml_path.exists():
+        return False
+    return previous_failure_stage(errors) in {
+        "latexmlpost_execution",
+        "latexmlpost_split_execution",
+        "html_normalization",
+    }
+
+
+def previous_failure_was_latexmlpost_timeout(errors: list[ParseErrorInfo]) -> bool:
+    error = errors[0] if errors else None
+    if error is None:
+        return False
+    details = error.details if isinstance(error.details, dict) else {}
+    timed_out_at_latexmlpost = error.code == "latexml_timeout" and previous_failure_stage(
+        errors
+    ) in {
+        "latexmlpost_execution",
+        "latexmlpost_split_execution",
+    }
+    return timed_out_at_latexmlpost or details.get("single_latexmlpost_timeout") is not None
+
+
+def previous_failure_stage(errors: list[ParseErrorInfo]) -> str | None:
+    error = errors[0] if errors else None
+    if error is None or not isinstance(error.details, dict):
+        return None
+    stage = error.details.get("stage")
+    return stage if isinstance(stage, str) and stage else None
+
+
+def should_split_latexmlpost_by_default(profile: ParserProfile, main_tex: Path) -> bool:
+    return preferred_latexml_split_level(profile, main_tex) == "chapter"
+
+
+def source_has_chapters(main_tex: Path) -> bool:
+    try:
+        sample = main_tex.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return bool(re.search(r"(?<!\\)\\chapter\s*(?:\[[^\]]*\])?\s*\{", sample))
+
+
+async def run_latexmlpost_split(
+    command: list[str],
+    *,
+    cwd: Path,
+    log_path: Path,
+    timeout_budget: CommandTimeoutBudget,
+    split_index_path: Path,
+    html_path: Path,
+) -> list[Path]:
+    if split_index_path.parent.exists():
+        shutil.rmtree(split_index_path.parent)
+    split_index_path.parent.mkdir(parents=True, exist_ok=True)
+    await run_command(
+        command,
+        cwd=cwd,
+        log_path=log_path,
+        timeout_budget=timeout_budget,
+        activity_paths=[split_index_path.parent],
+    )
+    return combine_latexml_split_html(split_index_path, html_path)
+
+
+def combine_latexml_split_html(split_index_path: Path, html_path: Path) -> list[Path]:
+    page_paths = ordered_latexml_split_page_paths(split_index_path)
+    if not page_paths and split_index_path.exists():
+        page_paths = [split_index_path]
+    if not page_paths:
+        raise ParseFailure(
+            "latexml_split_empty",
+            "LaTeXML split postprocessing produced no HTML pages.",
+            {"split_index_path": str(split_index_path)},
+        )
+
+    body_fragments: list[str] = []
+    content_paths = (
+        [split_index_path, *page_paths]
+        if split_index_path.exists() and page_paths[0] != split_index_path
+        else page_paths
+    )
+    for page_path in content_paths:
+        root = parse_latexml_html(page_path)
+        rewrite_latexml_split_asset_references(root, page_path, html_path)
+        content = first_descendant_with_class(root, "ltx_page_content")
+        if content is None:
+            content = _first_descendant(root, {"body"})
+        if content is None:
+            content = root
+        fragment = element_inner_html(content).strip()
+        if fragment:
+            body_fragments.append(fragment)
+
+    if not body_fragments:
+        raise ParseFailure(
+            "latexml_split_empty",
+            "LaTeXML split postprocessing produced no recognizable HTML body content.",
+            {
+                "split_index_path": str(split_index_path),
+                "page_count": len(page_paths),
+            },
+        )
+
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="UTF-8">\n'
+        "<title>LaTeXML split document</title>\n"
+        "</head>\n"
+        "<body>\n"
+        '<article class="ltx_document ltx_split_document">\n'
+        + "\n".join(body_fragments)
+        + "\n</article>\n"
+        "</body>\n"
+        "</html>\n",
+        encoding="utf-8",
+    )
+    return page_paths
+
+
+def mark_latexml_xml_recovery_manifest(manifest: Any, timeout_details: dict[str, Any]) -> None:
+    manifest.metadata["latexmlpost_split_timeout"] = timeout_details
+    manifest.metadata["latexmlpost_mode"] = LATEXML_XML_RECOVERY_MODE
+    manifest.metadata["parse_fidelity"] = LATEXML_XML_RECOVERY_FIDELITY
+    manifest.metadata["parse_recovery"] = {
+        "stage": "latexml_xml_recovery",
+        "reason": "latexmlpost_timeout",
+        "fidelity": LATEXML_XML_RECOVERY_FIDELITY,
+        "message": (
+            "latexmlpost timed out; Bilin recovered readable document structure "
+            "from LaTeXML XML."
+        ),
+    }
+
+
+def latexml_xml_to_html(xml_path: Path, html_path: Path) -> None:
+    try:
+        root = ET.parse(xml_path).getroot()
+    except ET.ParseError as exc:
+        raise ParseFailure(
+            "latexml_xml_recovery_failed",
+            "LaTeXML XML recovery could not parse the generated XML.",
+            {"xml_path": str(xml_path), "type": type(exc).__name__, "message": str(exc)},
+        ) from exc
+    body = latexml_xml_block_children_to_html(root, level=1)
+    if not body.strip():
+        raise ParseFailure(
+            "latexml_xml_recovery_empty",
+            "LaTeXML XML recovery produced no recognizable document content.",
+            {"xml_path": str(xml_path)},
+        )
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="UTF-8">\n'
+        "<title>LaTeXML XML recovery</title>\n"
+        "</head>\n"
+        "<body>\n"
+        '<article class="ltx_document ltx_xml_recovery_document">\n'
+        + body
+        + "\n</article>\n"
+        "</body>\n"
+        "</html>\n",
+        encoding="utf-8",
+    )
+
+
+def latexml_xml_block_children_to_html(element: Any, level: int) -> str:
+    return "".join(latexml_xml_block_to_html(child, level) for child in list(element))
+
+
+def latexml_xml_block_to_html(element: Any, level: int) -> str:
+    tag = _local_name(element.tag)
+    if tag in {"resource", "tags", "pagination", "xmath", "error"}:
+        return ""
+    if tag == "title":
+        heading = min(max(level, 1), 6)
+        return f"<h{heading}>{latexml_xml_inline_children_to_html(element)}</h{heading}>\n"
+    if tag == "creator":
+        text = latexml_xml_inline_children_to_html(element).strip()
+        return f'<p class="ltx_creator">{text}</p>\n' if text else ""
+    if tag == "abstract":
+        title = escape(element.attrib.get("name") or "Abstract")
+        return (
+            f'<section class="ltx_abstract"><h2>{title}</h2>\n'
+            + latexml_xml_block_children_to_html(element, level + 1)
+            + "</section>\n"
+        )
+    if tag in {"chapter", "section", "subsection", "subsubsection"}:
+        if tag == "chapter" and latexml_xml_is_generated_contents_chapter(element):
+            return ""
+        heading_level = {
+            "chapter": 1,
+            "section": 2,
+            "subsection": 3,
+            "subsubsection": 4,
+        }[tag]
+        return (
+            f'<section class="ltx_{tag}">\n'
+            + latexml_xml_block_children_to_html(element, heading_level)
+            + "</section>\n"
+        )
+    if tag == "para":
+        return latexml_xml_para_to_html(element)
+    if tag == "p":
+        text = latexml_xml_inline_children_to_html(element).strip()
+        return f"<p>{text}</p>\n" if text else ""
+    if tag in {"equation", "equationgroup"}:
+        tex = _extract_math_tex(element) or latexml_xml_inline_children_to_html(element)
+        tex = tex.strip()
+        if not tex:
+            return ""
+        escaped_tex = escape(tex)
+        return f'<math display="block" tex="{escape(tex, quote=True)}">{escaped_tex}</math>\n'
+    if tag == "math":
+        tex = _extract_single_math_tex(element) or _clean_text(element)
+        tex = tex.strip()
+        if not tex:
+            return ""
+        escaped_tex = escape(tex)
+        display = "block" if element.attrib.get("mode") == "display" else "inline"
+        if display == "block":
+            return f'<math display="block" tex="{escape(tex, quote=True)}">{escaped_tex}</math>\n'
+        return f"<p>{escaped_tex}</p>\n"
+    if tag in {"theorem", "proof", "note"}:
+        return (
+            f'<section class="ltx_{tag}">\n'
+            + latexml_xml_block_children_to_html(element, level + 1)
+            + "</section>\n"
+        )
+    if tag in {"itemize", "enumerate"}:
+        list_tag = "ol" if tag == "enumerate" else "ul"
+        items = "".join(latexml_xml_block_to_html(child, level) for child in list(element))
+        return f"<{list_tag}>{items}</{list_tag}>\n" if items else ""
+    if tag == "item":
+        content = latexml_xml_mixed_content_to_html(element, level).strip()
+        return f"<li>{content}</li>\n" if content else ""
+    if tag == "bibliography":
+        items = "".join(latexml_xml_block_to_html(child, level) for child in list(element))
+        return f'<ul class="ltx_biblist">{items}</ul>\n' if items else ""
+    if tag == "bibitem":
+        content = latexml_xml_mixed_content_to_html(element, level).strip()
+        return f'<li class="ltx_bibitem">{content}</li>\n' if content else ""
+    if tag == "figure":
+        content = latexml_xml_mixed_content_to_html(element, level).strip()
+        return f"<figure>{content}</figure>\n" if content else ""
+    if tag in {"caption", "toccaption"}:
+        content = latexml_xml_inline_children_to_html(element).strip()
+        return f"<figcaption>{content}</figcaption>\n" if content else ""
+    if tag in {"tabular", "table"}:
+        content = latexml_xml_mixed_content_to_html(element, level).strip()
+        return f"<table>{content}</table>\n" if content else ""
+
+    block_children = latexml_xml_block_children_to_html(element, level)
+    if block_children.strip():
+        return block_children
+    text = latexml_xml_inline_children_to_html(element).strip()
+    return f"<p>{text}</p>\n" if text else ""
+
+
+def latexml_xml_is_generated_contents_chapter(element: Any) -> bool:
+    title = ""
+    for child in list(element):
+        if _local_name(child.tag) == "title":
+            title = _clean_text(child)
+            break
+    if title.casefold() != "contents":
+        return False
+    return any(_local_name(candidate.tag) == "error" for candidate in element.iter())
+
+
+def latexml_xml_para_to_html(element: Any) -> str:
+    block_parts: list[str] = []
+    inline_parts: list[str] = []
+    if element.text and element.text.strip():
+        inline_parts.append(escape(element.text))
+    for child in list(element):
+        tag = _local_name(child.tag)
+        if tag in {"p", "equation", "equationgroup"}:
+            if inline_parts:
+                text = "".join(inline_parts).strip()
+                if text:
+                    block_parts.append(f"<p>{text}</p>\n")
+                inline_parts = []
+            block_parts.append(latexml_xml_block_to_html(child, 1))
+        else:
+            inline_parts.append(latexml_xml_inline_to_html(child))
+        if child.tail:
+            inline_parts.append(escape(child.tail))
+    if inline_parts:
+        text = "".join(inline_parts).strip()
+        if text:
+            block_parts.append(f"<p>{text}</p>\n")
+    return "".join(block_parts)
+
+
+def latexml_xml_mixed_content_to_html(element: Any, level: int) -> str:
+    parts: list[str] = []
+    if element.text:
+        parts.append(escape(element.text))
+    for child in list(element):
+        tag = _local_name(child.tag)
+        if tag in {
+            "title",
+            "para",
+            "p",
+            "equation",
+            "equationgroup",
+            "itemize",
+            "enumerate",
+            "figure",
+            "bibliography",
+        }:
+            parts.append(latexml_xml_block_to_html(child, level))
+        else:
+            parts.append(latexml_xml_inline_to_html(child))
+        if child.tail:
+            parts.append(escape(child.tail))
+    return "".join(parts)
+
+
+def latexml_xml_inline_children_to_html(element: Any) -> str:
+    parts: list[str] = []
+    if element.text:
+        parts.append(escape(element.text))
+    for child in list(element):
+        parts.append(latexml_xml_inline_to_html(child))
+        if child.tail:
+            parts.append(escape(child.tail))
+    return "".join(parts)
+
+
+def latexml_xml_inline_to_html(element: Any) -> str:
+    tag = _local_name(element.tag)
+    if tag in {"xmath", "tags", "tag", "resource", "pagination"}:
+        return ""
+    if tag == "error":
+        text = _clean_text(element).strip()
+        return "" if text.startswith("\\@") else escape(text)
+    if tag == "break":
+        return " "
+    if tag == "math":
+        tex = (
+            _extract_single_math_tex(element)
+            or element.attrib.get("text")
+            or _clean_text(element)
+        )
+        tex = tex.strip()
+        if not tex:
+            return ""
+        return f'<span class="ltx_Math">{escape(tex)}</span>'
+    if tag in {"emph", "text"}:
+        return f"<span>{latexml_xml_inline_children_to_html(element)}</span>"
+    if tag in {"ref", "cite"}:
+        text = latexml_xml_inline_children_to_html(element).strip() or element.attrib.get(
+            "labelref"
+        )
+        return escape(text or "")
+    return latexml_xml_inline_children_to_html(element)
+
+
+def ordered_latexml_split_page_paths(split_index_path: Path) -> list[Path]:
+    if not split_index_path.exists():
+        return []
+    try:
+        root = parse_latexml_html(split_index_path)
+    except Exception:
+        return []
+
+    split_dir = split_index_path.parent
+    paths: list[Path] = []
+    seen: set[Path] = set()
+
+    def append_href(href: str | None) -> None:
+        page_path = split_href_to_page_path(href, split_dir, split_index_path)
+        if page_path is None or page_path in seen:
+            return
+        seen.add(page_path)
+        paths.append(page_path)
+
+    for candidate in root.iter():
+        if _local_name(candidate.tag) == "a":
+            append_href(candidate.attrib.get("href"))
+    if not paths:
+        for candidate in root.iter():
+            if _local_name(candidate.tag) == "link":
+                append_href(candidate.attrib.get("href"))
+    if paths:
+        return paths
+    return sorted(path for path in split_dir.glob("*.html") if path != split_index_path)
+
+
+def split_href_to_page_path(
+    href: str | None,
+    split_dir: Path,
+    split_index_path: Path,
+) -> Path | None:
+    if not href:
+        return None
+    parsed = urlparse(href)
+    if parsed.scheme or parsed.netloc:
+        return None
+    raw_path = unquote(parsed.path)
+    if raw_path in {"", ".", "./"}:
+        return None
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    page_path = (split_dir / relative).resolve()
+    split_root = split_dir.resolve()
+    if not page_path.is_relative_to(split_root):
+        return None
+    if page_path == split_index_path.resolve() or page_path.suffix.casefold() != ".html":
+        return None
+    return page_path if page_path.exists() else None
+
+
+def rewrite_latexml_split_asset_references(root: Any, page_path: Path, html_path: Path) -> None:
+    split_dir = page_path.parent.resolve()
+    for candidate in root.iter():
+        if _local_name(candidate.tag) not in {"img", "image", "object"}:
+            continue
+        for key in ("src", "data", "href", "{http://www.w3.org/1999/xlink}href"):
+            value = candidate.attrib.get(key)
+            asset_path = split_asset_reference_path(value, split_dir)
+            if asset_path is None:
+                continue
+            candidate.attrib[key] = Path(os.path.relpath(asset_path, html_path.parent)).as_posix()
+            break
+
+
+def split_asset_reference_path(reference: str | None, split_dir: Path) -> Path | None:
+    if not reference:
+        return None
+    parsed = urlparse(reference)
+    if parsed.scheme or parsed.netloc:
+        return None
+    raw_path = unquote(parsed.path)
+    if not raw_path:
+        return None
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts or relative.suffix.casefold() == ".html":
+        return None
+    candidate = (split_dir / relative).resolve()
+    split_root = split_dir.resolve()
+    if candidate.is_file() and candidate.is_relative_to(split_root):
+        return candidate
+    return None
+
+
+def first_descendant_with_class(element: Any, class_name: str) -> Any | None:
+    for candidate in element.iter():
+        classes = candidate.attrib.get("class", "").split()
+        if class_name in classes:
+            return candidate
+    return None
+
+
+def element_inner_html(element: Any) -> str:
+    parts: list[str] = []
+    if element.text and element.text.strip():
+        parts.append(escape(element.text))
+    for child in list(element):
+        parts.append(_element_to_html(child))
+    return "".join(parts)
+
+
 def estimate_latexml_timeout_budget(
     unpack_dir: Path,
     main_tex: Path,
@@ -1655,6 +2291,23 @@ def _parser_subprocess_env() -> dict[str, str]:
 def _activity_file_state(paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
     state: list[tuple[str, int, int]] = []
     for path in paths:
+        if path.is_dir():
+            file_count = 0
+            total_size = 0
+            latest_mtime = 0
+            try:
+                descendants = path.rglob("*")
+                for descendant in descendants:
+                    if not descendant.is_file():
+                        continue
+                    stat = descendant.stat()
+                    file_count += 1
+                    total_size += stat.st_size
+                    latest_mtime = max(latest_mtime, stat.st_mtime_ns)
+            except OSError:
+                continue
+            state.append((str(path), file_count + total_size, latest_mtime))
+            continue
         try:
             stat = path.stat()
         except OSError:
@@ -1689,18 +2342,15 @@ def _timeout_failure(
 
 
 async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
-    if not hasattr(os, "killpg"):
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-            return
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            return
+    if not _has_posix_process_group_kill():
+        if _is_windows_platform() and _run_windows_taskkill(process.pid):
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+                return
+            except TimeoutError:
+                pass
+        await _terminate_direct_process(process)
+        return
 
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -1720,6 +2370,45 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
     except OSError:
         process.kill()
     await process.wait()
+
+
+async def _terminate_direct_process(process: asyncio.subprocess.Process) -> None:
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+        return
+    except TimeoutError:
+        pass
+    try:
+        process.kill()
+    except ProcessLookupError:
+        return
+    await process.wait()
+
+
+def _has_posix_process_group_kill() -> bool:
+    return hasattr(os, "killpg")
+
+
+def _is_windows_platform() -> bool:
+    return os.name == "nt"
+
+
+def _run_windows_taskkill(pid: int) -> bool:
+    try:
+        completed = subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 def _write_command_log(

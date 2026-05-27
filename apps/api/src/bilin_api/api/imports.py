@@ -12,6 +12,11 @@ router = APIRouter(prefix="/libraries/{library_id}/imports", tags=["imports"])
 LOCAL_IMPORT_KIND_QUERY = Query(...)
 LOCAL_IMPORT_FILE_NAME_QUERY = Query(..., min_length=1)
 LOCAL_IMPORT_PARSE_AFTER_QUERY = Query(True)
+LOCAL_IMPORT_LIMITS = {
+    ImportLocalKind.markdown: 10 * 1024 * 1024,
+    ImportLocalKind.pdf: 100 * 1024 * 1024,
+    ImportLocalKind.tex_archive: 100 * 1024 * 1024,
+}
 
 
 @router.post("/arxiv", response_model=Job, status_code=status.HTTP_201_CREATED)
@@ -49,7 +54,27 @@ async def import_file(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     try:
+        limit = LOCAL_IMPORT_LIMITS[kind]
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid Content-Length header.",
+                ) from exc
+            if declared_size > limit:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Upload exceeds the {limit} byte limit for {kind.value}.",
+                )
         content = await request.body()
+        if len(content) > limit:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Upload exceeds the {limit} byte limit for {kind.value}.",
+            )
         return await import_local_file(
             library,
             file_name=file_name,

@@ -3,7 +3,7 @@
   "info": {
     "title": "Ilios API",
     "description": "Local-first API for Ilios.",
-    "version": "0.3.3"
+    "version": "0.3.4"
   },
   "paths": {
     "/health": {
@@ -3972,6 +3972,51 @@
         }
       }
     },
+    "/jobs/articles": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get Article Tasks",
+        "operationId": "get_article_tasks_jobs_articles_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 120,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleTaskSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -4063,6 +4108,48 @@
         ],
         "summary": "Resume Job By Id",
         "operationId": "resume_job_by_id_jobs__job_id__resume_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Retry Job By Id",
+        "operationId": "retry_job_by_id_jobs__job_id__retry_post",
         "parameters": [
           {
             "name": "job_id",
@@ -4804,6 +4891,237 @@
           "updated_at"
         ],
         "title": "ArticleRevision"
+      },
+      "ArticleTaskProgress": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "library_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Id"
+          },
+          "article_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Article Revision Id"
+          },
+          "article_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Article Title"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0.0
+          },
+          "current": {
+            "type": "integer",
+            "title": "Current",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "queued_jobs": {
+            "type": "integer",
+            "title": "Queued Jobs",
+            "default": 0
+          },
+          "running_jobs": {
+            "type": "integer",
+            "title": "Running Jobs",
+            "default": 0
+          },
+          "paused_jobs": {
+            "type": "integer",
+            "title": "Paused Jobs",
+            "default": 0
+          },
+          "succeeded_jobs": {
+            "type": "integer",
+            "title": "Succeeded Jobs",
+            "default": 0
+          },
+          "failed_jobs": {
+            "type": "integer",
+            "title": "Failed Jobs",
+            "default": 0
+          },
+          "cancelled_jobs": {
+            "type": "integer",
+            "title": "Cancelled Jobs",
+            "default": 0
+          },
+          "active_jobs": {
+            "type": "integer",
+            "title": "Active Jobs",
+            "default": 0
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids"
+          },
+          "failed_job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Job Ids"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "stage",
+          "message"
+        ],
+        "title": "ArticleTaskProgress"
+      },
+      "ArticleTaskSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued",
+            "default": 0
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running",
+            "default": 0
+          },
+          "paused": {
+            "type": "integer",
+            "title": "Paused",
+            "default": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "title": "Cancelled",
+            "default": 0
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "failed_items": {
+            "type": "integer",
+            "title": "Failed Items",
+            "default": 0
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ArticleTaskProgress"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "ArticleTaskSummary"
       },
       "ArticleTranslationState": {
         "type": "string",

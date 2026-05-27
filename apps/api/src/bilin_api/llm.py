@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from bilin_api.network_security import validate_provider_base_url
 from bilin_api.repositories import default_provider_base_url
 from bilin_api.schemas import ProviderModelInfo, ProviderProfile, ProviderProtocol
 
@@ -45,6 +46,7 @@ async def list_openai_models(
     active_base_url = (
         base_url or default_provider_base_url(ProviderProtocol.openai_compatible)
     ).rstrip("/")
+    active_base_url = validate_provider_base_url(active_base_url).rstrip("/")
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=30)
     try:
@@ -69,6 +71,7 @@ async def list_anthropic_models(
     active_base_url = (
         base_url or default_provider_base_url(ProviderProtocol.anthropic_compatible)
     ).rstrip("/")
+    active_base_url = validate_provider_base_url(active_base_url).rstrip("/")
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=30)
     try:
@@ -446,6 +449,7 @@ async def complete_openai(
     client: httpx.AsyncClient | None = None,
 ) -> LLMResponse:
     base_url = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
+    base_url = validate_provider_base_url(base_url).rstrip("/")
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=120)
     try:
@@ -516,6 +520,7 @@ async def complete_anthropic(
     client: httpx.AsyncClient | None = None,
 ) -> LLMResponse:
     base_url = (provider.base_url or "https://api.anthropic.com").rstrip("/")
+    base_url = validate_provider_base_url(base_url).rstrip("/")
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=120)
     try:
