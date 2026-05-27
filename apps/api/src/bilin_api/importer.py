@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import httpx
@@ -18,23 +19,26 @@ from bilin_api.article_store import (
 )
 from bilin_api.arxiv import ArxivMetadata, download_bytes, resolve_arxiv_metadata
 from bilin_api.embedding_service import build_article_embeddings
-from bilin_api.repositories import create_job
+from bilin_api.repositories import create_parse_job_if_absent
 from bilin_api.schemas import (
     ArticleManifest,
     ImportArxivRequest,
     ImportArxivResult,
     ImportLocalKind,
     ImportLocalResult,
-    JobType,
     Library,
 )
+
+ImportProgressCallback = Callable[[str, str, float], Awaitable[None]]
 
 
 async def import_arxiv(
     library: Library,
     request: ImportArxivRequest,
     client: httpx.AsyncClient | None = None,
+    progress: ImportProgressCallback | None = None,
 ) -> ImportArxivResult:
+    await emit_import_progress(progress, "arxiv_metadata", "解析 arXiv 元数据", 0.05)
     metadata = await resolve_arxiv_metadata(request.arxiv_id, request.version, client)
     bundle_path = bundle_path_for_arxiv(library, metadata.bare_id, metadata.version)
     original_dir = bundle_path / "original"
@@ -47,15 +51,18 @@ async def import_arxiv(
     ):
         directory.mkdir(parents=True, exist_ok=True)
 
+    await emit_import_progress(progress, "source_download", "下载源数据", 0.25)
     source_bytes = await download_bytes(metadata.source_url, client)
     source_path = original_dir / "source.tar"
     source_path.write_bytes(source_bytes)
     pdf_fingerprint = None
     if request.download_pdf:
+        await emit_import_progress(progress, "pdf_download", "下载 PDF", 0.45)
         pdf_bytes = await download_bytes(metadata.pdf_url, client)
         (original_dir / "paper.pdf").write_bytes(pdf_bytes)
         pdf_fingerprint = sha256_bytes(pdf_bytes)
 
+    await emit_import_progress(progress, "bundle_write", "写入 bundle", 0.65)
     family, revision = await upsert_arxiv_revision(
         library=library,
         bare_id=metadata.bare_id,
@@ -73,9 +80,9 @@ async def import_arxiv(
     write_manifest(bundle_path, manifest)
     parse_job_id = None
     if request.parse_after_import:
-        parse_job = await create_job(
-            JobType.parse_article,
-            payload={"library_id": library.id, "article_revision_id": revision.id},
+        await emit_import_progress(progress, "queue_parse", "排队解析", 0.9)
+        parse_job, _created = await create_parse_job_if_absent(
+            {"library_id": library.id, "article_revision_id": revision.id}
         )
         parse_job_id = parse_job.id
     return ImportArxivResult(
@@ -107,6 +114,16 @@ def build_manifest(
         },
         metadata={"manifest_format": "bilin.article_manifest.v1"},
     )
+
+
+async def emit_import_progress(
+    progress: ImportProgressCallback | None,
+    stage: str,
+    message: str,
+    value: float,
+) -> None:
+    if progress is not None:
+        await progress(stage, message, value)
 
 
 async def import_local_file(
@@ -171,9 +188,8 @@ async def import_local_file(
         await replace_document(library, revision, manifest, blocks, [], source_md)
         await build_article_embeddings(library, revision.id)
     elif kind == ImportLocalKind.tex_archive and parse_after_import:
-        parse_job = await create_job(
-            JobType.parse_article,
-            payload={"library_id": library.id, "article_revision_id": revision.id},
+        parse_job, _created = await create_parse_job_if_absent(
+            {"library_id": library.id, "article_revision_id": revision.id}
         )
         parse_job_id = parse_job.id
 

@@ -53,8 +53,9 @@ import {
 } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { API_BASE_URL, apiClient } from "../api/client";
+import { apiClient, apiUrl } from "../api/client";
 import {
+  articleTaskFailedCount,
   useArticleCitations,
   useArticleGlossary,
   useArticleChat,
@@ -76,7 +77,7 @@ import {
   useGenerateReaderCard,
   useGenerateNotePatch,
   useImportCitationArxiv,
-  useJobSummary,
+  useArticleTaskSummary,
   useNotePatches,
   useNoteTemplates,
   useProviders,
@@ -182,7 +183,8 @@ export function ReaderPage() {
     (state) => state.setAutoTranslateOnLanguageSwitch
   );
   const providers = useProviders();
-  const jobSummary = useJobSummary();
+  const articleTaskSummary = useArticleTaskSummary();
+  const failedArticleTaskCount = articleTaskFailedCount(articleTaskSummary.data);
   const libraryArticles = useArticles(libraryId, targetLanguage);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [chatBlockUid, setChatBlockUid] = useState<string | null>(null);
@@ -268,6 +270,7 @@ export function ReaderPage() {
   const blocks = useMemo(() => document.data?.blocks ?? [], [document.data?.blocks]);
   const assets = useMemo(() => document.data?.assets ?? [], [document.data?.assets]);
   const title = articleTitle(document.data, t);
+  const recoveredLatexmlDocument = isRecoveredLatexmlDocument(document.data);
   const readerArticleItems = useMemo(() => libraryArticles.data ?? [], [libraryArticles.data]);
   const visibleReaderArticleItems = useMemo(
     () => filterReaderArticleItems(readerArticleItems, readerArticleSearchQuery),
@@ -1647,7 +1650,7 @@ export function ReaderPage() {
       panel: "tasks",
       label: t("nav.tasks"),
       icon: <TerminalSquare size={15} aria-hidden="true" />,
-      badge: jobSummary.data?.active ?? 0
+      badge: articleTaskSummary.data?.active ?? 0
     },
     {
       panel: "providers",
@@ -2157,6 +2160,11 @@ export function ReaderPage() {
                     {t("reader.documentLoadError")}
                   </Alert>
                 ) : null}
+                {recoveredLatexmlDocument ? (
+                  <Alert color="yellow" mb="md" title={t("reader.recoveredDocumentTitle")}>
+                    {t("reader.recoveredDocumentNotice")}
+                  </Alert>
+                ) : null}
                 <ReaderBlockList
                   blocks={blocks}
                   activeBlockUid={activeBlockUid}
@@ -2204,19 +2212,23 @@ export function ReaderPage() {
                     onToggle={() => toggleReaderToolbarPanel("tasks")}
                     badge={
                       <Badge size="sm" variant="light">
-                        {jobSummary.data?.active ?? 0}
+                        {articleTaskSummary.data?.active ?? 0}
                       </Badge>
                     }
                   >
                     <div className="reader-dock-task-grid">
-                      <span>{t("task.statusQueued", { count: jobSummary.data?.queued ?? 0 })}</span>
                       <span>
-                        {t("task.statusRunning", { count: jobSummary.data?.running ?? 0 })}
+                        {t("task.statusQueued", { count: articleTaskSummary.data?.queued ?? 0 })}
                       </span>
                       <span>
-                        {t("task.statusSucceeded", { count: jobSummary.data?.succeeded ?? 0 })}
+                        {t("task.statusRunning", { count: articleTaskSummary.data?.running ?? 0 })}
                       </span>
-                      <span>{t("task.statusFailed", { count: jobSummary.data?.failed ?? 0 })}</span>
+                      <span>
+                        {t("task.statusPaused", { count: articleTaskSummary.data?.paused ?? 0 })}
+                      </span>
+                      <span>
+                        {t("task.statusFailed", { count: failedArticleTaskCount })}
+                      </span>
                     </div>
                     <Button
                       fullWidth
@@ -3721,6 +3733,14 @@ function articleTitle(document: ArticleDocument | undefined, t: ReturnType<typeo
   return typeof title === "string" && title.trim() ? title : t("reader.emptyTitle");
 }
 
+function isRecoveredLatexmlDocument(document: ArticleDocument | undefined) {
+  const metadata = document?.manifest.metadata;
+  return (
+    metadata?.latexmlpost_mode === "xml_fallback_after_split_timeout" ||
+    metadata?.parse_fidelity === "structure_only"
+  );
+}
+
 function chapterNumber(index: number, block: DocumentBlock): string {
   const level = block.metadata?.level;
   if (typeof level === "number" && level > 1) return `§${index + 1}`;
@@ -3941,7 +3961,10 @@ function assetUrl(
   const encodedLibrary = encodeURIComponent(libraryId);
   const encodedArticle = encodeURIComponent(articleId);
   const encodedAsset = encodeURIComponent(asset.asset_id);
-  return `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}`;
+  return apiUrl(
+    `/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}`,
+    true
+  );
 }
 
 function assetFileUrls(
@@ -3977,7 +4000,10 @@ function assetFileUrls(
       {
         index,
         originalReference,
-        url: `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}/files/${index}`,
+        url: apiUrl(
+          `/libraries/${encodedLibrary}/articles/${encodedArticle}/assets/${encodedAsset}/files/${index}`,
+          true
+        ),
         metadata: item as Record<string, unknown>
       }
     ];
@@ -3993,7 +4019,10 @@ function exportDownloadUrl(
   const encodedLibrary = encodeURIComponent(libraryId);
   const encodedArticle = encodeURIComponent(articleId);
   const encodedFile = encodeURIComponent(result.file_name);
-  return `${API_BASE_URL}/libraries/${encodedLibrary}/articles/${encodedArticle}/exports/${encodedFile}`;
+  return apiUrl(
+    `/libraries/${encodedLibrary}/articles/${encodedArticle}/exports/${encodedFile}`,
+    true
+  );
 }
 
 function triggerBrowserDownload(url: string, fileName: string): void {

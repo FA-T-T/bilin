@@ -73,7 +73,10 @@ async def translate_missing_library_blocks(
 
 @router.delete("/{library_id}", response_model=LibraryDeleteResult)
 async def delete_library_by_id(library_id: str) -> LibraryDeleteResult:
-    result = await delete_library(library_id)
+    try:
+        result = await delete_library(library_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library not found")
     return result

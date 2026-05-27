@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -36,7 +37,7 @@ from bilin_api.latexml_parser import (
     safe_unpack,
 )
 from bilin_api.repositories import create_job, create_library
-from bilin_api.schemas import ArticleManifest, JobType, LibraryCreate
+from bilin_api.schemas import ArticleManifest, JobType, LibraryCreate, ParseErrorInfo
 
 
 def test_safe_unpack_detects_main_tex(tmp_path: Path) -> None:
@@ -479,6 +480,98 @@ async def test_run_command_times_out_after_idle_soft_limit(tmp_path: Path) -> No
     assert "timeout_error" in log_path.read_text(encoding="utf-8")
 
 
+class DummyProcess:
+    def __init__(self) -> None:
+        self.pid = 4321
+        self.terminated = False
+        self.killed = False
+        self.wait_count = 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> int:
+        self.wait_count += 1
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_tree_uses_taskkill_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    taskkill_pids: list[int] = []
+
+    monkeypatch.setattr(parser_module, "_has_posix_process_group_kill", lambda: False)
+    monkeypatch.setattr(parser_module, "_is_windows_platform", lambda: True)
+    monkeypatch.setattr(
+        parser_module,
+        "_run_windows_taskkill",
+        lambda pid: taskkill_pids.append(pid) or True,
+    )
+    process = DummyProcess()
+
+    await parser_module._terminate_process_tree(process)
+
+    assert taskkill_pids == [4321]
+    assert process.terminated is False
+    assert process.killed is False
+    assert process.wait_count == 1
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_tree_falls_back_to_direct_child_when_taskkill_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parser_module, "_has_posix_process_group_kill", lambda: False)
+    monkeypatch.setattr(parser_module, "_is_windows_platform", lambda: True)
+    monkeypatch.setattr(parser_module, "_run_windows_taskkill", lambda _pid: False)
+    process = DummyProcess()
+
+    await parser_module._terminate_process_tree(process)
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.wait_count == 1
+
+
+def test_run_windows_taskkill_invokes_tree_force_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[str]:
+        recorded.update(
+            {
+                "command": command,
+                "check": check,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(parser_module.subprocess, "run", fake_run)
+
+    assert parser_module._run_windows_taskkill(1234) is True
+    assert recorded == {
+        "command": ["taskkill", "/T", "/F", "/PID", "1234"],
+        "check": False,
+        "capture_output": True,
+        "text": True,
+        "timeout": 10,
+    }
+
+
 def test_normalize_latexml_html_outputs_blocks_assets_and_markdown() -> None:
     fixture = Path(__file__).parent / "fixtures" / "latexml" / "minimal.html"
     blocks, assets = normalize_latexml_html(fixture, "revision-1")
@@ -845,6 +938,133 @@ def test_normalize_latexml_html_skips_generated_toc_navigation(tmp_path: Path) -
         "Stabilizer codes encode quantum information.",
     ]
     assert not any(block.source_markdown in {"Contents", "List of Tables"} for block in blocks)
+
+
+def test_combine_latexml_split_html_preserves_page_order_and_asset_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_dir = tmp_path / "document"
+    split_dir = document_dir / "latexml-split"
+    asset_dir = split_dir / "generated"
+    split_dir.mkdir(parents=True)
+    asset_dir.mkdir()
+    (asset_dir / "plot.png").write_bytes(b"png")
+    (split_dir / "index.html").write_text(
+        """
+        <html>
+          <body>
+            <div class="ltx_page_content">
+              <article class="ltx_document">
+                <h1 class="ltx_title ltx_title_document">A Long Book</h1>
+                <nav class="ltx_TOC">
+                  <a href="Ch1.html">Chapter 1</a>
+                  <a href="Ch2.html">Chapter 2</a>
+                </nav>
+              </article>
+            </div>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    (split_dir / "Ch1.html").write_text(
+        """
+        <html>
+          <body>
+            <div class="ltx_page_content">
+              <section class="ltx_chapter">
+                <h1>Chapter 1 Foundations</h1>
+                <p>First chapter.</p>
+                <figure><img src="generated/plot.png" /><figcaption>A plot.</figcaption></figure>
+              </section>
+            </div>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    (split_dir / "Ch2.html").write_text(
+        """
+        <html>
+          <body>
+            <div class="ltx_page_content">
+              <section class="ltx_chapter">
+                <h1>Chapter 2 Methods</h1>
+                <p>Second chapter.</p>
+              </section>
+            </div>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(parser_module.shutil, "which", lambda _name: None)
+
+    pages = parser_module.combine_latexml_split_html(
+        split_dir / "index.html",
+        document_dir / "latexml.html",
+    )
+    blocks, assets = normalize_latexml_html(
+        document_dir / "latexml.html",
+        "revision-1",
+        bundle_path=tmp_path / "bundle",
+    )
+
+    assert [path.name for path in pages] == ["Ch1.html", "Ch2.html"]
+    assert [block.source_markdown for block in blocks[:3]] == [
+        "A Long Book",
+        "Chapter 1 Foundations",
+        "First chapter.",
+    ]
+    assert "A plot." in blocks[3].source_markdown
+    assert "Chapter 2 Methods" in [block.source_markdown for block in blocks]
+    assert assets[0].source_path == str(asset_dir / "plot.png")
+    combined = (document_dir / "latexml.html").read_text(encoding="utf-8")
+    assert 'src="latexml-split/generated/plot.png"' in combined
+
+
+def test_latexml_xml_to_html_recovers_blocks_without_latexmlpost(tmp_path: Path) -> None:
+    xml_path = tmp_path / "latexml.xml"
+    html_path = tmp_path / "latexml.html"
+    xml_path.write_text(
+        """
+        <document xmlns="http://dlmf.nist.gov/LaTeXML">
+          <title>Recovered Paper</title>
+          <creator role="author"><personname>A. Author</personname></creator>
+          <chapter xml:id="Chx1">
+            <title>Contents</title>
+            <para><ERROR class="undefined">\\@starttoc</ERROR><p><text>toc</text></p></para>
+          </chapter>
+          <chapter xml:id="Chx2">
+            <title>Introduction</title>
+            <para>
+              <p>We optimize <Math mode="inline" tex="f(x)" text="f of x" />.</p>
+              <equation><Math mode="display" tex="x^2" text="x squared" /></equation>
+            </para>
+          </chapter>
+        </document>
+        """,
+        encoding="utf-8",
+    )
+
+    parser_module.latexml_xml_to_html(xml_path, html_path)
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [block.block_type for block in blocks] == [
+        "section",
+        "paragraph",
+        "section",
+        "paragraph",
+        "equation",
+    ]
+    assert [block.source_markdown for block in blocks] == [
+        "Recovered Paper",
+        "A. Author",
+        "Introduction",
+        "We optimize f(x).",
+        "x^2",
+    ]
 
 
 def test_normalize_latexml_html_skips_author_metadata_attribute_paragraph(tmp_path: Path) -> None:
@@ -1792,6 +2012,400 @@ def test_normalize_latexml_html_marks_code_generated_figure_for_controlled_rende
         "pdflatex": False,
         "magick": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_parse_article_uses_chapter_split_for_book_sources(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Books", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00010", "v1")
+    original_dir = bundle_path / "original"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    write_tar(
+        original_dir / "source.tar",
+        {
+            "main.tex": (
+                rb"\documentclass{book}"
+                rb"\begin{document}"
+                rb"\chapter{One}Hello."
+                rb"\end{document}"
+            )
+        },
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00010",
+        version="v1",
+        title="Long book",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    write_manifest(bundle_path, ArticleManifest(article_revision_id=revision.id, source="arxiv"))
+    commands: list[list[str]] = []
+    events: list[str] = []
+
+    async def record_progress(stage: str, message: str, progress: float) -> None:
+        _ = (message, progress)
+        events.append(stage)
+
+    async def fake_run_command(
+        command: list[str],
+        cwd: Path,
+        log_path: Path,
+        timeout_budget: object | None = None,
+        activity_paths: list[Path] | None = None,
+    ) -> None:
+        _ = (cwd, timeout_budget, activity_paths)
+        commands.append(command)
+        destination = Path(command[command.index("--destination") + 1])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if "--split" in command:
+            destination.write_text(
+                '<html><body><nav class="ltx_TOC">'
+                '<a href="Ch1.html">Chapter 1</a>'
+                "</nav></body></html>",
+                encoding="utf-8",
+            )
+            (destination.parent / "Ch1.html").write_text(
+                """
+                <html><body><div class="ltx_page_content">
+                  <section class="ltx_chapter"><h1>Chapter 1 One</h1><p>Hello.</p></section>
+                </div></body></html>
+                """,
+                encoding="utf-8",
+            )
+        elif destination.suffix == ".xml":
+            destination.write_text("<document />", encoding="utf-8")
+        else:
+            raise AssertionError("book sources should not use unsplit latexmlpost")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        parser_module.shutil,
+        "which",
+        lambda name: f"/mock/{name}" if name in {"latexml", "latexmlpost"} else None,
+    )
+    monkeypatch.setattr(parser_module, "detect_version", lambda _path: "mock")
+    monkeypatch.setattr(parser_module, "run_command", fake_run_command)
+
+    result = await parse_article_revision(library, revision.id, progress=record_progress)
+    manifest = read_manifest(bundle_path)
+
+    assert result["block_count"] == 2
+    assert any("--split" in command for command in commands)
+    assert any("--splitat=chapter" in command for command in commands)
+    assert "latexmlpost_split_execution" in events
+    assert manifest is not None
+    assert manifest.metadata["latexmlpost_mode"] == "split"
+    assert manifest.metadata["latexml_split_level"] == "chapter"
+
+
+@pytest.mark.asyncio
+async def test_parse_article_falls_back_to_split_when_latexmlpost_times_out(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Papers", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00011", "v1")
+    original_dir = bundle_path / "original"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    write_tar(
+        original_dir / "source.tar",
+        {
+            "main.tex": (
+                rb"\documentclass{article}"
+                rb"\begin{document}"
+                rb"\section{One}Hello."
+                rb"\end{document}"
+            )
+        },
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00011",
+        version="v1",
+        title="Large article",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    write_manifest(bundle_path, ArticleManifest(article_revision_id=revision.id, source="arxiv"))
+    commands: list[list[str]] = []
+    events: list[tuple[str, str]] = []
+
+    async def record_progress(stage: str, message: str, progress: float) -> None:
+        _ = progress
+        events.append((stage, message))
+
+    async def fake_run_command(
+        command: list[str],
+        cwd: Path,
+        log_path: Path,
+        timeout_budget: object | None = None,
+        activity_paths: list[Path] | None = None,
+    ) -> None:
+        _ = (cwd, timeout_budget, activity_paths)
+        commands.append(command)
+        destination = Path(command[command.index("--destination") + 1])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.suffix == ".xml":
+            destination.write_text("<document />", encoding="utf-8")
+        elif "--split" in command:
+            destination.write_text(
+                '<html><body><nav class="ltx_TOC">'
+                '<a href="S1.html">Section 1</a>'
+                "</nav></body></html>",
+                encoding="utf-8",
+            )
+            (destination.parent / "S1.html").write_text(
+                """
+                <html><body><div class="ltx_page_content">
+                  <section class="ltx_section"><h1>Section 1 One</h1><p>Hello.</p></section>
+                </div></body></html>
+                """,
+                encoding="utf-8",
+            )
+        else:
+            raise ParseFailure(
+                "latexml_timeout",
+                "Command timed out by idle limit",
+                {"timeout_reason": "idle"},
+            )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        parser_module.shutil,
+        "which",
+        lambda name: f"/mock/{name}" if name in {"latexml", "latexmlpost"} else None,
+    )
+    monkeypatch.setattr(parser_module, "detect_version", lambda _path: "mock")
+    monkeypatch.setattr(parser_module, "run_command", fake_run_command)
+
+    result = await parse_article_revision(library, revision.id, progress=record_progress)
+    manifest = read_manifest(bundle_path)
+
+    assert result["block_count"] == 2
+    assert [("--split" in command) for command in commands] == [False, False, True]
+    assert any(message == "latexmlpost 超时，按章节渲染 HTML" for _stage, message in events)
+    assert manifest is not None
+    assert manifest.metadata["latexmlpost_mode"] == "split_after_timeout"
+    assert manifest.metadata["latexmlpost_single_timeout"]["timeout_reason"] == "idle"
+    assert manifest.metadata["latexml_split_level"] == "section"
+
+
+@pytest.mark.asyncio
+async def test_parse_article_retry_resumes_from_latexmlpost_timeout(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Retry parse", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00012", "v1")
+    original_dir = bundle_path / "original"
+    document_dir = bundle_path / "document"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    document_dir.mkdir(parents=True, exist_ok=True)
+    write_tar(
+        original_dir / "source.tar",
+        {
+            "main.tex": (
+                rb"\documentclass{article}"
+                rb"\begin{document}"
+                rb"\section{One}Hello."
+                rb"\end{document}"
+            )
+        },
+    )
+    (document_dir / "latexml.xml").write_text("<document />", encoding="utf-8")
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00012",
+        version="v1",
+        title="Retry parse",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    write_manifest(
+        bundle_path,
+        ArticleManifest(
+            article_revision_id=revision.id,
+            source="arxiv",
+            parse_status="failed",
+            errors=[
+                ParseErrorInfo(
+                    code="latexml_timeout",
+                    message="Command timed out by idle limit.",
+                    details={"stage": "latexmlpost_execution", "timeout_reason": "idle"},
+                )
+            ],
+        ),
+    )
+    commands: list[list[str]] = []
+    events: list[tuple[str, str]] = []
+
+    async def record_progress(stage: str, message: str, progress: float) -> None:
+        _ = progress
+        events.append((stage, message))
+
+    async def fake_run_command(
+        command: list[str],
+        cwd: Path,
+        log_path: Path,
+        timeout_budget: object | None = None,
+        activity_paths: list[Path] | None = None,
+    ) -> None:
+        _ = (cwd, timeout_budget, activity_paths)
+        commands.append(command)
+        destination = Path(command[command.index("--destination") + 1])
+        if destination.suffix == ".xml":
+            raise AssertionError("Retry should reuse existing latexml.xml")
+        assert "--split" in command
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            '<html><body><nav class="ltx_TOC">'
+            '<a href="S1.html">Section 1</a>'
+            "</nav></body></html>",
+            encoding="utf-8",
+        )
+        (destination.parent / "S1.html").write_text(
+            """
+            <html><body><div class="ltx_page_content">
+              <section class="ltx_section"><h1>Section 1 One</h1><p>Hello.</p></section>
+            </div></body></html>
+            """,
+            encoding="utf-8",
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        parser_module.shutil,
+        "which",
+        lambda name: f"/mock/{name}" if name in {"latexml", "latexmlpost"} else None,
+    )
+    monkeypatch.setattr(parser_module, "detect_version", lambda _path: "mock")
+    monkeypatch.setattr(parser_module, "run_command", fake_run_command)
+
+    result = await parse_article_revision(library, revision.id, progress=record_progress)
+    manifest = read_manifest(bundle_path)
+
+    assert result["block_count"] == 2
+    assert len(commands) == 1
+    assert "--split" in commands[0]
+    assert ("latexmlpost_execution", "从失败阶段继续：渲染 HTML") in events
+    assert ("latexmlpost_split_execution", "从失败阶段继续：按章节渲染 HTML") in events
+    assert manifest is not None
+    assert manifest.metadata["parse_resume_from"] == "latexmlpost_execution"
+    assert manifest.metadata["latexmlpost_mode"] == "split_after_retry"
+
+
+@pytest.mark.asyncio
+async def test_parse_article_retry_falls_back_to_xml_when_split_times_out(
+    bilin_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="XML recovery", path=str(tmp_path / "library")),
+    )
+    bundle_path = bundle_path_for_arxiv(library, "2401.00013", "v1")
+    original_dir = bundle_path / "original"
+    document_dir = bundle_path / "document"
+    original_dir.mkdir(parents=True, exist_ok=True)
+    document_dir.mkdir(parents=True, exist_ok=True)
+    write_tar(
+        original_dir / "source.tar",
+        {
+            "main.tex": (
+                rb"\documentclass{book}"
+                rb"\begin{document}"
+                rb"\chapter{One}Hello."
+                rb"\end{document}"
+            )
+        },
+    )
+    (document_dir / "latexml.xml").write_text(
+        """
+        <document xmlns="http://dlmf.nist.gov/LaTeXML">
+          <title>Recovered Book</title>
+          <chapter><title>One</title><para><p>Hello from XML.</p></para></chapter>
+        </document>
+        """,
+        encoding="utf-8",
+    )
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00013",
+        version="v1",
+        title="XML recovery",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    write_manifest(
+        bundle_path,
+        ArticleManifest(
+            article_revision_id=revision.id,
+            source="arxiv",
+            parse_status="failed",
+            errors=[
+                ParseErrorInfo(
+                    code="latexml_timeout",
+                    message="Command timed out by idle limit.",
+                    details={"stage": "latexmlpost_split_execution", "timeout_reason": "idle"},
+                )
+            ],
+        ),
+    )
+    events: list[tuple[str, str]] = []
+
+    async def record_progress(stage: str, message: str, progress: float) -> None:
+        _ = progress
+        events.append((stage, message))
+
+    async def fake_run_command(
+        command: list[str],
+        cwd: Path,
+        log_path: Path,
+        timeout_budget: object | None = None,
+        activity_paths: list[Path] | None = None,
+    ) -> None:
+        _ = (command, cwd, log_path, timeout_budget, activity_paths)
+        raise ParseFailure(
+            "latexml_timeout",
+            "Command timed out by idle limit.",
+            {"timeout_reason": "idle"},
+        )
+
+    monkeypatch.setattr(
+        parser_module.shutil,
+        "which",
+        lambda name: f"/mock/{name}" if name in {"latexml", "latexmlpost"} else None,
+    )
+    monkeypatch.setattr(parser_module, "detect_version", lambda _path: "mock")
+    monkeypatch.setattr(parser_module, "run_command", fake_run_command)
+
+    result = await parse_article_revision(library, revision.id, progress=record_progress)
+    manifest = read_manifest(bundle_path)
+
+    assert result["block_count"] == 3
+    assert ("latexml_xml_recovery", "latexmlpost 仍超时，使用 XML 快速恢复") in events
+    assert manifest is not None
+    assert manifest.metadata["latexmlpost_mode"] == "xml_fallback_after_split_timeout"
+    assert manifest.metadata["parse_fidelity"] == "structure_only"
+    assert manifest.metadata["parse_recovery"]["stage"] == "latexml_xml_recovery"
+    assert manifest.metadata["parse_recovery"]["reason"] == "latexmlpost_timeout"
+    assert manifest.metadata["parse_resume_from"] == "latexmlpost_execution"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,11 @@ PYTHON_BIN="${API_DIR}/.venv/bin/python"
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 CURL_BIN="${CURL_BIN:-curl}"
 
+if [ "${HOST}" != "127.0.0.1" ] && [ "${HOST}" != "localhost" ]; then
+  export BILIN_ALLOWED_ORIGINS="${BILIN_ALLOWED_ORIGINS:-http://${HOST}:${WEB_PORT},http://127.0.0.1:${WEB_PORT},http://localhost:${WEB_PORT}}"
+  export VITE_BILIN_API_URL="${VITE_BILIN_API_URL:-http://${HOST}:${API_PORT}}"
+fi
+
 usage() {
   cat <<EOF
 Usage: ./scripts/start-dev.sh [start|status|stop|restart]
@@ -76,6 +81,13 @@ PY
 pid_alive() {
   local pid="${1:-}"
   [ -n "${pid}" ] && kill -0 "${pid}" >/dev/null 2>&1
+}
+
+signal_process_tree() {
+  local signal="$1"
+  local pid="${2:-}"
+  [ -n "${pid}" ] || return 0
+  kill "-${signal}" -- "-${pid}" >/dev/null 2>&1 || kill "-${signal}" "${pid}" >/dev/null 2>&1 || true
 }
 
 read_pidfile() {
@@ -246,7 +258,7 @@ stop_pidfile() {
     echo "${name}: not running"
     return 0
   fi
-  kill "${pid}" >/dev/null 2>&1 || true
+  signal_process_tree TERM "${pid}"
   local index=0
   while [ "${index}" -lt 25 ]; do
     if ! pid_alive "${pid}"; then
@@ -257,7 +269,7 @@ stop_pidfile() {
     index=$((index + 1))
     sleep 0.2
   done
-  kill -9 "${pid}" >/dev/null 2>&1 || true
+  signal_process_tree KILL "${pid}"
   rm -f "${pidfile}"
   echo "${name}: killed"
 }

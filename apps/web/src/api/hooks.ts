@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import { API_BASE_URL, apiClient, type SseMessage } from "./client";
+import { apiClient, apiUrl, type SseMessage } from "./client";
 import type {
+  ArticleTaskSummary,
   ArticleExportRequest,
   ChatAskRequest,
   ChatToNotePatchRequest,
@@ -98,6 +99,7 @@ export const queryKeys = {
     ["note-patches", libraryId, revisionId] as const,
   jobs: ["jobs"] as const,
   jobSummary: ["jobs", "summary"] as const,
+  articleTaskSummary: (limit: number) => ["jobs", "articles", limit] as const,
   jobList: (limit: number) => ["jobs", "list", limit] as const
 };
 
@@ -908,6 +910,29 @@ export function useJobSummary(
   });
 }
 
+export function useArticleTaskSummary(
+  options: { limit?: number; enabled?: boolean; refetchInterval?: number | false } = {}
+) {
+  const enabled = options.enabled ?? true;
+  const limit = options.limit ?? 120;
+  return useQuery({
+    queryKey: queryKeys.articleTaskSummary(limit),
+    queryFn: () => apiClient.getArticleTaskSummary(limit),
+    enabled,
+    refetchInterval:
+      enabled === false
+        ? false
+        : (options.refetchInterval ?? PASSIVE_JOB_SUMMARY_REFETCH_INTERVAL_MS),
+    retry: false
+  });
+}
+
+export function articleTaskFailedCount(
+  summary: (ArticleTaskSummary & { failed_items?: number | null }) | undefined
+) {
+  return summary?.failed_items ?? summary?.failed ?? 0;
+}
+
 export function useJobs(options: { limit?: number; enabled?: boolean } = {}) {
   const limit = options.limit ?? 120;
   return useQuery({
@@ -931,6 +956,16 @@ export function useJobAction(action: "pause" | "resume" | "cancel") {
   });
 }
 
+export function useRetryJobs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobIds: string[]) => {
+      await Promise.all(jobIds.map((jobId) => apiClient.retryJob(jobId)));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.jobs })
+  });
+}
+
 export function useClearJobs() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -944,7 +979,7 @@ export function useJobEvents(enabled = true) {
   useEffect(() => {
     if (!enabled) return undefined;
     if (typeof EventSource === "undefined") return undefined;
-    const source = new EventSource(`${API_BASE_URL}/events`);
+    const source = new EventSource(apiUrl("/events", true));
     source.addEventListener("jobs", () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     });

@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -466,31 +467,31 @@ async def update_article_reading_progress(
 
     db_path = await ensure_library_database(library)
     async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
         cursor = await conn.execute(
             "SELECT * FROM reading_progress WHERE article_revision_id = ?",
             (revision_id,),
         )
         current = await cursor.fetchone()
 
-    seconds_by_block = _reading_seconds_from_row(current) if current is not None else {}
-    for block_uid, seconds in payload.block_seconds.items():
-        if block_uid not in valid_block_uids:
-            continue
-        seconds_by_block[block_uid] = seconds_by_block.get(block_uid, 0) + _clean_delta_seconds(
-            seconds
-        )
-    seconds_by_block = {
-        block_uid: seconds
-        for block_uid, seconds in seconds_by_block.items()
-        if block_uid in valid_block_uids and seconds > 0
-    }
-    if active_block_uid is None and current is not None:
-        current_active = current["active_block_uid"]
-        active_block_uid = current_active if current_active in valid_block_uids else None
-    total_seconds = sum(seconds_by_block.values())
-    now = utc_now()
-    created_at = current["created_at"] if current is not None else now
-    async with open_db(db_path) as conn:
+        seconds_by_block = _reading_seconds_from_row(current) if current is not None else {}
+        for block_uid, seconds in payload.block_seconds.items():
+            if block_uid not in valid_block_uids:
+                continue
+            seconds_by_block[block_uid] = seconds_by_block.get(
+                block_uid, 0
+            ) + _clean_delta_seconds(seconds)
+        seconds_by_block = {
+            block_uid: seconds
+            for block_uid, seconds in seconds_by_block.items()
+            if block_uid in valid_block_uids and seconds > 0
+        }
+        if active_block_uid is None and current is not None:
+            current_active = current["active_block_uid"]
+            active_block_uid = current_active if current_active in valid_block_uids else None
+        total_seconds = sum(seconds_by_block.values())
+        now = utc_now()
+        created_at = current["created_at"] if current is not None else now
         await conn.execute(
             """
             INSERT INTO reading_progress(
@@ -1523,19 +1524,15 @@ async def find_glossary_term_by_source(
     target_language: str,
     scope: str = "article",
 ) -> GlossaryTerm | None:
-    normalized = " ".join(source_term.casefold().split())
-    terms = await list_glossary_terms(
-        library,
-        revision_id=revision_id,
-        target_language=target_language,
-        scope=scope,
-    )
-    for term in terms:
-        term_normalized = str(term.metadata.get("normalized_source_term") or "").casefold()
-        fallback = " ".join(term.source_term.casefold().split())
-        if term_normalized == normalized or fallback == normalized:
-            return term
-    return None
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        return await _find_glossary_term_by_source_in_conn(
+            conn,
+            revision_id=revision_id,
+            source_term=source_term,
+            target_language=target_language,
+            scope=scope,
+        )
 
 
 async def create_glossary_term(
@@ -1550,9 +1547,22 @@ async def create_glossary_term(
     db_path = await ensure_library_database(library)
     now = utc_now()
     term_id = str(uuid4())
-    metadata_payload = metadata or {}
-    metadata_payload.setdefault("normalized_source_term", " ".join(source_term.casefold().split()))
+    metadata_payload = _glossary_metadata_payload(metadata, source_term)
+    article_revision_id = metadata_payload.get("article_revision_id")
+    target_language = _glossary_target_language(metadata_payload, language_direction)
     async with open_db(db_path) as conn:
+        if scope == "article" and isinstance(article_revision_id, str):
+            await conn.execute("BEGIN IMMEDIATE")
+            existing = await _find_glossary_term_by_source_in_conn(
+                conn,
+                revision_id=article_revision_id,
+                source_term=source_term,
+                target_language=target_language,
+                scope=scope,
+            )
+            if existing is not None:
+                await conn.commit()
+                return existing
         await conn.execute(
             """
             INSERT INTO glossary_terms(
@@ -1581,6 +1591,87 @@ async def create_glossary_term(
     return term
 
 
+async def upsert_article_glossary_term(
+    library: Library,
+    *,
+    revision_id: str,
+    target_language: str,
+    source_term: str,
+    target_term: str,
+    language_direction: str,
+    status: str,
+    metadata: dict[str, Any] | None = None,
+) -> GlossaryTerm:
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    term_id = str(uuid4())
+    metadata_payload = _glossary_metadata_payload(metadata, source_term)
+    metadata_payload["article_revision_id"] = revision_id
+    metadata_payload["target_language"] = target_language
+    async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        existing = await _find_glossary_term_by_source_in_conn(
+            conn,
+            revision_id=revision_id,
+            source_term=source_term,
+            target_language=target_language,
+            scope="article",
+        )
+        if existing is not None:
+            metadata_payload = _merge_glossary_metadata(
+                existing,
+                target_term=target_term,
+                metadata=metadata_payload,
+            )
+            await conn.execute(
+                """
+                UPDATE glossary_terms
+                SET target_term = ?, status = ?, metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    target_term,
+                    status,
+                    json.dumps(metadata_payload),
+                    now,
+                    existing.id,
+                ),
+            )
+            await conn.commit()
+            updated = await get_glossary_term(library, existing.id)
+            if updated is None:
+                msg = f"Glossary term not found after upsert: {existing.id}"
+                raise RuntimeError(msg)
+            return updated
+
+        await conn.execute(
+            """
+            INSERT INTO glossary_terms(
+              id, scope, source_term, target_term, language_direction, status,
+              metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                term_id,
+                "article",
+                source_term,
+                target_term,
+                language_direction,
+                status,
+                json.dumps(metadata_payload),
+                now,
+                now,
+            ),
+        )
+        await conn.commit()
+    term = await get_glossary_term(library, term_id)
+    if term is None:
+        msg = "Created glossary term could not be read back"
+        raise RuntimeError(msg)
+    return term
+
+
 async def update_glossary_term(
     library: Library,
     term_id: str,
@@ -1591,15 +1682,11 @@ async def update_glossary_term(
     current = await get_glossary_term(library, term_id)
     if current is None:
         return None
-    metadata_payload = current.metadata.copy()
-    if metadata is not None:
-        metadata_payload.update(metadata)
-    if target_term is not None and target_term != current.target_term:
-        previous = metadata_payload.get("previous_target_terms")
-        previous_terms = previous if isinstance(previous, list) else []
-        if current.target_term and current.target_term not in previous_terms:
-            previous_terms.append(current.target_term)
-        metadata_payload["previous_target_terms"] = previous_terms
+    metadata_payload = _merge_glossary_metadata(
+        current,
+        target_term=target_term,
+        metadata=metadata,
+    )
     now = utc_now()
     db_path = await ensure_library_database(library)
     async with open_db(db_path) as conn:
@@ -1740,37 +1827,49 @@ async def create_reader_card(
     now = utc_now()
     card_id = str(uuid4())
     async with open_db(db_path) as conn:
-        await conn.execute(
-            """
-            INSERT INTO reader_cards(
-              id, article_revision_id, card_type, anchor_block_uid, anchor_text, canonical_key,
-              abbreviation, full_form, title, body_markdown, target_language, source_type,
-              source_url, position, status, metadata_json, created_at, updated_at
+        try:
+            await conn.execute(
+                """
+                INSERT INTO reader_cards(
+                  id, article_revision_id, card_type, anchor_block_uid, anchor_text, canonical_key,
+                  abbreviation, full_form, title, body_markdown, target_language, source_type,
+                  source_url, position, status, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    card_id,
+                    revision_id,
+                    card_type.value,
+                    anchor_block_uid,
+                    anchor_text,
+                    canonical_key,
+                    abbreviation,
+                    full_form,
+                    title,
+                    body_markdown,
+                    target_language,
+                    source_type.value,
+                    source_url,
+                    position.value,
+                    status.value,
+                    json.dumps(metadata or {}),
+                    now,
+                    now,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                card_id,
+            await conn.commit()
+        except sqlite3.IntegrityError:
+            await conn.rollback()
+            existing = await find_reader_card_by_canonical_key(
+                library,
                 revision_id,
-                card_type.value,
-                anchor_block_uid,
-                anchor_text,
                 canonical_key,
-                abbreviation,
-                full_form,
-                title,
-                body_markdown,
                 target_language,
-                source_type.value,
-                source_url,
-                position.value,
-                status.value,
-                json.dumps(metadata or {}),
-                now,
-                now,
-            ),
-        )
-        await conn.commit()
+            )
+            if existing is None:
+                raise
+            return existing
     card = await get_reader_card(library, revision_id, card_id)
     if card is None:
         msg = "Created reader card could not be read back"
@@ -1795,17 +1894,27 @@ async def update_reader_card(
     canonical_key: str | None = None,
     source_type: ReaderCardSourceType | None = None,
 ) -> ReaderCard | None:
-    current = await get_reader_card(library, revision_id, card_id)
-    if current is None:
-        return None
-    metadata_payload = current.metadata.copy()
-    if metadata is not None:
-        metadata_payload.update(metadata)
-    if body_markdown is not None and body_markdown != current.body_markdown:
-        metadata_payload["user_edited"] = True
     now = utc_now()
     db_path = await ensure_library_database(library)
     async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        cursor = await conn.execute(
+            """
+            SELECT * FROM reader_cards
+            WHERE id = ? AND article_revision_id = ?
+            """,
+            (card_id, revision_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await conn.commit()
+            return None
+        current = _reader_card_from_row(row)
+        metadata_payload = current.metadata.copy()
+        if metadata is not None:
+            metadata_payload.update(metadata)
+        if body_markdown is not None and body_markdown != current.body_markdown:
+            metadata_payload["user_edited"] = True
         await conn.execute(
             """
             UPDATE reader_cards
@@ -1926,6 +2035,102 @@ def to_fts_query(query: str) -> str:
 
 def query_tokens(query: str) -> list[str]:
     return [token for token in re.findall(r"[\w]+", query, flags=re.UNICODE) if len(token) > 1]
+
+
+async def _find_glossary_term_by_source_in_conn(
+    conn: aiosqlite.Connection,
+    *,
+    revision_id: str,
+    source_term: str,
+    target_language: str,
+    scope: str,
+) -> GlossaryTerm | None:
+    normalized = _normalized_source_term(source_term)
+    cursor = await conn.execute(
+        """
+        SELECT * FROM glossary_terms
+        WHERE scope = ?
+        ORDER BY updated_at DESC
+        """,
+        (scope,),
+    )
+    rows = await cursor.fetchall()
+    for row in rows:
+        term = _glossary_term_from_row(row)
+        if _glossary_term_matches_source(
+            term,
+            revision_id=revision_id,
+            normalized_source_term=normalized,
+            target_language=target_language,
+        ):
+            return term
+    return None
+
+
+def _glossary_term_matches_source(
+    term: GlossaryTerm,
+    *,
+    revision_id: str,
+    normalized_source_term: str,
+    target_language: str,
+) -> bool:
+    if term.scope == "article" and term.metadata.get("article_revision_id") != revision_id:
+        return False
+    metadata_target_language = term.metadata.get("target_language")
+    if not (
+        metadata_target_language in {None, target_language}
+        or term.language_direction.endswith(f"->{target_language}")
+    ):
+        return False
+    metadata_normalized = str(term.metadata.get("normalized_source_term") or "").casefold()
+    fallback_normalized = _normalized_source_term(term.source_term)
+    return (
+        metadata_normalized == normalized_source_term
+        or fallback_normalized == normalized_source_term
+    )
+
+
+def _glossary_metadata_payload(
+    metadata: dict[str, Any] | None,
+    source_term: str,
+) -> dict[str, Any]:
+    payload = (metadata or {}).copy()
+    payload.setdefault("normalized_source_term", _normalized_source_term(source_term))
+    return payload
+
+
+def _merge_glossary_metadata(
+    current: GlossaryTerm,
+    *,
+    target_term: str | None,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = current.metadata.copy()
+    if metadata is not None:
+        payload.update(metadata)
+    if target_term is not None and target_term != current.target_term:
+        previous = payload.get("previous_target_terms")
+        previous_terms = previous if isinstance(previous, list) else []
+        if current.target_term and current.target_term not in previous_terms:
+            previous_terms.append(current.target_term)
+        payload["previous_target_terms"] = previous_terms
+    return payload
+
+
+def _normalized_source_term(source_term: str) -> str:
+    return " ".join(source_term.casefold().split())
+
+
+def _glossary_target_language(
+    metadata: dict[str, Any],
+    language_direction: str,
+) -> str:
+    target_language = metadata.get("target_language")
+    if isinstance(target_language, str) and target_language:
+        return target_language
+    if "->" in language_direction:
+        return language_direction.rsplit("->", maxsplit=1)[1]
+    return language_direction
 
 
 def _family_from_row(row: aiosqlite.Row) -> ArticleFamily:

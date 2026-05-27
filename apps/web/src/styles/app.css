@@ -1292,6 +1292,9 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
 }
 
 .task-row {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid var(--bilin-panel-border);
   border-radius: 8px;
   padding: 12px;
@@ -1299,7 +1302,63 @@ html[data-mantine-color-scheme="dark"] .bilin-logo {
   box-shadow: 0 8px 22px var(--bilin-shadow-soft);
 }
 
+.task-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-row-action {
+  flex: 0 0 auto;
+}
+
+.task-row-heading {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-row-title,
+.task-row-message,
+.task-row-error {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+}
+
+.task-row-title {
+  flex: 1 1 auto;
+}
+
+.task-row-status {
+  flex: 0 0 auto;
+}
+
+.task-row-message {
+  margin-top: 2px;
+}
+
+.task-row-detail {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-loading-state {
+  min-width: 0;
+  padding: 10px 2px;
+}
+
 .task-summary-strip {
+  max-width: 100%;
   padding: 8px;
   border: 1px solid var(--bilin-panel-border);
   border-radius: 8px;

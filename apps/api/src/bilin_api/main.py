@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hmac
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
 from bilin_api import __version__
 from bilin_api.api import (
@@ -113,21 +116,66 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def cors_origin_regex() -> str:
+    return r"^http://(127\.0\.0\.1|localhost):\d+$"
+
+
+def cors_allowed_origins() -> list[str]:
+    origins = [
         "http://127.0.0.1:3000",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
         "http://localhost:5173",
         "http://localhost:5174",
-    ],
-    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):\d+$",
+    ]
+    for origin in os.getenv("BILIN_ALLOWED_ORIGINS", "").split(","):
+        cleaned = origin.strip().rstrip("/")
+        if cleaned and cleaned not in origins:
+            origins.append(cleaned)
+    return origins
+
+
+def api_token() -> str | None:
+    token = os.getenv("BILIN_API_TOKEN")
+    return token if token else None
+
+
+def request_api_token(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    header_token = request.headers.get("x-bilin-api-token")
+    if header_token:
+        return header_token
+    return request.query_params.get("access_token") or request.query_params.get("bilin_token")
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_allowed_origins(),
+    allow_origin_regex=cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    expected_token = api_token()
+    if (
+        expected_token
+        and request.method != "OPTIONS"
+        and request.url.path not in {"/health"}
+        and not hmac.compare_digest(request_api_token(request) or "", expected_token)
+    ):
+        return JSONResponse(
+            {"detail": "Missing or invalid Bilin API token."},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    return await call_next(request)
 
 app.include_router(health.router)
 app.include_router(doctor.router)

@@ -13,7 +13,7 @@ import {
 import { Moon, Settings, Sun, TerminalSquare } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
-import { useJobSummary } from "../api/hooks";
+import { useArticleTaskSummary, useJobEvents } from "../api/hooks";
 import { useT } from "../i18n";
 import { productNameForLocale, SUPPORTED_LOCALES, type AppLocale } from "../product";
 import { useUiStore } from "../state/ui";
@@ -30,8 +30,9 @@ export function AppLayout() {
   const brandName = productNameForLocale(locale);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
   const isReaderRoute = location.pathname.startsWith("/articles/");
-  const jobs = useJobSummary({ enabled: !isReaderRoute });
-  const activeJobCount = jobs.data?.active ?? 0;
+  useJobEvents(true);
+  const articleTasks = useArticleTaskSummary({ enabled: !isReaderRoute });
+  const activeJobCount = articleTasks.data?.active ?? 0;
   const isHomeRoute = location.pathname === "/";
 
   const libraryActive = location.pathname === "/" || location.pathname.startsWith("/libraries");

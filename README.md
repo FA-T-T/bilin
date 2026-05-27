@@ -147,6 +147,28 @@ make dev
 
 启动后打开 `http://127.0.0.1:5173`，API 默认在 `127.0.0.1:8000`，worker 负责导入、解析、翻译、问答、笔记和导出任务。也可分别执行 `make api`、`make worker`、`make web` 来调试。
 
+##### 局域网安全访问
+
+Windows 上可以使用局域网启动脚本，让 Kindle、平板或同一 Wi-Fi 下的设备访问阅读器：
+
+```powershell
+pnpm start
+```
+
+脚本默认启动在局域网上。它会自动选择活动的私有 IPv4 地址（优先真实 Wi-Fi/以太网，避开 WSL、Docker、代理和 VPN 虚拟网卡），根据网卡前缀计算允许来源网段，并创建 Windows 防火墙规则。规则只放行当前主机地址上的 `8000` 和 `5173` 端口，远端来源限制为同一局域网 CIDR，例如 `192.168.124.0/24`。如果没有检测到可用局域网地址，脚本会退回本地模式，只监听 `127.0.0.1`。
+
+LAN 模式会为本次启动生成 API token，并打印带 `?bilin_token=...` 的访问地址。局域网设备应使用脚本输出的完整地址；只打开裸 `http://<ip>:5173` 只能加载前端壳，不能访问 API。
+
+首次运行需要使用管理员 PowerShell，以便写入防火墙规则。若网络被 Windows 标记为 Public，建议先把该 Wi-Fi/以太网设为 Private；只有在明确需要时才使用 `-AllowPublicProfile`。可手动指定网卡或地址：
+
+```powershell
+.\scripts\start.ps1 -InterfaceAlias "WLAN"
+.\scripts\start.ps1 -HostAddress 192.168.124.4
+.\scripts\start.ps1 -LocalOnly
+```
+
+安全边界仍然依赖三点：服务绑定到检测到的局域网地址，Windows 防火墙只允许同网段来源，路由器不要配置端口转发、DMZ 或公网隧道。
+
 未安装 LaTeXML 时，衔牍仍可正常启动并使用 Markdown 导入、PDF 仅保存、模型配置、翻译、笔记、导出及 fixture 测试。TeX 解析任务会明确失败为 `missing_dependency:latexml`，不会隐式回退到不稳定的正则解析。
 
 ## 第一篇论文

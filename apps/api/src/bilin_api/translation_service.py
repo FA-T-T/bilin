@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from time import monotonic
 from typing import Any
+from uuid import uuid4
 
 from bilin_api.article_store import (
     create_translation_variant,
@@ -22,19 +23,16 @@ from bilin_api.article_store import (
 from bilin_api.glossary_service import active_article_glossary_version, glossary_context_markdown
 from bilin_api.llm import LLMClientError, LLMResponse, translate_markdown
 from bilin_api.repositories import (
-    create_job,
+    create_translation_job_if_absent,
     find_translation_memory_entries,
     get_provider_api_key,
     get_provider_profile,
-    list_jobs,
     record_translation_memory_entry,
 )
 from bilin_api.schemas import (
     ArticleTranslations,
     DocumentBlock,
     Job,
-    JobStatus,
-    JobType,
     Library,
     LibraryTranslationBatchResult,
     ProviderProfile,
@@ -89,6 +87,7 @@ async def queue_article_translation(
     existing_jobs = 0
     cached_blocks = 0
     skipped_blocks = 0
+    translation_batch_id = str(uuid4())
     for block in blocks:
         if selected_uids and block.block_uid not in selected_uids:
             continue
@@ -117,24 +116,11 @@ async def queue_article_translation(
         if cached is not None and not request.force:
             cached_blocks += 1
             continue
-        existing_job_id = await find_existing_translation_job(
-            library_id=library.id,
-            revision_id=revision_id,
-            block_uid=block.block_uid,
-            target_language=request.target_language,
-            provider_profile_id=provider.id,
-            model=model,
-            context_hash=context_hash,
-        )
-        if existing_job_id and not request.force:
-            existing_jobs += 1
-            job_ids.append(existing_job_id)
-            continue
-        job = await create_job(
-            JobType.translate_block,
-            payload={
+        job, created = await create_translation_job_if_absent(
+            {
                 "library_id": library.id,
                 "article_revision_id": revision_id,
+                "translation_batch_id": translation_batch_id,
                 "block_uid": block.block_uid,
                 "target_language": request.target_language,
                 "provider_profile_id": provider.id,
@@ -146,9 +132,13 @@ async def queue_article_translation(
                 "force": request.force,
                 "max_attempts": 3,
             },
+            force=request.force,
         )
         job_ids.append(job.id)
-        jobs_created += 1
+        if created:
+            jobs_created += 1
+        else:
+            existing_jobs += 1
     return TranslationBatchResult(
         library_id=library.id,
         article_revision_id=revision_id,
@@ -480,33 +470,6 @@ async def create_variant_from_translation_memory(
 
 def is_translatable_block(block: DocumentBlock) -> bool:
     return is_translatable_source(block.block_type, block.source_markdown)
-
-
-async def find_existing_translation_job(
-    library_id: str,
-    revision_id: str,
-    block_uid: str,
-    target_language: str,
-    provider_profile_id: str,
-    model: str | None,
-    context_hash: str,
-) -> str | None:
-    active_statuses = {JobStatus.queued, JobStatus.running, JobStatus.paused}
-    for job in await list_jobs():
-        if job.type != JobType.translate_block or job.status not in active_statuses:
-            continue
-        payload = job.payload
-        if (
-            payload.get("library_id") == library_id
-            and payload.get("article_revision_id") == revision_id
-            and payload.get("block_uid") == block_uid
-            and payload.get("target_language") == target_language
-            and payload.get("provider_profile_id") == provider_profile_id
-            and payload.get("model") == model
-            and payload.get("context_hash") == context_hash
-        ):
-            return job.id
-    return None
 
 
 def build_neighbor_context(blocks: list[DocumentBlock], block: DocumentBlock) -> str:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -11,7 +14,7 @@ from bilin_api.article_store import (
     replace_document,
     upsert_arxiv_revision,
 )
-from bilin_api.obsidian_service import save_obsidian_clip
+from bilin_api.obsidian_service import save_obsidian_clip, update_obsidian_note
 from bilin_api.repositories import create_library
 from bilin_api.schemas import (
     ArticleManifest,
@@ -19,6 +22,39 @@ from bilin_api.schemas import (
     ObsidianClipColor,
     ObsidianClipRequest,
 )
+
+
+def test_update_obsidian_note_serializes_concurrent_writes(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    (vault / ".obsidian").mkdir(parents=True)
+    note_path = vault / "Race.md"
+    barrier = threading.Barrier(2)
+
+    def append_line(label: str) -> tuple[bool, bool]:
+        barrier.wait(timeout=5)
+
+        def update(current: str) -> tuple[str, bool]:
+            time.sleep(0.05)
+            return f"{current.rstrip()}\n- {label}\n", False
+
+        return update_obsidian_note(
+            note_path,
+            initial_content="# Race\n",
+            update=update,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(append_line, "first"),
+            executor.submit(append_line, "second"),
+        ]
+        results = [future.result(timeout=5) for future in futures]
+
+    content = note_path.read_text(encoding="utf-8")
+    assert "- first" in content
+    assert "- second" in content
+    assert content.count("# Race") == 1
+    assert sorted(created_file for created_file, _ in results) == [False, True]
 
 
 @pytest.mark.asyncio

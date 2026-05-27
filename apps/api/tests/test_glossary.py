@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,46 @@ async def test_create_article_glossary_term_deduplicates_source(
     )
     assert first.id == second.id
     assert second.target_term == "哈密顿模拟"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_article_glossary_term_creation_deduplicates_source(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, revision_id, _ = await prepare_glossary_fixture(tmp_path)
+
+    terms = await asyncio.gather(
+        *[
+            create_article_glossary_term(
+                library,
+                revision_id,
+                GlossaryTermCreate(
+                    source_term=source_term,
+                    target_term=f"哈密顿模拟 {index}",
+                ),
+            )
+            for index, source_term in enumerate(
+                [
+                    "Hamiltonian Simulation",
+                    "hamiltonian simulation",
+                    "  Hamiltonian   Simulation  ",
+                    "HAMILTONIAN SIMULATION",
+                    "Hamiltonian Simulation",
+                ]
+            )
+        ]
+    )
+
+    assert len({term.id for term in terms}) == 1
+    glossary = await get_article_glossary(library, revision_id, "zh-CN")
+    matching_terms = [
+        term
+        for term in glossary.terms
+        if term.metadata.get("normalized_source_term") == "hamiltonian simulation"
+    ]
+    assert len(matching_terms) == 1
+    assert matching_terms[0].target_term.startswith("哈密顿模拟 ")
 
 
 async def prepare_glossary_fixture(tmp_path: Path) -> tuple[Library, str, str]:

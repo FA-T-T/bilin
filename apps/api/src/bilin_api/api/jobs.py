@@ -5,13 +5,15 @@ from fastapi import APIRouter, HTTPException, Query, status
 from bilin_api.repositories import (
     cancel_job,
     clear_jobs,
+    get_article_task_summary,
     get_job,
     get_job_summary,
     list_jobs,
     pause_job,
     resume_job,
+    retry_failed_job,
 )
-from bilin_api.schemas import Job, JobClearResult, JobSummary
+from bilin_api.schemas import ArticleTaskSummary, Job, JobClearResult, JobSummary
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -24,6 +26,13 @@ async def get_jobs(limit: int | None = Query(default=None, ge=1, le=500)) -> lis
 @router.get("/summary", response_model=JobSummary)
 async def get_jobs_summary() -> JobSummary:
     return await get_job_summary()
+
+
+@router.get("/articles", response_model=ArticleTaskSummary)
+async def get_article_tasks(
+    limit: int = Query(default=120, ge=1, le=200),
+) -> ArticleTaskSummary:
+    return await get_article_task_summary(limit=limit)
 
 
 @router.delete("", response_model=JobClearResult)
@@ -50,6 +59,14 @@ async def pause_job_by_id(job_id: str) -> Job:
 @router.post("/{job_id}/resume", response_model=Job)
 async def resume_job_by_id(job_id: str) -> Job:
     job = await resume_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job
+
+
+@router.post("/{job_id}/retry", response_model=Job)
+async def retry_job_by_id(job_id: str) -> Job:
+    job = await retry_failed_job(job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job

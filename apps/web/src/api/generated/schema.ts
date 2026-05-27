@@ -1020,6 +1020,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/articles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Article Tasks */
+        get: operations["get_article_tasks_jobs_articles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -1065,6 +1082,23 @@ export interface paths {
         put?: never;
         /** Resume Job By Id */
         post: operations["resume_job_by_id_jobs__job_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Job By Id */
+        post: operations["retry_job_by_id_jobs__job_id__retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1379,6 +1413,136 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** ArticleTaskProgress */
+        ArticleTaskProgress: {
+            /** Id */
+            id: string;
+            /** Library Id */
+            library_id?: string | null;
+            /** Article Revision Id */
+            article_revision_id?: string | null;
+            /** Article Title */
+            article_title?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            status: components["schemas"]["JobStatus"];
+            /** Stage */
+            stage: string;
+            /** Message */
+            message: string;
+            /**
+             * Progress
+             * @default 0
+             */
+            progress: number;
+            /**
+             * Current
+             * @default 0
+             */
+            current: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Queued Jobs
+             * @default 0
+             */
+            queued_jobs: number;
+            /**
+             * Running Jobs
+             * @default 0
+             */
+            running_jobs: number;
+            /**
+             * Paused Jobs
+             * @default 0
+             */
+            paused_jobs: number;
+            /**
+             * Succeeded Jobs
+             * @default 0
+             */
+            succeeded_jobs: number;
+            /**
+             * Failed Jobs
+             * @default 0
+             */
+            failed_jobs: number;
+            /**
+             * Cancelled Jobs
+             * @default 0
+             */
+            cancelled_jobs: number;
+            /**
+             * Active Jobs
+             * @default 0
+             */
+            active_jobs: number;
+            /** Job Ids */
+            job_ids?: string[];
+            /** Failed Job Ids */
+            failed_job_ids?: string[];
+            /** Error */
+            error?: {
+                [key: string]: unknown;
+            } | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** ArticleTaskSummary */
+        ArticleTaskSummary: {
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Queued
+             * @default 0
+             */
+            queued: number;
+            /**
+             * Running
+             * @default 0
+             */
+            running: number;
+            /**
+             * Paused
+             * @default 0
+             */
+            paused: number;
+            /**
+             * Succeeded
+             * @default 0
+             */
+            succeeded: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Cancelled
+             * @default 0
+             */
+            cancelled: number;
+            /**
+             * Active
+             * @default 0
+             */
+            active: number;
+            /** Updated At */
+            updated_at?: string | null;
+            /**
+             * Failed Items
+             * @default 0
+             */
+            failed_items: number;
+            /** Items */
+            items?: components["schemas"]["ArticleTaskProgress"][];
         };
         /**
          * ArticleTranslationState
@@ -5342,6 +5506,37 @@ export interface operations {
             };
         };
     };
+    get_article_tasks_jobs_articles_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArticleTaskSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_job_by_id_jobs__job_id__get: {
         parameters: {
             query?: never;
@@ -5405,6 +5600,37 @@ export interface operations {
         };
     };
     resume_job_by_id_jobs__job_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_job_by_id_jobs__job_id__retry_post: {
         parameters: {
             query?: never;
             header?: never;

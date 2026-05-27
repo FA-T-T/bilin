@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import errno
+import hashlib
 import os
 import re
+import tempfile
+import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 from bilin_api.article_store import get_article_item, get_block_by_uid, list_translation_variants
 from bilin_api.glossary_service import active_article_glossary_terms, apply_glossary_to_markdown
@@ -19,6 +28,9 @@ from bilin_api.schemas import (
 )
 
 OBSIDIAN_VAULT_NAME = "Ilios"
+_LOCK_POLL_SECONDS = 0.01
+_NOTE_LOCKS: dict[str, threading.RLock] = {}
+_NOTE_LOCKS_GUARD = threading.Lock()
 
 COLOR_META: dict[ObsidianClipColor, tuple[str, str, str]] = {
     ObsidianClipColor.none: ("note", "Paper note", "#ilios/note"),
@@ -66,17 +78,18 @@ async def save_obsidian_clip(
         translation=translation,
         color=request.color,
     )
-    created_file = not note_path.exists()
-    current = initial_library_note(library.name) if created_file else note_path.read_text("utf-8")
-    updated, updated_existing = upsert_article_block(
-        current,
-        revision_id=revision_id,
-        article_title=article_title,
-        article_meta=render_article_meta(arxiv_id, revision_id),
-        block_uid=request.block_uid,
-        entry=entry,
+    created_file, updated_existing = update_obsidian_note(
+        note_path,
+        initial_content=initial_library_note(library.name),
+        update=lambda current: upsert_article_block(
+            current,
+            revision_id=revision_id,
+            article_title=article_title,
+            article_meta=render_article_meta(arxiv_id, revision_id),
+            block_uid=request.block_uid,
+            entry=entry,
+        ),
     )
-    note_path.write_text(updated, encoding="utf-8")
     return ObsidianClipResult(
         vault_path=str(vault_path),
         note_path=str(note_path),
@@ -95,16 +108,138 @@ async def save_obsidian_term_cards(
     vault_path.mkdir(parents=True, exist_ok=True)
     (vault_path / ".obsidian").mkdir(exist_ok=True)
     note_path = vault_path / f"{safe_filename(library.name)}.md"
-    created_file = not note_path.exists()
-    current = initial_library_note(library.name) if created_file else note_path.read_text("utf-8")
-    updated, updated_existing = upsert_term_wiki_cards(current, cards)
-    note_path.write_text(updated, encoding="utf-8")
+    created_file, updated_existing = update_obsidian_note(
+        note_path,
+        initial_content=initial_library_note(library.name),
+        update=lambda current: upsert_term_wiki_cards(current, cards),
+    )
     return ReaderCardObsidianExportResult(
         vault_path=str(vault_path),
         note_path=str(note_path),
         cards_exported=len(cards),
         updated_existing=updated_existing,
     )
+
+
+def update_obsidian_note(
+    note_path: Path,
+    *,
+    initial_content: str,
+    update: Callable[[str], tuple[str, bool]],
+) -> tuple[bool, bool]:
+    with locked_obsidian_note(note_path):
+        created_file = not note_path.exists()
+        current = initial_content if created_file else note_path.read_text(encoding="utf-8")
+        updated, updated_existing = update(current)
+        atomic_write_text(note_path, updated)
+    return created_file, updated_existing
+
+
+@contextmanager
+def locked_obsidian_note(note_path: Path) -> Iterator[None]:
+    lock_key = note_lock_key(note_path)
+    process_lock = note_process_lock(lock_key)
+    with process_lock, locked_note_file(note_path, lock_key):
+        yield
+
+
+def note_process_lock(lock_key: str) -> threading.RLock:
+    with _NOTE_LOCKS_GUARD:
+        lock = _NOTE_LOCKS.get(lock_key)
+        if lock is None:
+            lock = threading.RLock()
+            _NOTE_LOCKS[lock_key] = lock
+        return lock
+
+
+@contextmanager
+def locked_note_file(note_path: Path, lock_key: str) -> Iterator[None]:
+    lock_path = note_lock_file_path(note_path, lock_key)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        ensure_lock_file_has_byte(lock_file)
+        lock_file_region(lock_file)
+        try:
+            yield
+        finally:
+            unlock_file_region(lock_file)
+
+
+def note_lock_key(note_path: Path) -> str:
+    resolved = note_path.expanduser().resolve(strict=False)
+    return os.path.normcase(os.fspath(resolved))
+
+
+def note_lock_file_path(note_path: Path, lock_key: str) -> Path:
+    digest = hashlib.sha256(lock_key.encode("utf-8")).hexdigest()[:32]
+    lock_dir = note_path.expanduser().resolve(strict=False).parent / ".obsidian" / "ilios-locks"
+    return lock_dir / f"{digest}.lock"
+
+
+def ensure_lock_file_has_byte(lock_file: BinaryIO) -> None:
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() > 0:
+        return
+    lock_file.write(b"\0")
+    lock_file.flush()
+    lock_file.seek(0)
+
+
+def lock_file_region(lock_file: BinaryIO) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        while True:
+            try:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EDEADLK}:
+                    raise
+                time.sleep(_LOCK_POLL_SECONDS)
+
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+
+def unlock_file_region(lock_file: BinaryIO) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    fd = -1
+    temp_path: Path | None = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            fd = -1
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        if fd != -1:
+            os.close(fd)
+        if temp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                temp_path.unlink()
+        raise
 
 
 def default_obsidian_vault_path() -> Path:

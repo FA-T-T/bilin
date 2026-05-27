@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -99,6 +100,44 @@ async def test_reader_card_generation_does_not_overwrite_user_edited_card(
     assert result.card.body_markdown == "用户自己写的解释。"
     assert "suggested_body_markdown" in result.card.metadata
     assert result.source_type == ReaderCardSourceType.paper_local
+
+
+@pytest.mark.asyncio
+async def test_concurrent_manual_reader_card_creation_deduplicates_canonical_key(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library, revision_id = await prepare_reader_card_fixture(tmp_path)
+
+    cards = await asyncio.gather(
+        *[
+            create_manual_reader_card(
+                library,
+                revision_id,
+                ReaderCardCreate(
+                    card_type=ReaderCardType.term,
+                    anchor_block_uid="p-0001",
+                    anchor_text="CNN",
+                    abbreviation="CNN",
+                    full_form="Convolutional Neural Networks",
+                    title="Convolutional Neural Networks (CNN)",
+                    body_markdown=f"用户解释 {index}",
+                    source_type=ReaderCardSourceType.user_note,
+                    status=ReaderCardStatus.pinned,
+                ),
+            )
+            for index in range(6)
+        ]
+    )
+
+    assert len({card.id for card in cards}) == 1
+    result = await get_article_reader_cards(library, revision_id, "zh-CN")
+    canonical_key = canonical_key_for_term("CNN", "Convolutional Neural Networks")
+    matching_cards = [card for card in result.cards if card.canonical_key == canonical_key]
+    assert len(matching_cards) == 1
+    assert matching_cards[0].metadata["user_created"] is True
+    assert matching_cards[0].metadata["user_edited"] is True
+    assert matching_cards[0].body_markdown.startswith("用户解释 ")
 
 
 @pytest.mark.asyncio

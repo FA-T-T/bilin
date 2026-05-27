@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import zipfile
 from pathlib import Path
@@ -10,17 +11,27 @@ from fastapi.testclient import TestClient
 import bilin_api.api.providers as providers_api
 from bilin_api.article_store import (
     empty_manifest,
+    get_article_reading_progress,
     make_asset,
     make_block,
     replace_document,
+    update_article_reading_progress,
     upsert_arxiv_revision,
 )
 from bilin_api.main import app
-from bilin_api.repositories import create_library, record_translation_memory_entry
+from bilin_api.repositories import (
+    claim_next_job,
+    create_job,
+    create_library,
+    fail_job,
+    record_translation_memory_entry,
+)
 from bilin_api.schemas import (
+    JobType,
     LibraryCreate,
     ProviderModelInfo,
     ProviderProtocol,
+    ReadingProgressUpdate,
     TranslationMemoryReviewStatus,
 )
 
@@ -55,10 +66,13 @@ def test_library_and_jobs_api(bilin_home: Path, tmp_path: Path) -> None:
         assert library_response.status_code == 201
         jobs_response = client.get("/jobs")
         summary_response = client.get("/jobs/summary")
+        article_tasks_response = client.get("/jobs/articles")
     assert jobs_response.status_code == 200
     assert jobs_response.json() == []
     assert summary_response.status_code == 200
     assert summary_response.json()["total"] == 0
+    assert article_tasks_response.status_code == 200
+    assert article_tasks_response.json()["total"] == 0
 
 
 def test_jobs_api_can_clear_background_tasks(bilin_home: Path) -> None:
@@ -72,6 +86,8 @@ def test_jobs_api_can_clear_background_tasks(bilin_home: Path) -> None:
             f"/libraries/{library_id}/imports/arxiv",
             json={"arxiv_id": "2401.00001", "parse_after_import": False},
         )
+        job_id = create_response.json()["id"]
+        client.post(f"/jobs/{job_id}/cancel")
         clear_response = client.delete("/jobs")
         jobs_response = client.get("/jobs")
 
@@ -79,6 +95,27 @@ def test_jobs_api_can_clear_background_tasks(bilin_home: Path) -> None:
     assert clear_response.status_code == 200
     assert clear_response.json()["cleared"] == 1
     assert jobs_response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_jobs_api_can_retry_failed_job(bilin_home: Path) -> None:
+    job = await create_job(
+        JobType.parse_article,
+        {"library_id": "library-1", "article_revision_id": "revision-1"},
+    )
+    claimed = await claim_next_job("worker")
+    assert claimed is not None
+    await fail_job(job.id, {"code": "latexml_timeout", "message": "Command timed out."})
+
+    with TestClient(app) as client:
+        retry_response = client.post(f"/jobs/{job.id}/retry")
+
+    assert retry_response.status_code == 200
+    payload = retry_response.json()
+    assert payload["id"] == job.id
+    assert payload["status"] == "queued"
+    assert payload["error"] is None
+    assert payload["attempts"] == 0
 
 
 def test_library_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path: Path) -> None:
@@ -100,6 +137,42 @@ def test_library_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path:
     assert delete_response.json()["deleted_cache"] is True
     assert not library_path.exists()
     assert missing_response.status_code == 404
+
+
+def test_library_delete_preserves_preexisting_directory(
+    bilin_home: Path, tmp_path: Path
+) -> None:
+    library_path = tmp_path / "existing-library"
+    library_path.mkdir()
+    user_file = library_path / "keep.txt"
+    user_file.write_text("user content", encoding="utf-8")
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/libraries",
+            json={"name": "Existing", "path": str(library_path)},
+        )
+        library_id = create_response.json()["id"]
+        delete_response = client.delete(f"/libraries/{library_id}")
+
+    assert create_response.status_code == 201
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted_cache"] is True
+    assert library_path.exists()
+    assert user_file.read_text(encoding="utf-8") == "user content"
+    assert not (library_path / "library.sqlite").exists()
+
+
+@pytest.mark.asyncio
+async def test_library_delete_rejects_active_jobs(bilin_home: Path, tmp_path: Path) -> None:
+    library = await create_library(LibraryCreate(name="Busy", path=str(tmp_path / "library")))
+    await create_job(JobType.import_arxiv, {"library_id": library.id, "arxiv_id": "2401.00001"})
+
+    with TestClient(app) as client:
+        response = client.delete(f"/libraries/{library.id}")
+
+    assert response.status_code == 409
+    assert Path(library.path).exists()
 
 
 def test_library_update_api_renames_library(bilin_home: Path, tmp_path: Path) -> None:
@@ -295,6 +368,48 @@ async def test_reading_progress_api_merges_time_and_feeds_article_list(
     assert second_response.json()["total_seconds"] == 35
     assert progress_response.json()["segments"] == [10, 25, 0]
     assert articles_response.json()[0]["reading_progress"]["segments"] == [10, 25, 0]
+
+
+@pytest.mark.asyncio
+async def test_reading_progress_concurrent_updates_preserve_deltas(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Concurrent Reading", path=str(tmp_path / "library"))
+    )
+    bundle_path = Path(library.path) / "articles" / "arxiv" / "2401.00002" / "v1"
+    _, revision = await upsert_arxiv_revision(
+        library,
+        bare_id="2401.00002",
+        version="v1",
+        title="Concurrent Reading",
+        bundle_path=bundle_path,
+        metadata={},
+    )
+    manifest = empty_manifest(revision)
+    blocks = [
+        make_block(revision.id, "p-0001", "00001", "paragraph", "First paragraph."),
+    ]
+    await replace_document(library, revision, manifest, blocks, [], source_md="")
+
+    await asyncio.gather(
+        update_article_reading_progress(
+            library,
+            revision.id,
+            ReadingProgressUpdate(block_seconds={"p-0001": 10}),
+        ),
+        update_article_reading_progress(
+            library,
+            revision.id,
+            ReadingProgressUpdate(block_seconds={"p-0001": 7}),
+        ),
+    )
+    progress = await get_article_reading_progress(library, revision.id)
+
+    assert progress is not None
+    assert progress.segments == [17]
+    assert progress.total_seconds == 17
 
 
 def test_export_api_returns_metadata_and_queues_job(bilin_home: Path, tmp_path: Path) -> None:

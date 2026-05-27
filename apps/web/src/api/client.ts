@@ -10,6 +10,7 @@ import type {
   ArticleListItem,
   ArticleNotePatches,
   ArticleReadingProgress,
+  ArticleTaskSummary,
   ArticleTranslations,
   ChatAskRequest,
   ChatAskResult,
@@ -73,6 +74,41 @@ import type {
 } from "./types";
 
 export const API_BASE_URL = import.meta.env.VITE_BILIN_API_URL ?? "http://127.0.0.1:8000";
+const API_TOKEN_STORAGE_KEY = "bilin.apiToken";
+
+export function getApiToken(): string | null {
+  const envToken = import.meta.env.VITE_BILIN_API_TOKEN;
+  if (typeof window === "undefined") return envToken || null;
+
+  const url = new URL(window.location.href);
+  const urlToken = url.searchParams.get("bilin_token") ?? url.searchParams.get("access_token");
+  if (urlToken) {
+    window.localStorage.setItem(API_TOKEN_STORAGE_KEY, urlToken);
+    url.searchParams.delete("bilin_token");
+    url.searchParams.delete("access_token");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    return urlToken;
+  }
+
+  return window.localStorage.getItem(API_TOKEN_STORAGE_KEY) ?? envToken ?? null;
+}
+
+export function apiUrl(path: string, includeToken = false): string {
+  const url = new URL(`${API_BASE_URL}${path}`);
+  const token = getApiToken();
+  if (includeToken && token) {
+    url.searchParams.set("access_token", token);
+  }
+  return url.toString();
+}
+
+function apiHeaders(headers?: HeadersInit): HeadersInit {
+  const token = getApiToken();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...headers
+  };
+}
 
 export interface SseMessage {
   event: string;
@@ -80,12 +116,12 @@ export interface SseMessage {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
-    headers: {
+    headers: apiHeaders({
       "Content-Type": "application/json",
       ...init?.headers
-    }
+    })
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -99,12 +135,12 @@ async function uploadRequest<T>(
   file: File,
   contentType = "application/octet-stream"
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     body: file,
-    headers: {
+    headers: apiHeaders({
       "Content-Type": file.type || contentType
-    }
+    })
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -118,9 +154,9 @@ async function streamRequest<T>(
   payload: unknown,
   onMessage: (message: SseMessage) => void
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: apiHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
@@ -597,9 +633,12 @@ export const apiClient = {
     ),
   listJobs: (limit = 120) => request<Job[]>(`/jobs?limit=${encodeURIComponent(String(limit))}`),
   getJobSummary: () => request<JobSummary>("/jobs/summary"),
+  getArticleTaskSummary: (limit = 120) =>
+    request<ArticleTaskSummary>(`/jobs/articles?limit=${encodeURIComponent(String(limit))}`),
   clearJobs: () => request<JobClearResult>("/jobs", { method: "DELETE" }),
   pauseJob: (jobId: string) => request<Job>(`/jobs/${jobId}/pause`, { method: "POST" }),
   resumeJob: (jobId: string) => request<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),
+  retryJob: (jobId: string) => request<Job>(`/jobs/${jobId}/retry`, { method: "POST" }),
   cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" })
 };
 
