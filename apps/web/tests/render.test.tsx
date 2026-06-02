@@ -134,6 +134,10 @@ function sseEvent(event: string, data: unknown) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function requestMethod(init?: RequestInit) {
+  return init?.method ?? "GET";
+}
+
 function readerTestBlock(
   blockUid: string,
   blockType: DocumentBlock["block_type"],
@@ -717,11 +721,13 @@ describe("Bilin web shell", () => {
     let currentLibrary = library;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/libraries") && !init?.method) return jsonResponse([currentLibrary]);
-      if (url.endsWith("/libraries/library-1") && init?.method === "PUT") {
+      const method = requestMethod(init);
+      if (url.endsWith("/libraries") && method === "GET") return jsonResponse([currentLibrary]);
+      if (url.endsWith("/libraries/library-1") && method === "PUT") {
+        const body = init?.body;
         currentLibrary = {
           ...currentLibrary,
-          name: JSON.parse(String(init.body)).name,
+          name: JSON.parse(String(body)).name,
           updated_at: new Date().toISOString()
         };
         return jsonResponse(currentLibrary);
@@ -730,7 +736,7 @@ describe("Bilin web shell", () => {
         currentLibrary = { ...currentLibrary, status: "archived" };
         return jsonResponse(currentLibrary);
       }
-      if (url.endsWith("/libraries/library-1") && init?.method === "DELETE") {
+      if (url.endsWith("/libraries/library-1") && method === "DELETE") {
         return jsonResponse({
           library_id: "library-1",
           path: "/tmp/papers",
