@@ -12,8 +12,7 @@ class NetworkPolicyError(ValueError):
 
 def lan_security_enabled() -> bool:
     return (
-        bool(os.getenv("BILIN_API_TOKEN"))
-        or os.getenv("BILIN_RESTRICT_PROVIDER_BASE_URLS") == "1"
+        bool(os.getenv("BILIN_API_TOKEN")) or os.getenv("BILIN_RESTRICT_PROVIDER_BASE_URLS") == "1"
     )
 
 

@@ -132,9 +132,7 @@ async def resolve_citation_arxiv_candidate(
     if cache_key in _ARXIV_CANDIDATE_CACHE:
         cached = _ARXIV_CANDIDATE_CACHE[cache_key]
         return (
-            cached.model_copy(update={"citation_id": citation.id})
-            if cached is not None
-            else None
+            cached.model_copy(update={"citation_id": citation.id}) if cached is not None else None
         )
     if citation.arxiv_id:
         metadata = await resolve_arxiv_metadata(citation.arxiv_id, client=client)

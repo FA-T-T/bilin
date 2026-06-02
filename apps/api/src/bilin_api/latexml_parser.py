@@ -722,7 +722,7 @@ async def parse_article_revision(
         if "diagnostics_path" in failure.details:
             manifest.generated_artifacts["parser_diagnostics"] = str(
                 failure.details["diagnostics_path"]
-        )
+            )
         await mark_revision_status(library, revision.id, "parse_failed", manifest)
         raise failure from exc
 
@@ -2075,8 +2075,7 @@ def mark_latexml_xml_recovery_manifest(manifest: Any, timeout_details: dict[str,
         "reason": "latexmlpost_timeout",
         "fidelity": LATEXML_XML_RECOVERY_FIDELITY,
         "message": (
-            "latexmlpost timed out; Bilin recovered readable document structure "
-            "from LaTeXML XML."
+            "latexmlpost timed out; Bilin recovered readable document structure from LaTeXML XML."
         ),
     }
 
@@ -2106,9 +2105,7 @@ def latexml_xml_to_html(xml_path: Path, html_path: Path) -> None:
         "<title>LaTeXML XML recovery</title>\n"
         "</head>\n"
         "<body>\n"
-        '<article class="ltx_document ltx_xml_recovery_document">\n'
-        + body
-        + "\n</article>\n"
+        '<article class="ltx_document ltx_xml_recovery_document">\n' + body + "\n</article>\n"
         "</body>\n"
         "</html>\n",
         encoding="utf-8",
@@ -2296,9 +2293,7 @@ def latexml_xml_inline_to_html(element: Any) -> str:
         return " "
     if tag == "math":
         tex = (
-            _extract_single_math_tex(element)
-            or element.attrib.get("text")
-            or _clean_text(element)
+            _extract_single_math_tex(element) or element.attrib.get("text") or _clean_text(element)
         )
         tex = tex.strip()
         if not tex:

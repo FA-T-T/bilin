@@ -478,9 +478,9 @@ async def update_article_reading_progress(
         for block_uid, seconds in payload.block_seconds.items():
             if block_uid not in valid_block_uids:
                 continue
-            seconds_by_block[block_uid] = seconds_by_block.get(
-                block_uid, 0
-            ) + _clean_delta_seconds(seconds)
+            seconds_by_block[block_uid] = seconds_by_block.get(block_uid, 0) + _clean_delta_seconds(
+                seconds
+            )
         seconds_by_block = {
             block_uid: seconds
             for block_uid, seconds in seconds_by_block.items()

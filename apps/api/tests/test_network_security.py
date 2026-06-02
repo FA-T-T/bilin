@@ -48,4 +48,6 @@ def test_provider_base_url_allows_domains_resolving_public_in_lan_mode(monkeypat
 
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
-    assert validate_provider_base_url("https://provider.example/v1") == "https://provider.example/v1"
+    assert (
+        validate_provider_base_url("https://provider.example/v1") == "https://provider.example/v1"
+    )
