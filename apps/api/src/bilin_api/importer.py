@@ -37,9 +37,10 @@ async def import_arxiv(
     request: ImportArxivRequest,
     client: httpx.AsyncClient | None = None,
     progress: ImportProgressCallback | None = None,
+    metadata: ArxivMetadata | None = None,
 ) -> ImportArxivResult:
     await emit_import_progress(progress, "arxiv_metadata", "解析 arXiv 元数据", 0.05)
-    metadata = await resolve_arxiv_metadata(request.arxiv_id, request.version, client)
+    metadata = metadata or await resolve_arxiv_metadata(request.arxiv_id, request.version, client)
     bundle_path = bundle_path_for_arxiv(library, metadata.bare_id, metadata.version)
     original_dir = bundle_path / "original"
     for directory in (

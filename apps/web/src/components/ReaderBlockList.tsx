@@ -11,6 +11,7 @@ interface ReaderBlockListProps {
   virtualization?: ReaderVirtualizationOptions;
   forcedBlockUid?: string | null;
   searchTargetBlockUid?: string | null;
+  navigationBlockUids?: Set<string>;
   getBlockText?: (block: DocumentBlock) => string;
   onActiveBlockChange: (blockUid: string) => void;
   onNavigateToBlock?: (blockUid: string) => void;
@@ -62,6 +63,7 @@ export function ReaderBlockList({
   virtualization,
   forcedBlockUid = null,
   searchTargetBlockUid = null,
+  navigationBlockUids,
   getBlockText = defaultGetBlockText,
   onActiveBlockChange,
   onNavigateToBlock,
@@ -71,7 +73,28 @@ export function ReaderBlockList({
   const blockElements = useRef(new Map<string, HTMLDivElement>());
   const visibleBlocks = useRef(new Map<string, VisibleBlock>());
   const measuredBlockHeights = useRef<MeasuredBlockHeights>({});
+  const placeholderHeightCache = useRef(new Map<string, number>());
+  const placeholderHeightCacheState = useRef({
+    blocks,
+    fontScale,
+    paragraphSpacingEm,
+    getBlockText
+  });
   const activeBlockUidRef = useRef(activeBlockUid);
+  if (
+    placeholderHeightCacheState.current.blocks !== blocks ||
+    placeholderHeightCacheState.current.fontScale !== fontScale ||
+    placeholderHeightCacheState.current.paragraphSpacingEm !== paragraphSpacingEm ||
+    placeholderHeightCacheState.current.getBlockText !== getBlockText
+  ) {
+    placeholderHeightCache.current.clear();
+    placeholderHeightCacheState.current = {
+      blocks,
+      fontScale,
+      paragraphSpacingEm,
+      getBlockText
+    };
+  }
   const virtualizationOptions = useMemo(
     () => ({ ...defaultVirtualizationOptions, ...virtualization }),
     [virtualization]
@@ -199,10 +222,10 @@ export function ReaderBlockList({
 
   const navigateToHashTarget = useCallback(
     (blockUid: string) => {
-      if (!blockIndexByUid.has(blockUid)) return;
+      if (!(navigationBlockUids?.has(blockUid) ?? blockIndexByUid.has(blockUid))) return;
       onNavigateToBlock?.(blockUid);
     },
-    [blockIndexByUid, onNavigateToBlock]
+    [blockIndexByUid, navigationBlockUids, onNavigateToBlock]
   );
 
   const handleClickCapture = useCallback(
@@ -213,11 +236,11 @@ export function ReaderBlockList({
       const href = target.getAttribute("href");
       if (!href?.startsWith("#")) return;
       const blockUid = decodeURIComponent(href.slice(1));
-      if (!blockIndexByUid.has(blockUid)) return;
+      if (!(navigationBlockUids?.has(blockUid) ?? blockIndexByUid.has(blockUid))) return;
       event.preventDefault();
       navigateToHashTarget(blockUid);
     },
-    [blockIndexByUid, navigateToHashTarget, onNavigateToBlock]
+    [blockIndexByUid, navigateToHashTarget, navigationBlockUids, onNavigateToBlock]
   );
 
   const renderShell = (block: DocumentBlock) => (
@@ -261,6 +284,7 @@ export function ReaderBlockList({
         height: `${placeholderHeightForBlock(
           block,
           measuredBlockHeights.current,
+          placeholderHeightCache.current,
           getBlockText,
           fontScale,
           paragraphSpacingEm
@@ -342,13 +366,24 @@ function measureRenderedBlock(
 function placeholderHeightForBlock(
   block: DocumentBlock,
   measuredHeights: MeasuredBlockHeights,
+  estimatedHeights: Map<string, number>,
   getBlockText: (block: DocumentBlock) => string,
   fontScale: number,
   paragraphSpacingEm: number
 ) {
   const measuredHeight = measuredHeights[block.block_uid];
   if (measuredHeight && measuredHeight > 0) return measuredHeight;
-  return estimatePlaceholderHeight(block, getBlockText(block), fontScale, paragraphSpacingEm);
+  const estimateKey = `${block.block_uid}:${block.content_hash}:${block.updated_at}`;
+  const cachedHeight = estimatedHeights.get(estimateKey);
+  if (cachedHeight !== undefined) return cachedHeight;
+  const estimatedHeight = estimatePlaceholderHeight(
+    block,
+    getBlockText(block),
+    fontScale,
+    paragraphSpacingEm
+  );
+  estimatedHeights.set(estimateKey, estimatedHeight);
+  return estimatedHeight;
 }
 
 function estimatePlaceholderHeight(

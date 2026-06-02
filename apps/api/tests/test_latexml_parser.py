@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from typing import cast
 
 import pytest
 from typer.testing import CliRunner
@@ -272,6 +273,154 @@ def test_prepare_latexml_source_replaces_koma_class_without_cas_shims() -> None:
     assert "\\author{Ada Lovelace}" in prepared
 
 
+def test_prepare_latexml_source_replaces_memoir_class_with_book_shims() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass[12pt]{memoir}\n"
+        "\\renewcommand{\\maketitlehookb}{\\vspace{-3mm}}\n"
+        "\\sloppybottom\n"
+        "\\setlength{\\droptitle}{-2cm}\n"
+        "\\pretitle{\\begin{center}\\huge\\bfseries}\n"
+        "\\posttitle{\\end{center}}\n"
+        "\\maxtocdepth{chapter}\n"
+        "\\newcommand{\\unit}[2][]{\\part{#2}\\parttoc\\clearpage}\n"
+        "\\renewcommand{\\printpartname}{Unit}\n"
+        "\\begin{document}\n"
+        "\\frontmatter\n"
+        "\\unit[Basics]{Basics of Quantum Information}\n"
+        "\\chapter{Preface}\n"
+        "\\mainmatter\n"
+        "\\chapter{Lesson}\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\documentclass{book}" in prepared
+    assert "\\documentclass[12pt]{memoir}" not in prepared
+    assert "% Bilin replaced layout document class for LaTeXML: memoir [12pt]" in prepared
+    assert "\\providecommand{\\maketitlehookb}{}" in prepared
+    assert "\\providecommand{\\sloppybottom}{}" in prepared
+    assert "\\providecommand{\\@pnumwidth}{1.55em}" in prepared
+    assert "\\providecommand{\\pretitle}[1]{}" in prepared
+    assert "\\providecommand{\\posttitle}[1]{}" in prepared
+    assert "\\providecommand{\\maxtocdepth}[1]{}" in prepared
+    assert "\\newcommand{\\BilinMemoirUnit}[2][]{\\chapter{#2}}" in prepared
+    assert "\\AtBeginDocument{\\let\\unit\\BilinMemoirUnit}" in prepared
+    assert "\\@ifundefined{droptitle}{\\newlength{\\droptitle}}{}" in prepared
+    assert "\\providecommand{\\address}" not in prepared
+    assert "\\chapter{Lesson}" in prepared
+
+
+def test_prepare_latexml_source_replaces_code_generated_diagram_environments() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{article}\n"
+        "\\usepackage{tikz,circuitikz,pgfplots,blochsphere,tikz-3dplot}\n"
+        "\\pgfplotsset{compat=1.18}\n"
+        "\\begin{document}\n"
+        "\\begin{figure}\n"
+        "\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n"
+        "\\caption{A TikZ figure.}\n"
+        "\\end{figure}\n"
+        "\\begin{circuitikz}\\draw (0,0) to[R] (1,0);\\end{circuitikz}\n"
+        "\\begin{blochsphere}\\drawBallGrid{}\\end{blochsphere}\n"
+        "\\begin{axis}\\addplot coordinates {(0,0) (1,1)};\\end{axis}\n"
+        "\\end{document}\n"
+    )
+
+    assert (
+        "% Bilin disabled for LaTeXML: "
+        "\\usepackage{tikz,circuitikz,pgfplots,blochsphere,tikz-3dplot}"
+        in prepared
+    )
+    assert "\\providecommand{\\pgfplotsset}[1]{}" in prepared
+    assert "\\begin{tikzpicture}" not in prepared
+    assert "\\begin{circuitikz}" not in prepared
+    assert "\\begin{blochsphere}" not in prepared
+    assert "\\begin{axis}" not in prepared
+    assert "\\draw" not in prepared
+    assert "\\addplot" not in prepared
+    assert "\\mbox{tikzpicture diagram}" in prepared
+    assert "\\caption{A TikZ figure.}" in prepared
+
+
+def test_prepare_latexml_source_disables_title_toc_layout_package() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{book}\n"
+        "\\usepackage{titletoc}\n"
+        "\\begin{document}\n"
+        "\\startcontents[part]\n"
+        "\\printcontents[part]{}{0}{\\setcounter{tocdepth}{1}}\n"
+        "\\chapter{One}\n"
+        "\\end{document}\n"
+    )
+
+    assert "% Bilin disabled for LaTeXML: \\usepackage{titletoc}" in prepared
+    assert "\\providecommand{\\startcontents}[1][]" in prepared
+    assert "\\providecommand{\\stopcontents}[1][]" in prepared
+    assert "\\providecommand{\\printcontents}[4][]" in prepared
+    assert "\\chapter{One}" in prepared
+
+
+def test_prepare_latexml_source_renames_trivlist_without_dropping_items() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{book}\n"
+        "\\begin{document}\n"
+        "\\chapter{Overview}\n"
+        "\\begin{trivlist}\n"
+        "\\item First lesson.\n"
+        "\\item Second lesson.\n"
+        "\\end{trivlist}\n"
+        "\\end{document}\n"
+    )
+
+    assert "\\begin{trivlist}" not in prepared
+    assert "\\end{trivlist}" not in prepared
+    assert "\\begin{itemize}" in prepared
+    assert "\\end{itemize}" in prepared
+    assert "\\item First lesson." in prepared
+    assert "\\item Second lesson." in prepared
+
+
+def test_prepare_latexml_source_replaces_listings_environments() -> None:
+    prepared = prepare_latexml_source(
+        "\\documentclass{book}\n"
+        "\\usepackage{listings}\n"
+        "\\lstset{language=Python}\n"
+        "\\begin{document}\n"
+        "\\begin{code}\n"
+        "\\begin{lstlisting}[language=Python]\n"
+        "state_vector = {0: 1}\n"
+        "\\end{lstlisting}\n"
+        "\\end{code}\n"
+        "\\lstinputlisting[language=Python]{example.py}\n"
+        "\\chapter{Next}\n"
+        "\\end{document}\n"
+    )
+
+    assert "% Bilin disabled for LaTeXML: \\usepackage{listings}" in prepared
+    assert "\\providecommand{\\lstset}[1]{}" in prepared
+    assert "\\begin{code}" not in prepared
+    assert "\\begin{lstlisting}" not in prepared
+    assert "state_vector" not in prepared
+    assert "\\lstinputlisting[language=Python]{example.py}" not in prepared
+    assert prepared.count("\\mbox{Code listing}") >= 2
+    assert "\\chapter{Next}" in prepared
+
+
+def test_build_parser_profile_records_memoir_replacement_rule(tmp_path: Path) -> None:
+    main_tex = tmp_path / "UQIC.tex"
+    main_tex.write_text(
+        "\\documentclass[12pt]{memoir}\n"
+        "\\begin{document}\n"
+        "\\chapter{One}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    profile = build_parser_profile(tmp_path, main_tex)
+
+    assert profile.document_class == "memoir"
+    assert "documentclass:memoir" in profile.compatibility_rules
+
+
 def test_prepare_latexml_entry_uses_available_bbl_instead_of_bibtex_placeholder(
     tmp_path: Path,
 ) -> None:
@@ -413,6 +562,37 @@ def test_latexml_timeout_budget_scales_with_source_size(tmp_path: Path) -> None:
     assert large_budget.hard_seconds > large_budget.soft_seconds
 
 
+def test_latexml_timeout_budget_gives_books_longer_budget(tmp_path: Path) -> None:
+    main_tex = tmp_path / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{book}\n\\begin{document}\n"
+        + "\n".join(f"\\chapter{{Lesson {index}}} Body." for index in range(16))
+        + "\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    profile = parser_module.ParserProfile(document_class="book")
+
+    latexml_budget = estimate_latexml_timeout_budget(
+        tmp_path,
+        main_tex,
+        "latexml",
+        profile=profile,
+    )
+    latexmlpost_budget = estimate_latexml_timeout_budget(
+        tmp_path,
+        main_tex,
+        "latexmlpost",
+        profile=profile,
+    )
+
+    assert latexml_budget.split_level == "chapter"
+    assert latexml_budget.structure_unit_count == 16
+    assert latexml_budget.soft_seconds >= parser_module.LATEXML_BOOK_SOFT_TIMEOUT_FLOOR_SECONDS
+    assert latexml_budget.hard_seconds >= parser_module.LATEXML_BOOK_HARD_TIMEOUT_FLOOR_SECONDS
+    assert latexmlpost_budget.soft_seconds >= parser_module.LATEXML_BOOK_SOFT_TIMEOUT_FLOOR_SECONDS
+    assert latexmlpost_budget.hard_seconds >= parser_module.LATEXML_BOOK_HARD_TIMEOUT_FLOOR_SECONDS
+
+
 @pytest.mark.asyncio
 async def test_run_command_keeps_running_while_output_shows_activity(tmp_path: Path) -> None:
     log_path = tmp_path / "active.log"
@@ -513,7 +693,7 @@ async def test_terminate_process_tree_uses_taskkill_on_windows(
     )
     process = DummyProcess()
 
-    await parser_module._terminate_process_tree(process)
+    await parser_module._terminate_process_tree(cast(asyncio.subprocess.Process, process))
 
     assert taskkill_pids == [4321]
     assert process.terminated is False
@@ -530,7 +710,7 @@ async def test_terminate_process_tree_falls_back_to_direct_child_when_taskkill_f
     monkeypatch.setattr(parser_module, "_run_windows_taskkill", lambda _pid: False)
     process = DummyProcess()
 
-    await parser_module._terminate_process_tree(process)
+    await parser_module._terminate_process_tree(cast(asyncio.subprocess.Process, process))
 
     assert process.terminated is True
     assert process.killed is False
@@ -1042,6 +1222,26 @@ def test_latexml_xml_to_html_recovers_blocks_without_latexmlpost(tmp_path: Path)
               <p>We optimize <Math mode="inline" tex="f(x)" text="f of x" />.</p>
               <equation><Math mode="display" tex="x^2" text="x squared" /></equation>
             </para>
+            <figure xml:id="Chx2.F1">
+              <picture>
+                <Math mode="inline" tex="x_t" />
+              </picture>
+              <toccaption><tag close=" ">1</tag>Short figure.</toccaption>
+              <caption>
+                <tag close=": ">Figure 1</tag>Curve for
+                <Math mode="inline" tex="\\alpha_t" />.
+              </caption>
+            </figure>
+            <table xml:id="Chx2.T1">
+              <tabular>
+                <tr><td><Math mode="inline" tex="n" /></td></tr>
+              </tabular>
+              <toccaption><tag close=" ">1</tag>Short table.</toccaption>
+              <caption>
+                <tag close=": ">Table 1</tag>Runtime
+                <Math mode="inline" tex="O(n^2)" />.
+              </caption>
+            </table>
           </chapter>
         </document>
         """,
@@ -1049,6 +1249,7 @@ def test_latexml_xml_to_html_recovers_blocks_without_latexmlpost(tmp_path: Path)
     )
 
     parser_module.latexml_xml_to_html(xml_path, html_path)
+    html = html_path.read_text(encoding="utf-8")
     blocks, _assets = normalize_latexml_html(html_path, "revision-1")
 
     assert [block.block_type for block in blocks] == [
@@ -1057,14 +1258,105 @@ def test_latexml_xml_to_html_recovers_blocks_without_latexmlpost(tmp_path: Path)
         "section",
         "paragraph",
         "equation",
+        "figure",
+        "table",
     ]
     assert [block.source_markdown for block in blocks] == [
         "Recovered Paper",
         "A. Author",
         "Introduction",
-        "We optimize f(x).",
+        "We optimize $f(x)$.",
         "x^2",
+        "**Figure 1.** Curve for $\\alpha_t$.",
+        "**Table 1.** Runtime $O(n^2)$.",
     ]
+    assert "$f(x)$" in render_source_markdown(blocks)
+    assert "<figcaption>" in html
+    assert "Short figure" not in blocks[-2].source_markdown
+    assert "x_t" not in blocks[-2].source_markdown
+
+
+def test_latexml_xml_to_html_recovers_deeper_structure_and_deduplicates_math(
+    tmp_path: Path,
+) -> None:
+    xml_path = tmp_path / "latexml.xml"
+    html_path = tmp_path / "latexml.html"
+    xml_path.write_text(
+        r"""
+        <document xmlns="http://dlmf.nist.gov/LaTeXML">
+          <part><title>Part I</title></part>
+          <section>
+            <title>Optimization</title>
+            <paragraph>
+              <title>Oracle model</title>
+              <para><p>Use <Math tex="\alpha" />.</p></para>
+            </paragraph>
+            <equation>
+              <Math mode="display" tex="\mathrm{min.}\;f(x)" />
+              <Math mode="display" tex="\mathrm{min.}\;f(x)" />
+              <Math mode="display" tex="\text{s.t.}\;x\in\mathcal{X}" />
+              <Math mode="display" tex="\text{s.t.}\;x\in\mathcal{X}" />
+            </equation>
+          </section>
+        </document>
+        """,
+        encoding="utf-8",
+    )
+
+    parser_module.latexml_xml_to_html(xml_path, html_path)
+    blocks, _assets = normalize_latexml_html(html_path, "revision-1")
+
+    assert [(block.block_type, block.source_markdown) for block in blocks[:4]] == [
+        ("section", "Part I"),
+        ("section", "Optimization"),
+        ("section", "Oracle model"),
+        ("paragraph", "Use $\\alpha$."),
+    ]
+    equation = next(block for block in blocks if block.block_type == "equation")
+    assert equation.source_markdown == (
+        r"\mathrm{min.}\;f(x) \text{s.t.}\;x\in\mathcal{X}"
+    )
+
+
+def test_latexmlpost_splits_large_section_sources_by_default(tmp_path: Path) -> None:
+    main_tex = tmp_path / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        + "\n".join(f"\\section{{S{index}}} Body." for index in range(30))
+        + "\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    profile = parser_module.ParserProfile(document_class="article")
+    timeout_budget = CommandTimeoutBudget(
+        soft_seconds=120,
+        idle_seconds=180,
+        hard_seconds=300,
+        source_bytes=50_000,
+        tex_file_count=1,
+        graphic_file_count=0,
+    )
+
+    assert parser_module.preferred_latexml_split_level(profile, main_tex) == "section"
+    assert parser_module.should_split_latexmlpost_by_default(
+        profile,
+        main_tex,
+        timeout_budget,
+    )
+
+
+def test_latexmlpost_detects_chapters_from_included_sources(tmp_path: Path) -> None:
+    main_tex = tmp_path / "main.tex"
+    chapters = tmp_path / "chapters"
+    chapters.mkdir()
+    main_tex.write_text(
+        "\\documentclass{custom}\n\\begin{document}\n\\input{chapters/one}\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (chapters / "one.tex").write_text("\\chapter{Included} Body.", encoding="utf-8")
+    profile = parser_module.ParserProfile(document_class="custom")
+
+    assert parser_module.source_has_chapters(main_tex)
+    assert parser_module.preferred_latexml_split_level(profile, main_tex) == "chapter"
 
 
 def test_normalize_latexml_html_skips_author_metadata_attribute_paragraph(tmp_path: Path) -> None:

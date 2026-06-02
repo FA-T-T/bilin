@@ -162,7 +162,9 @@ export function ReaderPreferencesPanel({
       {showTitle ? (
         <Group justify="space-between" align="flex-start" className="reader-preferences-header">
           <div>
-            <Title order={compact ? 5 : 3}>{t("reader.preferences")}</Title>
+            <Title order={compact ? 3 : 2} className="reader-preferences-title">
+              {t("reader.preferences")}
+            </Title>
             <Text c="dimmed" size="sm">
               {t("reader.preferencesHelp")}
             </Text>

@@ -8,7 +8,7 @@ Ilios is a local-first paper reading and study application. The main path is TeX
 
 Do not introduce Docker, Redis, Celery, accounts, hosted backend requirements, or built-in sync as default dependencies. Do not treat PDF parsing, OCR, Word export, EPUB export, polished PDF export, or neural embedding downloads as currently required startup features. Those are future or optional paths.
 
-Before changing product behavior, reader layout, batch operations, feature toggles, or user-facing interaction logic, read `DESIGN.md`. It is the canonical contract for defaults, deprecated modes, batch-operation expectations, and what must stay configurable.
+Before changing product behavior, reader layout, batch operations, feature toggles, or user-facing interaction logic, read `PRODUCT.md` and `DESIGN.md`. `PRODUCT.md` defines the product register and design posture. `DESIGN.md` is the canonical contract for defaults, deprecated modes, batch-operation expectations, and what must stay configurable.
 
 For UI copy and community translation work, read `apps/web/src/locales/README.md` and use `apps/web/src/locales/example.locale.json` as the contribution shape. Runtime dictionaries currently live in `apps/web/src/i18n.ts`, so reviewed locale updates must still be promoted there.
 
@@ -29,7 +29,9 @@ language_policy:
   community_readme_placeholders: [ko, es, fr, de]
   experimental_ui: [ja, ko, es, fr, de]
 technical_project_id: bilin
-repo_root: /Users/taotao/Documents/DAC2026presentation/bilin
+repo_roots:
+  current_windows_codex: C:\Users\user\Documents\Codex_WorkSpace\reader\bilin
+  historical_mac: /Users/taotao/Documents/DAC2026presentation/bilin
 frontend:
   package: "@bilin/web"
   path: apps/web
@@ -51,6 +53,21 @@ data:
 release:
   script: ./scripts/package-release.sh
 ```
+
+## Product And UI Design Contract
+
+For product or UI work, treat `PRODUCT.md` as required context. The product register is `product`. The intended feel is a quiet, scholarly, precise local-first research desk. Do not redesign Ilios as a SaaS dashboard, marketing surface, generic AI chat shell, or decorative file manager.
+
+The reader is the product center. Keep the paper visible while work happens around it. Translation, paper-grounded Q&A, provider state, tasks, terminology, notes, export, and reading preferences should remain close to the reading surface. Prefer a stable workspace rail or responsive bottom rail over modal-heavy tool flows. Use modals only for focused interruptions such as library selection, source inspection, retranslation prompts, and explicit edit dialogs.
+
+When changing the reader workspace, preserve these expectations:
+
+- The top reader command bar stays compact: navigation, surface mode, reading mode, workspace toggle, and reading preferences.
+- Study tools live in the reader workspace rail. The active tool changes inline without covering the paper.
+- Desktop layouts should avoid horizontal overflow and keep chapter rail, paper shell, and workspace rail visually separate.
+- Mobile layouts may stack the workspace below the paper, but controls must remain reachable and text must fit.
+- Escape closes the active workspace panel state without collapsing the rail unless the interaction explicitly says collapse.
+- Tests should query workspace tabs by `.reader-workspace-tab` when labels are shared with top-level controls.
 
 ## Non-Negotiable Local Rules
 
@@ -218,11 +235,32 @@ pnpm --filter @bilin/web format:check
 pnpm --filter @bilin/web build
 ```
 
+In the current Windows Codex workspace, the default `node` or `pnpm` command can resolve to an inaccessible WindowsApps shim. When that happens, use the bundled runtime directly from `C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe`.
+
+Useful direct frontend commands from `apps/web`:
+
+```powershell
+& 'C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'node_modules\typescript\bin\tsc' --noEmit
+& 'C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'node_modules\vitest\vitest.mjs' run tests/render.test.tsx --reporter=basic
+& 'C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'node_modules\typescript\bin\tsc' -b
+& 'C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'node_modules\vite\bin\vite.js' build
+```
+
+For local web verification in that same environment:
+
+```powershell
+& 'C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'scripts/dev-server.mjs' --host 127.0.0.1 --port 5173
+```
+
+The dev server automatically falls back to another configured port, such as `6173`, when `5173` is occupied. Report the actual URL from the server output. Remove temporary browser screenshots under `apps/web/output/` before finishing unless the user explicitly requested artifacts.
+
 Run Playwright smoke tests only when the environment supports browser execution and the task requires UI path validation.
 
 ```sh
 pnpm --filter @bilin/web test:e2e
 ```
+
+For substantial frontend layout changes, add a real browser check after unit tests and build. Verify at least one desktop viewport and one mobile viewport. Check for horizontal overflow, visible dialog residue, console errors, and page errors. If the API is not running, mock API responses in the browser automation layer rather than weakening the frontend code.
 
 If backend API contracts changed, regenerate the frontend client before running frontend type checks.
 
@@ -263,5 +301,7 @@ If tests unexpectedly touch real network or real TeX tools, mark that path as op
 ## Safe Change Workflow
 
 Before editing, search the relevant module and existing tests. Keep changes scoped to the feature or bug. After editing backend routes or schemas, regenerate OpenAPI client and fix TypeScript compile errors. After changing startup, packaging, or documentation, rerun `tests/test_docs.py` and `./scripts/package-release.sh` if release artifacts are expected to stay current.
+
+When a worktree is already dirty, assume unrelated changes belong to the user or another agent. Do not revert them. If a file is already modified and must be touched, read the surrounding diff first and preserve unrelated intent.
 
 When the user asks to run the service, prefer `make dev` unless separate terminal control is needed. When the user asks to package for GitHub, update human README files and this agent guide if startup, install, or configuration behavior changed.

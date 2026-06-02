@@ -93,6 +93,7 @@ LATEXML_KOMA_DOCUMENT_CLASS_REPLACEMENTS = {
     "scrartcl": "article",
     "scrbook": "book",
     "scrreprt": "report",
+    "memoir": "book",
 }
 LATEXML_LAYOUT_AUTHOR_METADATA_KEYS = frozenset(
     {
@@ -129,11 +130,33 @@ TEX_MAIN_FILE_NAME_HINTS = {
 TEX_CANDIDATE_READ_LIMIT_BYTES = 8_000_000
 LATEXML_BASE_TIMEOUT_SECONDS = float(
     os.getenv(
-        "BILIN_LATEXML_BASE_TIMEOUT_SECONDS", os.getenv("BILIN_LATEXML_TIMEOUT_SECONDS", "200")
+        "BILIN_LATEXML_BASE_TIMEOUT_SECONDS", os.getenv("BILIN_LATEXML_TIMEOUT_SECONDS", "600")
     )
 )
-LATEXML_IDLE_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_IDLE_TIMEOUT_SECONDS", "180"))
-LATEXML_MAX_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_MAX_TIMEOUT_SECONDS", "2400"))
+LATEXML_IDLE_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_IDLE_TIMEOUT_SECONDS", "600"))
+LATEXML_MAX_TIMEOUT_SECONDS = float(os.getenv("BILIN_LATEXML_MAX_TIMEOUT_SECONDS", "14400"))
+LATEXML_BOOK_TIMEOUT_MULTIPLIER = float(os.getenv("BILIN_LATEXML_BOOK_TIMEOUT_MULTIPLIER", "2"))
+LATEXML_BOOK_SOFT_TIMEOUT_FLOOR_SECONDS = float(
+    os.getenv("BILIN_LATEXML_BOOK_SOFT_TIMEOUT_FLOOR_SECONDS", "1800")
+)
+LATEXML_BOOK_HARD_TIMEOUT_FLOOR_SECONDS = float(
+    os.getenv("BILIN_LATEXML_BOOK_HARD_TIMEOUT_FLOOR_SECONDS", "7200")
+)
+LATEXML_LARGE_DOCUMENT_SOFT_TIMEOUT_FLOOR_SECONDS = float(
+    os.getenv("BILIN_LATEXML_LARGE_DOCUMENT_SOFT_TIMEOUT_FLOOR_SECONDS", "900")
+)
+LATEXML_LARGE_DOCUMENT_HARD_TIMEOUT_FLOOR_SECONDS = float(
+    os.getenv("BILIN_LATEXML_LARGE_DOCUMENT_HARD_TIMEOUT_FLOOR_SECONDS", "3600")
+)
+LATEXML_LARGE_SOURCE_SPLIT_BYTES = int(
+    os.getenv("BILIN_LATEXML_LARGE_SOURCE_SPLIT_BYTES", "220000")
+)
+LATEXML_LARGE_SOURCE_SPLIT_TEX_FILES = int(
+    os.getenv("BILIN_LATEXML_LARGE_SOURCE_SPLIT_TEX_FILES", "8")
+)
+LATEXML_LARGE_SOURCE_SPLIT_SECTIONS = int(
+    os.getenv("BILIN_LATEXML_LARGE_SOURCE_SPLIT_SECTIONS", "24")
+)
 LATEX_COMPATIBILITY_TABLE = json.loads(
     (Path(__file__).resolve().parents[4] / "shared" / "latex-compatibility.json").read_text(
         encoding="utf-8"
@@ -239,11 +262,39 @@ LATEXML_SIUNITX_FALLBACK_PREAMBLE = r"""
 \providecommand{\squared}{^{2}}
 \providecommand{\cubed}{^{3}}
 """
+LATEXML_CODE_GENERATED_DIAGRAM_FALLBACK_PREAMBLE = r"""
+\providecommand{\usetikzlibrary}[1]{}
+\providecommand{\pgfplotsset}[1]{}
+\providecommand{\pgfmathsetmacro}[2]{}
+\providecommand{\tikzset}[1]{}
+\providecommand{\definecolor}[3]{}
+\providecommand{\colorlet}[2]{}
+"""
+LATEXML_SECTION_TOC_FALLBACK_PREAMBLE = r"""
+\providecommand{\startcontents}[1][]{}
+\providecommand{\stopcontents}[1][]{}
+\providecommand{\printcontents}[4][]{}
+"""
+LATEXML_LISTINGS_FALLBACK_PREAMBLE = r"""
+\providecommand{\lstset}[1]{}
+\providecommand{\lstdefinestyle}[2]{}
+\providecommand{\lstinputlisting}[2][]{\mbox{Code listing}}
+"""
 LATEXML_PACKAGE_FALLBACK_PREAMBLES = {
     "algorithmic-environment": LATEXML_ALGORITHMIC_FALLBACK_PREAMBLE,
     "tcolorbox-environment": LATEXML_TCOLORBOX_FALLBACK_PREAMBLE,
     "siunitx-commands": LATEXML_SIUNITX_FALLBACK_PREAMBLE,
+    "code-generated-diagram": LATEXML_CODE_GENERATED_DIAGRAM_FALLBACK_PREAMBLE,
+    "section-toc-layout": LATEXML_SECTION_TOC_FALLBACK_PREAMBLE,
+    "listings-environment": LATEXML_LISTINGS_FALLBACK_PREAMBLE,
 }
+LATEXML_CODE_GENERATED_DIAGRAM_ENVIRONMENTS = (
+    "tikzpicture",
+    "circuitikz",
+    "axis",
+    "blochsphere",
+)
+LATEXML_CODE_LISTING_ENVIRONMENTS = ("lstlisting", "code")
 LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
 \usepackage{amsmath,amsfonts,amssymb}
 \makeatletter
@@ -275,6 +326,40 @@ LATEXML_LAYOUT_CLASS_PREAMBLE = r"""
 \def\BilinCASAuthorWithMeta#1[#2]{\BilinArticleAuthor{#1}}
 \makeatother
 """
+LATEXML_MEMOIR_CLASS_PREAMBLE = r"""
+\makeatletter
+\providecommand{\maketitlehooka}{}
+\providecommand{\maketitlehookb}{}
+\providecommand{\maketitlehookc}{}
+\providecommand{\maketitlehookd}{}
+\providecommand{\sloppybottom}{}
+\providecommand{\flushbottom}{}
+\providecommand{\printpartname}{\partname}
+\providecommand{\printpartnum}{\thepart}
+\providecommand{\printparttitle}[1]{#1}
+\providecommand{\beforepartskip}{}
+\providecommand{\midpartskip}{}
+\providecommand{\afterpartskip}{}
+\providecommand{\@pnumwidth}{1.55em}
+\providecommand{\@tocrmarg}{2.55em}
+\providecommand{\@dotsep}{4.5}
+\@ifundefined{droptitle}{\newlength{\droptitle}}{}
+\@ifundefined{cftbeforechapterskip}{\newlength{\cftbeforechapterskip}}{}
+\@ifundefined{cftbeforepartskip}{\newlength{\cftbeforepartskip}}{}
+\@ifundefined{startcontents}{\newcommand{\startcontents}[1][]{}}{}
+\@ifundefined{stopcontents}{\newcommand{\stopcontents}[1][]{}}{}
+\@ifundefined{printcontents}{\newcommand{\printcontents}[4][]{}}{}
+\providecommand{\pretitle}[1]{}
+\providecommand{\posttitle}[1]{}
+\providecommand{\preauthor}[1]{}
+\providecommand{\postauthor}[1]{}
+\providecommand{\predate}[1]{}
+\providecommand{\postdate}[1]{}
+\providecommand{\maxtocdepth}[1]{}
+\newcommand{\BilinMemoirUnit}[2][]{\chapter{#2}}
+\AtBeginDocument{\let\unit\BilinMemoirUnit}
+\makeatother
+"""
 
 
 class ParseFailure(Exception):
@@ -296,6 +381,9 @@ class CommandTimeoutBudget:
     source_bytes: int = 0
     tex_file_count: int = 0
     graphic_file_count: int = 0
+    structure_unit_count: int = 0
+    split_level: str | None = None
+    document_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -455,8 +543,18 @@ async def parse_article_revision(
             "latexml": detect_version(latexml),
             "latexmlpost": detect_version(latexmlpost),
         }
-        latexml_timeout = estimate_latexml_timeout_budget(unpack_dir, main_tex, "latexml")
-        latexmlpost_timeout = estimate_latexml_timeout_budget(unpack_dir, main_tex, "latexmlpost")
+        latexml_timeout = estimate_latexml_timeout_budget(
+            unpack_dir,
+            main_tex,
+            "latexml",
+            profile=profile,
+        )
+        latexmlpost_timeout = estimate_latexml_timeout_budget(
+            unpack_dir,
+            main_tex,
+            "latexmlpost",
+            profile=profile,
+        )
         manifest.metadata["latexml_timeout_seconds"] = {
             "latexml": asdict(latexml_timeout),
             "latexmlpost": asdict(latexmlpost_timeout),
@@ -486,6 +584,7 @@ async def parse_article_revision(
             if should_split_latexmlpost_by_default(
                 profile,
                 main_tex,
+                latexmlpost_timeout,
             ) or (resume_from_latexmlpost and previous_latexmlpost_timeout):
                 await emit_parse_progress(
                     progress,
@@ -1275,8 +1374,10 @@ def prepare_latexml_source(source: str) -> str:
 
 def prepare_latexml_included_source(source: str) -> str:
     source = _disable_latexml_incompatible_packages(source)
+    source = _rename_latexml_trivlist_environment(source)
     if _source_disables_latexml_package(source, "tcolorbox"):
         source = _replace_latexml_tcolorbox_definitions(source)
+    source = _replace_latexml_code_listings(source)
     return _replace_latexml_code_generated_diagrams(source)
 
 
@@ -1290,6 +1391,8 @@ def _inject_latexml_compatibility_preamble(source: str) -> str:
     preamble_parts.extend(_latexml_package_fallback_preambles(source))
     if _source_needs_layout_class_preamble(source):
         preamble_parts.append(LATEXML_LAYOUT_CLASS_PREAMBLE.strip())
+    if _source_replaces_latexml_document_class(source, "memoir"):
+        preamble_parts.append(LATEXML_MEMOIR_CLASS_PREAMBLE.strip())
     preamble = "% Bilin LaTeXML compatibility shims.\n" + "\n".join(preamble_parts)
     document_command = _first_uncommented_latex_match(
         r"\\(?:documentclass|documentstyle)(?:\s*\[[^\]]*\])?\s*\{[^{}]+\}",
@@ -1380,9 +1483,13 @@ def _latexml_document_class_replacement(class_name: str) -> str | None:
 
 def _source_needs_layout_class_preamble(source: str) -> bool:
     return any(
-        f"Bilin replaced layout document class for LaTeXML: {class_name}" in source
+        _source_replaces_latexml_document_class(source, class_name)
         for class_name in LATEXML_CAS_DOCUMENT_CLASSES
     )
+
+
+def _source_replaces_latexml_document_class(source: str, class_name: str) -> bool:
+    return f"Bilin replaced layout document class for LaTeXML: {class_name}" in source
 
 
 def _source_disables_latexml_package(source: str, package: str) -> bool:
@@ -1552,11 +1659,109 @@ def _latexml_tcolorbox_environment_stub(environment_name: str, argument_spec: st
 
 
 def _replace_latexml_code_generated_diagrams(source: str) -> str:
-    return _replace_tex_command_balanced_group(
+    source = _replace_tex_command_balanced_group(
         source,
         command=r"\Qcircuit",
         replacement=r"\mbox{Quantum circuit diagram}",
     )
+    for environment_name in LATEXML_CODE_GENERATED_DIAGRAM_ENVIRONMENTS:
+        source = _replace_tex_environment(
+            source,
+            environment_name=environment_name,
+            replacement=rf"\mbox{{{environment_name} diagram}}",
+        )
+    return source
+
+
+def _replace_latexml_code_listings(source: str) -> str:
+    source = _replace_tex_command_balanced_group(
+        source,
+        command=r"\lstinputlisting",
+        replacement=r"\mbox{Code listing}",
+    )
+    for environment_name in LATEXML_CODE_LISTING_ENVIRONMENTS:
+        source = _replace_tex_environment(
+            source,
+            environment_name=environment_name,
+            replacement=r"\mbox{Code listing}",
+        )
+    return source
+
+
+def _rename_latexml_trivlist_environment(source: str) -> str:
+    return _rename_tex_environment(source, from_name="trivlist", to_name="itemize")
+
+
+def _rename_tex_environment(source: str, *, from_name: str, to_name: str) -> str:
+    marker_pattern = re.compile(
+        rf"\\(?P<kind>begin|end)\s*\{{{re.escape(from_name)}\}}",
+    )
+    parts: list[str] = []
+    cursor = 0
+    for match in marker_pattern.finditer(source):
+        if _is_tex_comment_position(source, match.start()):
+            continue
+        parts.append(source[cursor : match.start()])
+        parts.append(rf"\{match.group('kind')}{{{to_name}}}")
+        cursor = match.end()
+    if not parts:
+        return source
+    parts.append(source[cursor:])
+    return "".join(parts)
+
+
+def _replace_tex_environment(
+    source: str,
+    *,
+    environment_name: str,
+    replacement: str,
+) -> str:
+    begin_pattern = re.compile(
+        rf"\\begin\s*\{{{re.escape(environment_name)}\}}(?:\s*\[[^\]]*\])*",
+    )
+    marker_pattern = re.compile(
+        rf"\\(?P<kind>begin|end)\s*\{{{re.escape(environment_name)}\}}",
+    )
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        begin_match = begin_pattern.search(source, cursor)
+        if begin_match is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        if _is_tex_comment_position(source, begin_match.start()):
+            parts.append(source[cursor : begin_match.end()])
+            cursor = begin_match.end()
+            continue
+        environment_end = _find_tex_environment_end(
+            source,
+            marker_pattern,
+            begin_match.end(),
+        )
+        if environment_end is None:
+            parts.append(source[cursor:])
+            return "".join(parts)
+        parts.append(source[cursor : begin_match.start()])
+        parts.append(replacement)
+        cursor = environment_end
+
+
+def _find_tex_environment_end(
+    source: str,
+    marker_pattern: re.Pattern[str],
+    search_start: int,
+) -> int | None:
+    depth = 1
+    for match in marker_pattern.finditer(source, search_start):
+        if _is_tex_comment_position(source, match.start()):
+            continue
+        if match.group("kind") == "begin":
+            depth += 1
+            continue
+        depth -= 1
+        if depth == 0:
+            return match.end()
+    return None
 
 
 def _replace_tex_command_balanced_group(source: str, *, command: str, replacement: str) -> str:
@@ -1684,16 +1889,101 @@ def previous_failure_stage(errors: list[ParseErrorInfo]) -> str | None:
     return stage if isinstance(stage, str) and stage else None
 
 
-def should_split_latexmlpost_by_default(profile: ParserProfile, main_tex: Path) -> bool:
-    return preferred_latexml_split_level(profile, main_tex) == "chapter"
+def should_split_latexmlpost_by_default(
+    profile: ParserProfile,
+    main_tex: Path,
+    timeout_budget: CommandTimeoutBudget | None = None,
+) -> bool:
+    if preferred_latexml_split_level(profile, main_tex) == "chapter":
+        return True
+    if timeout_budget is not None:
+        if timeout_budget.source_bytes >= LATEXML_LARGE_SOURCE_SPLIT_BYTES:
+            return True
+        if timeout_budget.tex_file_count >= LATEXML_LARGE_SOURCE_SPLIT_TEX_FILES:
+            return True
+    return source_section_count(main_tex) >= LATEXML_LARGE_SOURCE_SPLIT_SECTIONS
 
 
 def source_has_chapters(main_tex: Path) -> bool:
-    try:
-        sample = main_tex.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
-    return bool(re.search(r"(?<!\\)\\chapter\s*(?:\[[^\]]*\])?\s*\{", sample))
+    return source_chapter_count(main_tex) > 0
+
+
+def source_chapter_count(main_tex: Path) -> int:
+    sample = latex_structure_sample(main_tex)
+    return len(re.findall(r"(?<!\\)\\chapter\*?\s*(?:\[[^\]]*\])?\s*\{", sample))
+
+
+def source_section_count(main_tex: Path) -> int:
+    sample = latex_structure_sample(main_tex)
+    return len(
+        re.findall(
+            r"(?<!\\)\\(?:section|subsection|subsubsection)\*?\s*(?:\[[^\]]*\])?\s*\{",
+            sample,
+        )
+    )
+
+
+def latex_structure_sample(
+    main_tex: Path,
+    *,
+    max_files: int = 64,
+    max_bytes: int = 4_000_000,
+) -> str:
+    root = main_tex.parent.resolve()
+    pending = [main_tex]
+    seen: set[Path] = set()
+    parts: list[str] = []
+    total_bytes = 0
+    while pending and len(seen) < max_files and total_bytes < max_bytes:
+        path = pending.pop(0).resolve()
+        if path in seen:
+            continue
+        try:
+            if not path.is_file() or not path.is_relative_to(root):
+                continue
+        except ValueError:
+            continue
+        seen.add(path)
+        try:
+            remaining = max_bytes - total_bytes
+            text = path.read_text(encoding="utf-8", errors="ignore")[:remaining]
+        except OSError:
+            continue
+        total_bytes += len(text.encode("utf-8", errors="ignore"))
+        parts.append(text)
+        for include_name in latex_include_names(text):
+            include_path = latex_include_path(include_name, path.parent, root)
+            if include_path is not None and include_path not in seen:
+                pending.append(include_path)
+    return "\n".join(parts)
+
+
+def latex_include_names(source: str) -> list[str]:
+    return [
+        match.group("name").strip()
+        for match in re.finditer(
+            r"(?<!\\)\\(?:input|include)\s*\{(?P<name>[^{}]+)\}",
+            source,
+        )
+        if match.group("name").strip()
+    ]
+
+
+def latex_include_path(name: str, current_dir: Path, root: Path) -> Path | None:
+    normalized = name.strip().replace("\\", "/")
+    relative = Path(normalized)
+    if not normalized or relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = current_dir / relative
+    candidates = [candidate] if candidate.suffix else [candidate, candidate.with_suffix(".tex")]
+    for item in candidates:
+        path = item.resolve()
+        try:
+            if path.is_file() and path.is_relative_to(root):
+                return path
+        except ValueError:
+            continue
+    return None
 
 
 async def run_latexmlpost_split(
@@ -1831,7 +2121,7 @@ def latexml_xml_block_children_to_html(element: Any, level: int) -> str:
 
 def latexml_xml_block_to_html(element: Any, level: int) -> str:
     tag = _local_name(element.tag)
-    if tag in {"resource", "tags", "pagination", "xmath", "error"}:
+    if tag in {"resource", "tags", "toccaption", "pagination", "xmath", "error"}:
         return ""
     if tag == "title":
         heading = min(max(level, 1), 6)
@@ -1846,14 +2136,16 @@ def latexml_xml_block_to_html(element: Any, level: int) -> str:
             + latexml_xml_block_children_to_html(element, level + 1)
             + "</section>\n"
         )
-    if tag in {"chapter", "section", "subsection", "subsubsection"}:
+    if tag in {"part", "chapter", "section", "subsection", "subsubsection", "paragraph"}:
         if tag == "chapter" and latexml_xml_is_generated_contents_chapter(element):
             return ""
         heading_level = {
+            "part": 1,
             "chapter": 1,
             "section": 2,
             "subsection": 3,
             "subsubsection": 4,
+            "paragraph": 5,
         }[tag]
         return (
             f'<section class="ltx_{tag}">\n'
@@ -1870,18 +2162,16 @@ def latexml_xml_block_to_html(element: Any, level: int) -> str:
         tex = tex.strip()
         if not tex:
             return ""
-        escaped_tex = escape(tex)
-        return f'<math display="block" tex="{escape(tex, quote=True)}">{escaped_tex}</math>\n'
+        return latexml_xml_math_to_html(tex, display="block") + "\n"
     if tag == "math":
         tex = _extract_single_math_tex(element) or _clean_text(element)
         tex = tex.strip()
         if not tex:
             return ""
-        escaped_tex = escape(tex)
         display = "block" if element.attrib.get("mode") == "display" else "inline"
         if display == "block":
-            return f'<math display="block" tex="{escape(tex, quote=True)}">{escaped_tex}</math>\n'
-        return f"<p>{escaped_tex}</p>\n"
+            return latexml_xml_math_to_html(tex, display="block") + "\n"
+        return f"<p>{latexml_xml_math_to_html(tex, display='inline')}</p>\n"
     if tag in {"theorem", "proof", "note"}:
         return (
             f'<section class="ltx_{tag}">\n'
@@ -1960,8 +2250,13 @@ def latexml_xml_mixed_content_to_html(element: Any, level: int) -> str:
         parts.append(escape(element.text))
     for child in list(element):
         tag = _local_name(child.tag)
+        if tag == "toccaption":
+            if child.tail:
+                parts.append(escape(child.tail))
+            continue
         if tag in {
             "title",
+            "caption",
             "para",
             "p",
             "equation",
@@ -2008,7 +2303,7 @@ def latexml_xml_inline_to_html(element: Any) -> str:
         tex = tex.strip()
         if not tex:
             return ""
-        return f'<span class="ltx_Math">{escape(tex)}</span>'
+        return latexml_xml_math_to_html(tex, display="inline")
     if tag in {"emph", "text"}:
         return f"<span>{latexml_xml_inline_children_to_html(element)}</span>"
     if tag in {"ref", "cite"}:
@@ -2017,6 +2312,14 @@ def latexml_xml_inline_to_html(element: Any) -> str:
         )
         return escape(text or "")
     return latexml_xml_inline_children_to_html(element)
+
+
+def latexml_xml_math_to_html(tex: str, *, display: str) -> str:
+    escaped_tex = escape(tex, quote=False)
+    return (
+        f'<math display="{escape(display, quote=True)}" '
+        f'tex="{escape(tex, quote=True)}">{escaped_tex}</math>'
+    )
 
 
 def ordered_latexml_split_page_paths(split_index_path: Path) -> list[Path]:
@@ -2129,6 +2432,8 @@ def estimate_latexml_timeout_budget(
     unpack_dir: Path,
     main_tex: Path,
     command_name: str,
+    *,
+    profile: ParserProfile | None = None,
 ) -> CommandTimeoutBudget:
     source_bytes = 0
     tex_file_count = 0
@@ -2145,22 +2450,49 @@ def estimate_latexml_timeout_budget(
 
     source_bytes = max(source_bytes, _safe_file_size(main_tex))
     source_mib = source_bytes / 1_048_576
+    document_class = (profile.document_class if profile else None) or None
+    split_level = preferred_latexml_split_level(profile or ParserProfile(), main_tex)
+    structure_unit_count = (
+        source_chapter_count(main_tex)
+        if split_level == "chapter"
+        else source_section_count(main_tex)
+    )
+    is_book_like = split_level == "chapter"
+    is_large_document = (
+        is_book_like
+        or source_bytes >= LATEXML_LARGE_SOURCE_SPLIT_BYTES
+        or tex_file_count >= LATEXML_LARGE_SOURCE_SPLIT_TEX_FILES
+        or structure_unit_count >= LATEXML_LARGE_SOURCE_SPLIT_SECTIONS
+    )
     if command_name == "latexmlpost":
         estimated = (
             max(90.0, LATEXML_BASE_TIMEOUT_SECONDS * 0.55)
-            + source_mib * 45.0
-            + min(240.0, tex_file_count * 1.5 + graphic_file_count * 4.0)
+            + source_mib * 90.0
+            + min(900.0, tex_file_count * 3.0 + graphic_file_count * 8.0)
+            + structure_unit_count * (45.0 if is_book_like else 18.0)
         )
     else:
         estimated = (
             LATEXML_BASE_TIMEOUT_SECONDS
-            + source_mib * 120.0
-            + min(720.0, tex_file_count * 3.0 + graphic_file_count * 8.0)
+            + source_mib * 240.0
+            + min(1800.0, tex_file_count * 8.0 + graphic_file_count * 15.0)
+            + structure_unit_count * (90.0 if is_book_like else 30.0)
         )
-    soft_seconds = max(60.0, min(estimated, LATEXML_MAX_TIMEOUT_SECONDS))
+    if is_book_like:
+        estimated *= LATEXML_BOOK_TIMEOUT_MULTIPLIER
+    soft_floor = 60.0
+    hard_floor = 0.0
+    if is_book_like:
+        soft_floor = LATEXML_BOOK_SOFT_TIMEOUT_FLOOR_SECONDS
+        hard_floor = LATEXML_BOOK_HARD_TIMEOUT_FLOOR_SECONDS
+    elif is_large_document:
+        soft_floor = LATEXML_LARGE_DOCUMENT_SOFT_TIMEOUT_FLOOR_SECONDS
+        hard_floor = LATEXML_LARGE_DOCUMENT_HARD_TIMEOUT_FLOOR_SECONDS
+    soft_seconds = max(soft_floor, min(estimated, LATEXML_MAX_TIMEOUT_SECONDS))
     hard_seconds = max(
         soft_seconds + LATEXML_IDLE_TIMEOUT_SECONDS,
-        min(soft_seconds * 2.5, LATEXML_MAX_TIMEOUT_SECONDS),
+        min(soft_seconds * 3.0, LATEXML_MAX_TIMEOUT_SECONDS),
+        hard_floor,
     )
     hard_seconds = min(max(hard_seconds, soft_seconds), LATEXML_MAX_TIMEOUT_SECONDS)
     return CommandTimeoutBudget(
@@ -2170,6 +2502,9 @@ def estimate_latexml_timeout_budget(
         source_bytes=source_bytes,
         tex_file_count=tex_file_count,
         graphic_file_count=graphic_file_count,
+        structure_unit_count=structure_unit_count,
+        split_level=split_level,
+        document_class=document_class,
     )
 
 
@@ -3623,12 +3958,13 @@ def _extract_math_tex(element: Any) -> str | None:
     if rows:
         if len(rows) == 1 and len(rows[0]) == 1:
             return rows[0][0]
-        formatted_rows = [" ".join(row) for row in rows]
+        formatted_rows = [" ".join(_deduplicate_latex_values(row)) for row in rows]
+        formatted_rows = _deduplicate_latex_values(formatted_rows)
         return "\\begin{aligned}\n" + " \\\\\n".join(formatted_rows) + "\n\\end{aligned}"
     values = [_extract_single_math_tex(candidate) for candidate in element.iter()]
     values = [value for value in values if value]
     if values:
-        return " ".join(values)
+        return " ".join(_deduplicate_latex_values(values))
     return None
 
 
@@ -3642,12 +3978,36 @@ def _extract_math_rows(element: Any) -> list[list[str]]:
             for value in (_extract_single_math_tex(candidate) for candidate in row.iter())
             if value
         ]
+        row_values = _deduplicate_latex_values(row_values)
         if row_values:
             rows.append(row_values)
     if rows:
         return rows
     value = _extract_single_math_tex(element)
     return [[value]] if value else []
+
+
+def _deduplicate_latex_values(values: list[str]) -> list[str]:
+    deduplicated: list[str] = []
+    previous_key = ""
+    for value in values:
+        key = _latex_value_key(value)
+        if not key or key == previous_key:
+            previous_key = key
+            continue
+        deduplicated.append(value)
+        previous_key = key
+    if len(deduplicated) % 2 == 0 and deduplicated:
+        midpoint = len(deduplicated) // 2
+        left = [_latex_value_key(value) for value in deduplicated[:midpoint]]
+        right = [_latex_value_key(value) for value in deduplicated[midpoint:]]
+        if left == right:
+            return deduplicated[:midpoint]
+    return deduplicated
+
+
+def _latex_value_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _extract_single_math_tex(element: Any) -> str | None:

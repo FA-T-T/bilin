@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from bilin_api.article_store import resolve_library
+from bilin_api.arxiv import ArxivMetadata, arxiv_metadata_from_json
 from bilin_api.database import init_global_db, open_db, utc_now
 from bilin_api.embedding_service import build_article_embeddings, queue_article_embedding
 from bilin_api.export_service import export_article
@@ -160,6 +161,7 @@ def job_error_payload(job: Job, exc: Exception) -> dict[str, object]:
 async def run_import_arxiv_job(job: Job) -> None:
     library = await resolve_library(str(job.payload["library_id"]))
     parse_after_import = bool(job.payload.get("parse_after_import", True))
+    metadata = arxiv_metadata_from_payload(job.payload.get("arxiv_metadata"))
     request = ImportArxivRequest(
         arxiv_id=str(job.payload["arxiv_id"]),
         version=job.payload.get("version"),
@@ -168,7 +170,7 @@ async def run_import_arxiv_job(job: Job) -> None:
     )
     progress = job_progress_callback(job.id)
     await progress("arxiv_metadata", "解析 arXiv 元数据", 0.05)
-    result = await call_import_arxiv(library, request, progress)
+    result = await call_import_arxiv(library, request, progress, metadata)
     if parse_after_import:
         await progress("queue_parse", "排队解析", 0.9)
         parse_payload: dict[str, object] = {
@@ -219,10 +221,14 @@ async def call_import_arxiv(
     library: Any,
     request: ImportArxivRequest,
     progress: WorkerProgressCallback,
+    metadata: ArxivMetadata | None = None,
 ) -> Any:
-    if accepts_progress_callback(import_arxiv):
-        return await import_arxiv(library, request, progress=progress)
-    return await import_arxiv(library, request)
+    kwargs: dict[str, Any] = {}
+    if accepts_parameter(import_arxiv, "progress"):
+        kwargs["progress"] = progress
+    if metadata is not None and accepts_parameter(import_arxiv, "metadata"):
+        kwargs["metadata"] = metadata
+    return await import_arxiv(library, request, **kwargs)
 
 
 async def call_parse_article_revision(
@@ -236,14 +242,27 @@ async def call_parse_article_revision(
 
 
 def accepts_progress_callback(function: Any) -> bool:
+    return accepts_parameter(function, "progress")
+
+
+def accepts_parameter(function: Any, parameter_name: str) -> bool:
     try:
         signature = inspect.signature(function)
     except (TypeError, ValueError):
         return False
-    return "progress" in signature.parameters or any(
+    return parameter_name in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )
+
+
+def arxiv_metadata_from_payload(value: object) -> ArxivMetadata | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return arxiv_metadata_from_json(value)
+    except ValueError:
+        return None
 
 
 def job_progress_callback(job_id: str) -> WorkerProgressCallback:

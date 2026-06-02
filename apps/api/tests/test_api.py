@@ -211,6 +211,30 @@ def test_arxiv_import_api_enqueues_background_job(bilin_home: Path, tmp_path: Pa
     assert payload["payload"]["arxiv_id"] == "2401.00001"
 
 
+def test_arxiv_import_api_reuses_active_duplicate_job(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    with TestClient(app) as client:
+        library_response = client.post(
+            "/libraries",
+            json={"name": "Local", "path": str(tmp_path / "local-library")},
+        )
+        library_id = library_response.json()["id"]
+        first = client.post(
+            f"/libraries/{library_id}/imports/arxiv",
+            json={"arxiv_id": "2401.00001", "parse_after_import": False},
+        )
+        second = client.post(
+            f"/libraries/{library_id}/imports/arxiv",
+            json={"arxiv_id": "2401.00001", "parse_after_import": False},
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["id"] == first.json()["id"]
+
+
 def test_arxiv_import_api_rejects_ambiguous_old_style_bare_id(
     bilin_home: Path,
     tmp_path: Path,

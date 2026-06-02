@@ -163,7 +163,9 @@ export function SettingsPage() {
           <div className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Title order={3}>{t("settings.connectModel")}</Title>
+                <Title order={2} className="panel-title">
+                  {t("settings.connectModel")}
+                </Title>
                 <Text c="dimmed" size="sm">
                   {t("settings.connectModelHelp", { product: productName })}
                 </Text>
@@ -338,7 +340,9 @@ export function SettingsPage() {
             ) : null}
 
             <div className="saved-provider-section">
-              <Title order={4}>{t("settings.savedProviders")}</Title>
+              <Title order={3} className="panel-subtitle">
+                {t("settings.savedProviders")}
+              </Title>
               {savedProviderCount === 0 ? (
                 <Text c="dimmed" size="sm" mt="xs">
                   {t("settings.noProviders")}
@@ -359,7 +363,7 @@ export function SettingsPage() {
                             ? `${provider.requests_per_minute}/min`
                             : `${provider.max_concurrent_requests ?? 1} parallel`}
                         </Badge>
-                        <Badge color={provider.key_ref ? "green" : "gray"}>
+                        <Badge color={provider.key_ref ? "green" : "gray"} variant="light">
                           {provider.key_ref ? t("settings.configured") : t("settings.missing")}
                         </Badge>
                       </Group>
@@ -375,7 +379,9 @@ export function SettingsPage() {
           <div className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Title order={3}>{t("settings.languageTitle")}</Title>
+                <Title order={2} className="panel-title">
+                  {t("settings.languageTitle")}
+                </Title>
                 <Text c="dimmed" size="sm">
                   {t("settings.languageHelp")}
                 </Text>
@@ -402,7 +408,9 @@ export function SettingsPage() {
           <div className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Title order={3}>{t("settings.memoryReview")}</Title>
+                <Title order={2} className="panel-title">
+                  {t("settings.memoryReview")}
+                </Title>
                 <Text c="dimmed" size="sm">
                   {t("settings.memoryReviewHelp")}
                 </Text>
@@ -532,7 +540,9 @@ export function SettingsPage() {
 
         <Tabs.Panel value="tools">
           <div className="panel">
-            <Title order={3}>{t("settings.tools")}</Title>
+            <Title order={2} className="panel-title">
+              {t("settings.tools")}
+            </Title>
             <Text c="dimmed" size="sm">
               {t("settings.localToolsHelp", { product: productName })}
             </Text>
@@ -556,7 +566,10 @@ export function SettingsPage() {
                     <Table.Tr key={capability.tool_name}>
                       <Table.Td>{capability.tool_name}</Table.Td>
                       <Table.Td>
-                        <Badge color={capability.status === "available" ? "green" : "gray"}>
+                        <Badge
+                          color={capability.status === "available" ? "green" : "gray"}
+                          variant="light"
+                        >
                           {capability.status}
                         </Badge>
                       </Table.Td>

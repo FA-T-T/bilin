@@ -16,6 +16,8 @@ from bilin_api.article_store import (
 )
 from bilin_api.arxiv import (
     ArxivFetchError,
+    arxiv_api_timeout_seconds,
+    arxiv_download_timeout_seconds,
     download_bytes,
     metadata_from_entry,
     parse_arxiv_identity,
@@ -43,6 +45,11 @@ ATOM_RESPONSE = """<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>
 """
+
+
+def test_arxiv_default_timeouts_allow_slow_export_api_responses() -> None:
+    assert arxiv_api_timeout_seconds() >= 90
+    assert arxiv_download_timeout_seconds() >= arxiv_api_timeout_seconds()
 
 
 def test_parse_arxiv_identity_accepts_urls_and_versions() -> None:
@@ -102,7 +109,9 @@ def test_metadata_from_entry_reads_arxiv_categories() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_bytes_surfaces_timeout_context() -> None:
+async def test_download_bytes_surfaces_timeout_context(monkeypatch) -> None:
+    monkeypatch.setenv("BILIN_ARXIV_RETRIES", "0")
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("", request=request)
 
@@ -118,6 +127,25 @@ async def test_download_bytes_surfaces_timeout_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_download_bytes_retries_after_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("BILIN_ARXIV_RETRIES", "1")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("", request=request)
+        return httpx.Response(200, content=b"source")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        content = await download_bytes("https://arxiv.org/e-print/2208.06563v1", client)
+
+    assert calls == 2
+    assert content == b"source"
+
+
+@pytest.mark.asyncio
 async def test_resolve_arxiv_metadata_retries_after_rate_limit(monkeypatch) -> None:
     monkeypatch.setenv("BILIN_ARXIV_API_INTERVAL_SECONDS", "0")
     monkeypatch.setenv("BILIN_ARXIV_API_RETRIES", "1")
@@ -128,6 +156,25 @@ async def test_resolve_arxiv_metadata_retries_after_rate_limit(monkeypatch) -> N
         calls += 1
         if calls == 1:
             return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, text=ATOM_RESPONSE)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        metadata = await resolve_arxiv_metadata("2401.00001", client=client)
+
+    assert calls == 2
+    assert metadata.concrete_id == "2401.00001v2"
+
+
+@pytest.mark.asyncio
+async def test_resolve_arxiv_metadata_retries_after_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("BILIN_ARXIV_API_RETRIES", "1")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("", request=request)
         return httpx.Response(200, text=ATOM_RESPONSE)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -200,6 +247,46 @@ async def test_import_arxiv_writes_bundle_manifest_and_parse_job(
     assert articles[0].article_revision.id == result.article_revision_id
     jobs = await list_jobs()
     assert any(job.type == JobType.parse_article for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_import_arxiv_reuses_cached_metadata_without_api_request(
+    bilin_home: Path,
+    tmp_path: Path,
+) -> None:
+    library = await create_library(
+        LibraryCreate(name="Cached metadata", path=str(tmp_path / "library")),
+    )
+    source_bytes = make_source_tar()
+    root = ET.fromstring(ATOM_RESPONSE)
+    entry = root.find("{http://www.w3.org/2005/Atom}entry")
+    assert entry is not None
+    metadata = metadata_from_entry(entry)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "export.arxiv.org/api/query" in url:
+            raise AssertionError("cached metadata should skip the arXiv metadata API")
+        if "arxiv.org/e-print/2401.00001v2" in url:
+            return httpx.Response(200, content=source_bytes)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await import_arxiv(
+            library,
+            ImportArxivRequest(
+                arxiv_id="2401.00001",
+                download_pdf=False,
+                parse_after_import=False,
+            ),
+            client=client,
+            metadata=metadata,
+        )
+
+    manifest = read_manifest(Path(result.bundle_path))
+    assert manifest is not None
+    assert manifest.arxiv_id == "2401.00001v2"
+    assert manifest.pdf_fingerprint is None
 
 
 @pytest.mark.asyncio

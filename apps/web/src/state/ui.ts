@@ -4,6 +4,23 @@ import { normalizeLocale } from "../product";
 
 export type ReaderViewMode = "study" | "bilingual" | "translation" | "source";
 export type ReaderSurfaceMode = "workbench" | "kindle";
+export type ReaderOverlayKind =
+  | "ask"
+  | "tasks"
+  | "providers"
+  | "translate"
+  | "glossary"
+  | "export"
+  | "preferences"
+  | "search"
+  | "articles"
+  | "noteGenerator";
+export type ReaderStudyScope = "article" | "block";
+
+export interface ReaderStudyContext {
+  scope: ReaderStudyScope;
+  blockUid: string | null;
+}
 
 export interface ReaderPreferences {
   lineWidthPercent: number;
@@ -37,6 +54,11 @@ interface UiState {
   taskDrawerOpen: boolean;
   readerViewMode: ReaderViewMode;
   readerSurfaceMode: ReaderSurfaceMode;
+  activeReaderOverlay: ReaderOverlayKind | null;
+  readerStudyContext: ReaderStudyContext;
+  readerOverlayAutoCloseEnabled: boolean;
+  readerNoteStickiesOverride: boolean | null;
+  taskNotificationOpenDelayMs: number;
   translationTargetLanguage: string;
   autoTranslateOnLanguageSwitch: boolean;
   readerPreferences: ReaderPreferences;
@@ -46,6 +68,11 @@ interface UiState {
   closeTaskDrawer: () => void;
   setReaderViewMode: (mode: ReaderViewMode) => void;
   setReaderSurfaceMode: (mode: ReaderSurfaceMode) => void;
+  setActiveReaderOverlay: (overlay: ReaderOverlayKind | null) => void;
+  setReaderStudyContext: (context: ReaderStudyContext) => void;
+  setReaderOverlayAutoCloseEnabled: (enabled: boolean) => void;
+  setReaderNoteStickiesOverride: (enabled: boolean | null) => void;
+  setTaskNotificationOpenDelayMs: (delayMs: number) => void;
   setTranslationTargetLanguage: (language: string) => void;
   setAutoTranslateOnLanguageSwitch: (enabled: boolean) => void;
   setReaderPreference: <Key extends ReaderPreferenceKey>(
@@ -240,6 +267,11 @@ export const useUiStore = create<UiState>((set) => ({
   taskDrawerOpen: false,
   readerViewMode: "study",
   readerSurfaceMode: initialReaderSurfaceMode(),
+  activeReaderOverlay: null,
+  readerStudyContext: { scope: "article", blockUid: null },
+  readerOverlayAutoCloseEnabled: true,
+  readerNoteStickiesOverride: null,
+  taskNotificationOpenDelayMs: 600,
   translationTargetLanguage: initialTranslationTargetLanguage(),
   autoTranslateOnLanguageSwitch: initialAutoTranslateOnLanguageSwitch(),
   readerPreferences: initialReaderPreferences(),
@@ -264,6 +296,12 @@ export const useUiStore = create<UiState>((set) => ({
     }
     set({ readerSurfaceMode: mode });
   },
+  setActiveReaderOverlay: (overlay) => set({ activeReaderOverlay: overlay }),
+  setReaderStudyContext: (context) => set({ readerStudyContext: context }),
+  setReaderOverlayAutoCloseEnabled: (enabled) => set({ readerOverlayAutoCloseEnabled: enabled }),
+  setReaderNoteStickiesOverride: (enabled) => set({ readerNoteStickiesOverride: enabled }),
+  setTaskNotificationOpenDelayMs: (delayMs) =>
+    set({ taskNotificationOpenDelayMs: clampNumber(delayMs, 0, 5_000, 600) }),
   setTranslationTargetLanguage: (language) => {
     const next = language.trim() || "zh-CN";
     saveTranslationTargetLanguage(next);

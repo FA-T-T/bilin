@@ -326,7 +326,9 @@ export function LibraryDetailPage() {
       >
         <Group justify="space-between" align="flex-start" gap="sm">
           <div>
-            <Title order={3}>{t("library.addArticle")}</Title>
+            <Title order={2} className="panel-title">
+              {t("library.addArticle")}
+            </Title>
             <Text c="dimmed" size="sm">
               {t("library.addArticleHelp")}
             </Text>
@@ -829,7 +831,7 @@ export function LibraryDetailPage() {
                 {selectedArticle ? (
                   <>
                     <Text className="library-rail-label">{t("library.paperSelected")}</Text>
-                    <Title order={3} className="library-preview-title">
+                    <Title order={2} className="library-preview-title">
                       {selectedArticle.family.title ?? selectedArticle.family.external_id}
                     </Title>
                     <Text c="dimmed" size="sm">

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import tarfile
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -10,8 +11,8 @@ import pytest
 import bilin_api.latexml_parser as parser_module
 import bilin_api.worker as worker_module
 from bilin_api.article_store import bundle_path_for_arxiv, upsert_arxiv_revision, write_manifest
-from bilin_api.importer import import_arxiv, import_local_file
-from bilin_api.latexml_parser import parse_article_revision
+from bilin_api.importer import ImportProgressCallback, import_arxiv, import_local_file
+from bilin_api.latexml_parser import ParseProgressCallback, parse_article_revision
 from bilin_api.repositories import (
     claim_next_job,
     create_job,
@@ -201,8 +202,9 @@ async def test_import_worker_persists_progress_metadata(
         progress: object | None = None,
     ) -> ImportArxivResult:
         assert progress is not None
-        await progress("source_download", "下载源数据", 0.25)
-        await progress("bundle_write", "写入 bundle", 0.65)
+        progress_callback = cast(ImportProgressCallback, progress)
+        await progress_callback("source_download", "下载源数据", 0.25)
+        await progress_callback("bundle_write", "写入 bundle", 0.65)
         return ImportArxivResult(
             library_id=library.id,
             article_family_id="family-1",
@@ -295,8 +297,9 @@ async def test_parse_worker_persists_progress_metadata(
         progress: object | None = None,
     ) -> dict[str, object]:
         assert progress is not None
-        await progress("dependency_check", "依赖检查", 0.2)
-        await progress("document_write", "写入文档", 0.9)
+        progress_callback = cast(ParseProgressCallback, progress)
+        await progress_callback("dependency_check", "依赖检查", 0.2)
+        await progress_callback("document_write", "写入文档", 0.9)
         return {
             "article_revision_id": revision_id,
             "document_path": "document.json",

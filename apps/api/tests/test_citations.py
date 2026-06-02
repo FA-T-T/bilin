@@ -478,6 +478,7 @@ async def test_queue_citation_import_resolves_arxiv_id_and_adds_import_job(
     bilin_home: Path,
     tmp_path: Path,
 ) -> None:
+    clear_scholar_cache()
     library = await create_library(
         LibraryCreate(name="Citation import", path=str(tmp_path / "library"))
     )
@@ -494,11 +495,27 @@ async def test_queue_citation_import_resolves_arxiv_id_and_adds_import_job(
         metadata={},
     )
 
-    transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, request=request, text=ARXIV_SEARCH_RESPONSE)
-    )
+    arxiv_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal arxiv_calls
+        arxiv_calls += 1
+        return httpx.Response(200, request=request, text=ARXIV_SEARCH_RESPONSE)
+
+    transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         result = await queue_citation_library_import(
+            library,
+            revision.id,
+            "bib.bib2",
+            CitationLibraryImportRequest(
+                translate_after_import=True,
+                provider_profile_id="provider-1",
+                model="model-1",
+            ),
+            client=client,
+        )
+        repeated = await queue_citation_library_import(
             library,
             revision.id,
             "bib.bib2",
@@ -514,7 +531,10 @@ async def test_queue_citation_import_resolves_arxiv_id_and_adds_import_job(
     assert result.candidate.source == "citation_arxiv_id"
     assert result.translate_after_import is True
     assert result.job.type == JobType.import_arxiv
+    assert repeated.job.id == result.job.id
+    assert arxiv_calls == 1
     assert result.job.payload["arxiv_id"] == "1409.0473v7"
+    assert result.job.payload["arxiv_metadata"]["concrete_id"] == "1409.0473v7"
     assert result.job.payload["source_citation_id"] == "bib.bib2"
     assert result.job.payload["translate_after_parse"] == {
         "target_language": "zh-CN",

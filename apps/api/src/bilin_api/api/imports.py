@@ -5,8 +5,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from bilin_api.article_store import resolve_library
 from bilin_api.arxiv import parse_arxiv_identity
 from bilin_api.importer import import_local_file
-from bilin_api.repositories import create_job
-from bilin_api.schemas import ImportArxivRequest, ImportLocalKind, ImportLocalResult, Job, JobType
+from bilin_api.repositories import create_import_arxiv_job_if_absent
+from bilin_api.schemas import ImportArxivRequest, ImportLocalKind, ImportLocalResult, Job
 
 router = APIRouter(prefix="/libraries/{library_id}/imports", tags=["imports"])
 LOCAL_IMPORT_KIND_QUERY = Query(...)
@@ -29,16 +29,16 @@ async def import_arxiv(library_id: str, payload: ImportArxivRequest) -> Job:
         identity = parse_arxiv_identity(payload.arxiv_id, payload.version)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return await create_job(
-        JobType.import_arxiv,
-        payload={
+    job, _created = await create_import_arxiv_job_if_absent(
+        {
             "library_id": library.id,
             "arxiv_id": identity.bare_id,
             "version": identity.version,
             "download_pdf": payload.download_pdf,
             "parse_after_import": payload.parse_after_import,
-        },
+        }
     )
+    return job
 
 
 @router.post("/file", response_model=ImportLocalResult, status_code=status.HTTP_201_CREATED)

@@ -5,7 +5,6 @@ import {
   Button,
   Group,
   Select,
-  Title,
   Tooltip,
   useComputedColorScheme,
   useMantineColorScheme
@@ -71,9 +70,7 @@ export function AppLayout() {
                     <BilinLogo className="brand-mark-image" decorative />
                   </span>
                   <div>
-                    <Title order={3} className="brand-title">
-                      {brandName}
-                    </Title>
+                    <span className="brand-title">{brandName}</span>
                   </div>
                 </>
               ) : (
