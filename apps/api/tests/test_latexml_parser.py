@@ -327,8 +327,7 @@ def test_prepare_latexml_source_replaces_code_generated_diagram_environments() -
 
     assert (
         "% Bilin disabled for LaTeXML: "
-        "\\usepackage{tikz,circuitikz,pgfplots,blochsphere,tikz-3dplot}"
-        in prepared
+        "\\usepackage{tikz,circuitikz,pgfplots,blochsphere,tikz-3dplot}" in prepared
     )
     assert "\\providecommand{\\pgfplotsset}[1]{}" in prepared
     assert "\\begin{tikzpicture}" not in prepared
@@ -408,10 +407,7 @@ def test_prepare_latexml_source_replaces_listings_environments() -> None:
 def test_build_parser_profile_records_memoir_replacement_rule(tmp_path: Path) -> None:
     main_tex = tmp_path / "UQIC.tex"
     main_tex.write_text(
-        "\\documentclass[12pt]{memoir}\n"
-        "\\begin{document}\n"
-        "\\chapter{One}\n"
-        "\\end{document}\n",
+        "\\documentclass[12pt]{memoir}\n\\begin{document}\n\\chapter{One}\n\\end{document}\n",
         encoding="utf-8",
     )
 
@@ -1313,9 +1309,7 @@ def test_latexml_xml_to_html_recovers_deeper_structure_and_deduplicates_math(
         ("paragraph", "Use $\\alpha$."),
     ]
     equation = next(block for block in blocks if block.block_type == "equation")
-    assert equation.source_markdown == (
-        r"\mathrm{min.}\;f(x) \text{s.t.}\;x\in\mathcal{X}"
-    )
+    assert equation.source_markdown == (r"\mathrm{min.}\;f(x) \text{s.t.}\;x\in\mathcal{X}")
 
 
 def test_latexmlpost_splits_large_section_sources_by_default(tmp_path: Path) -> None:
@@ -2565,9 +2559,7 @@ async def test_parse_article_retry_resumes_from_latexmlpost_timeout(
         assert "--split" in command
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
-            '<html><body><nav class="ltx_TOC">'
-            '<a href="S1.html">Section 1</a>'
-            "</nav></body></html>",
+            '<html><body><nav class="ltx_TOC"><a href="S1.html">Section 1</a></nav></body></html>',
             encoding="utf-8",
         )
         (destination.parent / "S1.html").write_text(

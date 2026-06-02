@@ -177,6 +177,7 @@ async def require_api_token(request: Request, call_next):
         )
     return await call_next(request)
 
+
 app.include_router(health.router)
 app.include_router(doctor.router)
 app.include_router(libraries.router)

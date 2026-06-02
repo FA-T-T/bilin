@@ -139,9 +139,7 @@ def test_library_archive_and_delete_api_manage_cache(bilin_home: Path, tmp_path:
     assert missing_response.status_code == 404
 
 
-def test_library_delete_preserves_preexisting_directory(
-    bilin_home: Path, tmp_path: Path
-) -> None:
+def test_library_delete_preserves_preexisting_directory(bilin_home: Path, tmp_path: Path) -> None:
     library_path = tmp_path / "existing-library"
     library_path.mkdir()
     user_file = library_path / "keep.txt"
