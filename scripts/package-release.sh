@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-0.3.5}"
+VERSION="${1:-0.3.6}"
 PACKAGE_NAME="bilin-v${VERSION}-source"
 RELEASE_DIR="${ROOT_DIR}/release"
 STAGING_ROOT="${RELEASE_DIR}/.staging"
@@ -57,7 +57,24 @@ rm -f "${TAR_PATH}" "${ZIP_PATH}" "${TAR_PATH}.sha256" "${ZIP_PATH}.sha256"
 (
   cd "${STAGING_ROOT}"
   tar -czf "${TAR_PATH}" "${PACKAGE_NAME}"
-  zip -qr "${ZIP_PATH}" "${PACKAGE_NAME}"
+  if command -v zip >/dev/null 2>&1; then
+    zip -qr "${ZIP_PATH}" "${PACKAGE_NAME}"
+  elif command -v powershell.exe >/dev/null 2>&1; then
+    if command -v cygpath >/dev/null 2>&1; then
+      STAGING_ROOT_WIN="$(cygpath -w "${STAGING_ROOT}")"
+      ZIP_PATH_WIN="$(cygpath -w "${ZIP_PATH}")"
+    elif command -v wslpath >/dev/null 2>&1; then
+      STAGING_ROOT_WIN="$(wslpath -w "${STAGING_ROOT}")"
+      ZIP_PATH_WIN="$(wslpath -w "${ZIP_PATH}")"
+    else
+      echo "PowerShell fallback requires cygpath or wslpath for path conversion" >&2
+      exit 1
+    fi
+    powershell.exe -NoProfile -Command "Push-Location -LiteralPath '${STAGING_ROOT_WIN}'; Compress-Archive -LiteralPath '${PACKAGE_NAME}' -DestinationPath '${ZIP_PATH_WIN}' -Force; Pop-Location"
+  else
+    echo "zip command not found and PowerShell fallback is unavailable" >&2
+    exit 1
+  fi
 )
 
 shasum -a 256 "${TAR_PATH}" > "${TAR_PATH}.sha256"
