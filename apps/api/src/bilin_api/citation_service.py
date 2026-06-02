@@ -8,14 +8,14 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from bilin_api.article_store import get_article_revision
-from bilin_api.arxiv import resolve_arxiv_metadata, search_arxiv_latest_by_title
+from bilin_api.arxiv import ArxivMetadata, resolve_arxiv_metadata, search_arxiv_latest_by_title
 from bilin_api.citation_keys import (
     humanize_citation_key,
     missing_citation_id,
     normalize_citation_key,
     parse_author_year_citation_key,
 )
-from bilin_api.repositories import create_job
+from bilin_api.repositories import create_import_arxiv_job_if_absent
 from bilin_api.schemas import (
     ArticleCitations,
     CitationArxivCandidate,
@@ -23,12 +23,13 @@ from bilin_api.schemas import (
     CitationLibraryImportRequest,
     CitationLibraryImportResult,
     CitationScholarResult,
-    JobType,
     Library,
     ScholarSearchResult,
 )
 
 _SCHOLAR_CACHE: dict[str, CitationScholarResult] = {}
+_ARXIV_CANDIDATE_CACHE: dict[str, CitationArxivCandidate | None] = {}
+_ARXIV_METADATA_CACHE: dict[str, dict[str, object]] = {}
 
 
 async def get_article_citations(library: Library, revision_id: str) -> ArticleCitations:
@@ -98,7 +99,10 @@ async def queue_citation_library_import(
             "block_uids": None,
             "custom_prompt": None,
         }
-    job = await create_job(JobType.import_arxiv, payload=payload)
+    arxiv_metadata = cached_arxiv_metadata(candidate.arxiv_id)
+    if arxiv_metadata is not None:
+        payload["arxiv_metadata"] = arxiv_metadata
+    job, _created = await create_import_arxiv_job_if_absent(payload)
     return CitationLibraryImportResult(
         citation_id=citation_id,
         candidate=candidate,
@@ -124,25 +128,54 @@ async def resolve_citation_arxiv_candidate(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> CitationArxivCandidate | None:
+    cache_key = citation_arxiv_candidate_cache_key(citation)
+    if cache_key in _ARXIV_CANDIDATE_CACHE:
+        cached = _ARXIV_CANDIDATE_CACHE[cache_key]
+        return (
+            cached.model_copy(update={"citation_id": citation.id})
+            if cached is not None
+            else None
+        )
     if citation.arxiv_id:
         metadata = await resolve_arxiv_metadata(citation.arxiv_id, client=client)
-        return CitationArxivCandidate(
+        cache_arxiv_metadata(metadata)
+        candidate = CitationArxivCandidate(
             citation_id=citation.id,
             arxiv_id=metadata.concrete_id,
             title=metadata.title,
             abs_url=metadata.abs_url,
             source="citation_arxiv_id",
         )
+        _ARXIV_CANDIDATE_CACHE[cache_key] = candidate
+        return candidate
     metadata = await search_arxiv_latest_by_title(citation.title, client=client)
     if metadata is None:
+        _ARXIV_CANDIDATE_CACHE[cache_key] = None
         return None
-    return CitationArxivCandidate(
+    cache_arxiv_metadata(metadata)
+    candidate = CitationArxivCandidate(
         citation_id=citation.id,
         arxiv_id=metadata.concrete_id,
         title=metadata.title,
         abs_url=metadata.abs_url,
         source="arxiv_search",
     )
+    _ARXIV_CANDIDATE_CACHE[cache_key] = candidate
+    return candidate
+
+
+def citation_arxiv_candidate_cache_key(citation: CitationEntry) -> str:
+    if citation.arxiv_id:
+        return f"id:{citation.arxiv_id.strip().casefold()}"
+    return f"title:{' '.join(citation.title.split()).casefold()}"
+
+
+def cache_arxiv_metadata(metadata: ArxivMetadata) -> None:
+    _ARXIV_METADATA_CACHE[metadata.concrete_id.casefold()] = metadata.to_json()
+
+
+def cached_arxiv_metadata(arxiv_id: str) -> dict[str, object] | None:
+    return _ARXIV_METADATA_CACHE.get(arxiv_id.casefold())
 
 
 async def search_google_scholar(
@@ -1016,3 +1049,5 @@ def clean_html_text(html: str) -> str:
 
 def clear_scholar_cache() -> None:
     _SCHOLAR_CACHE.clear()
+    _ARXIV_CANDIDATE_CACHE.clear()
+    _ARXIV_METADATA_CACHE.clear()

@@ -27,6 +27,7 @@ papers/
 local-data/
 tmp/
 marketing/
+.impeccable/
 .bilin/
 .bilin-test/
 release/

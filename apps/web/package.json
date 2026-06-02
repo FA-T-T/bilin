@@ -1,7 +1,7 @@
 {
   "name": "@bilin/web",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -32,6 +32,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^9.18.0",
     "@playwright/test": "^1.49.0",
     "@testing-library/jest-dom": "^6.6.3",

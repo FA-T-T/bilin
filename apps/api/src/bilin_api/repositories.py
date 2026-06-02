@@ -949,6 +949,84 @@ async def create_parse_job_if_absent(payload: dict[str, Any]) -> tuple[Job, bool
     return job, True
 
 
+async def create_import_arxiv_job_if_absent(payload: dict[str, Any]) -> tuple[Job, bool]:
+    db_path = await init_global_db()
+    active_statuses = (
+        JobStatus.queued.value,
+        JobStatus.running.value,
+        JobStatus.paused.value,
+    )
+    async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        cursor = await conn.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE type = ?
+              AND status IN (?, ?, ?)
+              AND json_extract(payload_json, '$.library_id') = ?
+              AND json_extract(payload_json, '$.arxiv_id') = ?
+              AND json_extract(payload_json, '$.version') IS ?
+            ORDER BY created_at ASC
+            """,
+            (
+                JobType.import_arxiv.value,
+                *active_statuses,
+                payload.get("library_id"),
+                payload.get("arxiv_id"),
+                payload.get("version"),
+            ),
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            job = _job_from_row(row)
+            if _import_arxiv_dedupe_key(job.payload) == _import_arxiv_dedupe_key(payload):
+                await conn.commit()
+                return job, False
+        now = utc_now()
+        job_id = str(uuid4())
+        await conn.execute(
+            """
+            INSERT INTO jobs(
+              id, type, status, priority, payload_json, result_json, error_json, progress,
+              attempts, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                JobType.import_arxiv.value,
+                JobStatus.queued.value,
+                default_job_priority(JobType.import_arxiv),
+                json.dumps(payload),
+                0.0,
+                0,
+                now,
+                now,
+            ),
+        )
+        await conn.commit()
+    job = await get_job(job_id)
+    if job is None:
+        msg = "Created arXiv import job could not be read back"
+        raise RuntimeError(msg)
+    return job, True
+
+
+def _import_arxiv_dedupe_key(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "library_id": payload.get("library_id"),
+        "arxiv_id": payload.get("arxiv_id"),
+        "version": payload.get("version"),
+        "download_pdf": payload.get("download_pdf", True),
+        "parse_after_import": payload.get("parse_after_import", True),
+        "source": payload.get("source"),
+        "source_article_revision_id": payload.get("source_article_revision_id"),
+        "source_citation_id": payload.get("source_citation_id"),
+        "translate_after_parse": payload.get("translate_after_parse"),
+    }
+
+
 def default_job_priority(job_type: JobType) -> int:
     if job_type == JobType.parse_article:
         return 100

@@ -81,6 +81,13 @@ const katexRenderCache = new BoundedCache<string>(500);
 const sentenceRangeCache = new BoundedCache<TextRange[]>(800);
 const linkedContentCache = new BoundedCache<string>(600);
 const sanitizedHtmlCache = new BoundedCache<string>(120);
+const READER_CONTROLS_SHOW_DELAY_MS = 120;
+const READER_CONTROLS_HIDE_DELAY_MS = 650;
+const READER_CONTROLS_BLUR_DELAY_MS = 150;
+const READER_CONTROLS_BOUNDARY_MARGIN = 16;
+const READER_CONTROLS_SAFE_CORRIDOR_MARGIN = 34;
+const READER_FLOATING_CONTROL_SELECTOR =
+  ".hover-toolbar, .block-color-palette, .reader-quick-ask-card, .reader-card-rail";
 
 interface LatexCommandGroupRule {
   commands: string[];
@@ -147,7 +154,10 @@ interface ReaderBlockProps {
   onReaderCardExport?: (card: ReaderCard) => void;
   canQuickAsk?: boolean;
   quickAskPending?: boolean;
+  quickAskSaving?: boolean;
+  quickAskResult?: { question: string; answer: string };
   onQuickAsk?: (block: DocumentBlock, question: string) => void;
+  onQuickAskSaveNote?: (block: DocumentBlock) => void;
   onToolbarAction?: (
     actionId: ReaderToolbarActionId,
     block: DocumentBlock,
@@ -193,7 +203,10 @@ export const ReaderBlock = memo(function ReaderBlock({
   onReaderCardExport,
   canQuickAsk = false,
   quickAskPending = false,
+  quickAskSaving = false,
+  quickAskResult,
   onQuickAsk,
+  onQuickAskSaveNote,
   onToolbarAction
 }: ReaderBlockProps) {
   const t = useT();
@@ -205,6 +218,8 @@ export const ReaderBlock = memo(function ReaderBlock({
   const [translationExpanded, setTranslationExpanded] = useState(false);
   const [localControlsVisible, setLocalControlsVisible] = useState(false);
   const blockElementRef = useRef<HTMLElement | null>(null);
+  const showControlsTimerRef = useRef<number | null>(null);
+  const hideControlsTimerRef = useRef<number | null>(null);
   const translationOpen = translationExpanded;
   const translationText = translation ?? "";
   const effectiveBlockColor = colorMarkersEnabled ? blockColor : "none";
@@ -235,7 +250,10 @@ export const ReaderBlock = memo(function ReaderBlock({
         block={displayBlock}
         canAsk={canQuickAsk}
         pending={quickAskPending}
+        saving={quickAskSaving}
+        result={quickAskResult}
         onAsk={onQuickAsk}
+        onSaveNote={onQuickAskSaveNote}
       />
     ) : null;
   const environmentTranslation = environmentTranslationForReader(displayBlock, translation);
@@ -252,41 +270,112 @@ export const ReaderBlock = memo(function ReaderBlock({
   const toggleTranslationLabel = translationOpen
     ? t("reader.hideTranslation")
     : t("reader.showTranslation");
-  const pointerInsideControlsBoundary = useCallback((clientX: number, clientY: number) => {
-    const root = blockElementRef.current;
-    if (!root) return false;
-    const controlElements = root.querySelectorAll<HTMLElement>(
-      ".hover-toolbar, .block-color-palette, .reader-quick-ask-card, .reader-card-rail"
-    );
-    const rects = [
-      root.getBoundingClientRect(),
-      ...Array.from(controlElements, (element) => element.getBoundingClientRect())
-    ];
-    if (!rects.some((rect) => measurableRect(rect))) return true;
-    return rects.some((rect) => pointInExpandedRect(rect, clientX, clientY, 12));
+  const clearShowControlsTimer = useCallback(() => {
+    if (showControlsTimerRef.current === null || typeof window === "undefined") return;
+    window.clearTimeout(showControlsTimerRef.current);
+    showControlsTimerRef.current = null;
   }, []);
-  const showControls = () => {
-    setLocalControlsVisible(true);
-  };
-  const hideControls = () => {
-    setLocalControlsVisible(false);
-  };
+  const clearHideControlsTimer = useCallback(() => {
+    if (hideControlsTimerRef.current === null || typeof window === "undefined") return;
+    window.clearTimeout(hideControlsTimerRef.current);
+    hideControlsTimerRef.current = null;
+  }, []);
+  const pointerInsideControlsBoundary = useCallback(
+    (clientX: number, clientY: number, relaxed = false) => {
+      const root = blockElementRef.current;
+      if (!root) return false;
+      const controlElements = root.querySelectorAll<HTMLElement>(READER_FLOATING_CONTROL_SELECTOR);
+      const rootRect = root.getBoundingClientRect();
+      const controlRects = Array.from(controlElements, (element) =>
+        element.getBoundingClientRect()
+      );
+      const rects = [rootRect, ...controlRects];
+      const measurableRects = rects.filter((rect) => measurableRect(rect));
+      if (measurableRects.length === 0) return true;
+      if (
+        measurableRects.some((rect) =>
+          pointInExpandedRect(rect, clientX, clientY, READER_CONTROLS_BOUNDARY_MARGIN)
+        )
+      ) {
+        return true;
+      }
+      if (!relaxed || !measurableRect(rootRect)) return false;
+      return controlRects
+        .filter((rect) => measurableRect(rect))
+        .some((controlRect) =>
+          pointInExpandedBox(
+            boundingBoxForRects(rootRect, controlRect),
+            clientX,
+            clientY,
+            READER_CONTROLS_SAFE_CORRIDOR_MARGIN
+          )
+        );
+    },
+    []
+  );
+  const showControls = useCallback(
+    (delayMs = READER_CONTROLS_SHOW_DELAY_MS) => {
+      clearHideControlsTimer();
+      if (localControlsVisible || controlsVisible) return;
+      if (delayMs <= 0 || typeof window === "undefined") {
+        clearShowControlsTimer();
+        setLocalControlsVisible(true);
+        return;
+      }
+      if (showControlsTimerRef.current !== null) return;
+      showControlsTimerRef.current = window.setTimeout(() => {
+        showControlsTimerRef.current = null;
+        setLocalControlsVisible(true);
+      }, delayMs);
+    },
+    [clearHideControlsTimer, clearShowControlsTimer, controlsVisible, localControlsVisible]
+  );
+  const hideControls = useCallback(
+    (delayMs = READER_CONTROLS_HIDE_DELAY_MS) => {
+      clearShowControlsTimer();
+      clearHideControlsTimer();
+      if (delayMs <= 0 || typeof window === "undefined") {
+        setLocalControlsVisible(false);
+        return;
+      }
+      hideControlsTimerRef.current = window.setTimeout(() => {
+        hideControlsTimerRef.current = null;
+        setLocalControlsVisible(false);
+      }, delayMs);
+    },
+    [clearHideControlsTimer, clearShowControlsTimer]
+  );
   useEffect(() => {
     if (!localControlsVisible) return undefined;
     const hideWhenPointerLeavesBoundary = (event: PointerEvent) => {
+      if (pointerInsideControlsBoundary(event.clientX, event.clientY, true)) {
+        clearHideControlsTimer();
+        return;
+      }
+      hideControls(READER_CONTROLS_HIDE_DELAY_MS);
+    };
+    const hideWhenPointerDownOutsideBoundary = (event: PointerEvent) => {
       if (!pointerInsideControlsBoundary(event.clientX, event.clientY)) {
-        hideControls();
+        hideControls(0);
       }
     };
+    const hideWhenWindowBlurs = () => hideControls(0);
     window.addEventListener("pointermove", hideWhenPointerLeavesBoundary, { passive: true });
-    window.addEventListener("pointerdown", hideWhenPointerLeavesBoundary, { passive: true });
-    window.addEventListener("blur", hideControls);
+    window.addEventListener("pointerdown", hideWhenPointerDownOutsideBoundary, { passive: true });
+    window.addEventListener("blur", hideWhenWindowBlurs);
     return () => {
       window.removeEventListener("pointermove", hideWhenPointerLeavesBoundary);
-      window.removeEventListener("pointerdown", hideWhenPointerLeavesBoundary);
-      window.removeEventListener("blur", hideControls);
+      window.removeEventListener("pointerdown", hideWhenPointerDownOutsideBoundary);
+      window.removeEventListener("blur", hideWhenWindowBlurs);
     };
-  }, [localControlsVisible, pointerInsideControlsBoundary]);
+  }, [clearHideControlsTimer, hideControls, localControlsVisible, pointerInsideControlsBoundary]);
+  useEffect(
+    () => () => {
+      clearShowControlsTimer();
+      clearHideControlsTimer();
+    },
+    [clearHideControlsTimer, clearShowControlsTimer]
+  );
   const activateFromPointer = (event: ReactPointerEvent<HTMLElement>) => {
     if (
       event.target instanceof Element &&
@@ -294,7 +383,7 @@ export const ReaderBlock = memo(function ReaderBlock({
     ) {
       return;
     }
-    showControls();
+    showControls(READER_CONTROLS_SHOW_DELAY_MS);
   };
   const activateFromMouse = (event: MouseEvent<HTMLElement>) => {
     if (
@@ -303,15 +392,24 @@ export const ReaderBlock = memo(function ReaderBlock({
     ) {
       return;
     }
-    showControls();
+    showControls(READER_CONTROLS_SHOW_DELAY_MS);
+  };
+  const deactivateFromPointer = (
+    event: ReactPointerEvent<HTMLElement> | MouseEvent<HTMLElement>
+  ) => {
+    if (pointerInsideControlsBoundary(event.clientX, event.clientY, true)) {
+      clearHideControlsTimer();
+      return;
+    }
+    hideControls(localControlsVisible ? READER_CONTROLS_HIDE_DELAY_MS : 0);
   };
   const activateFromFocus = () => {
-    showControls();
+    showControls(0);
     activateBlock();
   };
   const handleBlur = (event: FocusEvent<HTMLElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-    hideControls();
+    hideControls(READER_CONTROLS_BLUR_DELAY_MS);
   };
 
   if (isStructuralBlock(displayBlock)) {
@@ -323,8 +421,10 @@ export const ReaderBlock = memo(function ReaderBlock({
         onBlur={handleBlur}
         onFocusCapture={activateFromFocus}
         onMouseEnter={activateFromMouse}
+        onMouseLeave={deactivateFromPointer}
         onMouseOver={activateFromMouse}
         onPointerEnter={activateFromPointer}
+        onPointerLeave={deactivateFromPointer}
         onPointerOver={activateFromPointer}
       >
         {visibleBlockTools ? (
@@ -350,8 +450,10 @@ export const ReaderBlock = memo(function ReaderBlock({
         onBlur={handleBlur}
         onFocusCapture={activateFromFocus}
         onMouseEnter={activateFromMouse}
+        onMouseLeave={deactivateFromPointer}
         onMouseOver={activateFromMouse}
         onPointerEnter={activateFromPointer}
+        onPointerLeave={deactivateFromPointer}
         onPointerOver={activateFromPointer}
       >
         {visibleBlockTools ? (
@@ -377,8 +479,10 @@ export const ReaderBlock = memo(function ReaderBlock({
         onBlur={handleBlur}
         onFocusCapture={activateFromFocus}
         onMouseEnter={activateFromMouse}
+        onMouseLeave={deactivateFromPointer}
         onMouseOver={activateFromMouse}
         onPointerEnter={activateFromPointer}
+        onPointerLeave={deactivateFromPointer}
         onPointerOver={activateFromPointer}
       >
         {visibleBlockTools ? (
@@ -478,8 +582,10 @@ export const ReaderBlock = memo(function ReaderBlock({
         onBlur={handleBlur}
         onFocusCapture={activateFromFocus}
         onMouseEnter={activateFromMouse}
+        onMouseLeave={deactivateFromPointer}
         onMouseOver={activateFromMouse}
         onPointerEnter={activateFromPointer}
+        onPointerLeave={deactivateFromPointer}
         onPointerOver={activateFromPointer}
       >
         <article className="block-pane source-pane study-source-pane">
@@ -571,8 +677,10 @@ export const ReaderBlock = memo(function ReaderBlock({
       onBlur={handleBlur}
       onFocusCapture={activateFromFocus}
       onMouseEnter={activateFromMouse}
+      onMouseLeave={deactivateFromPointer}
       onMouseOver={activateFromMouse}
       onPointerEnter={activateFromPointer}
+      onPointerLeave={deactivateFromPointer}
       onPointerOver={activateFromPointer}
     >
       {viewMode !== "translation" ? (
@@ -695,7 +803,10 @@ function areReaderBlockPropsEqual(left: ReaderBlockProps, right: ReaderBlockProp
     left.onReaderCardExport === right.onReaderCardExport &&
     left.canQuickAsk === right.canQuickAsk &&
     left.quickAskPending === right.quickAskPending &&
+    left.quickAskSaving === right.quickAskSaving &&
+    left.quickAskResult === right.quickAskResult &&
     left.onQuickAsk === right.onQuickAsk &&
+    left.onQuickAskSaveNote === right.onQuickAskSaveNote &&
     left.onToolbarAction === right.onToolbarAction
   );
 }
@@ -907,7 +1018,7 @@ function readerCardPopoverPlacement(target: HTMLElement): CSSProperties {
     left: Math.round(left),
     top: Math.round(top),
     width: Math.round(width),
-    maxHeight: `calc(100vh - ${Math.round(top)}px - ${margin}px)`
+    maxHeight: `calc(100dvh - ${Math.round(top)}px - ${margin}px)`
   };
 }
 
@@ -915,12 +1026,18 @@ function ReaderQuickAskCard({
   block,
   canAsk,
   pending,
-  onAsk
+  saving,
+  result,
+  onAsk,
+  onSaveNote
 }: {
   block: DocumentBlock;
   canAsk: boolean;
   pending: boolean;
+  saving: boolean;
+  result?: { question: string; answer: string };
   onAsk: (block: DocumentBlock, question: string) => void;
+  onSaveNote?: (block: DocumentBlock) => void;
 }) {
   const t = useT();
   const [question, setQuestion] = useState("");
@@ -988,6 +1105,28 @@ function ReaderQuickAskCard({
       >
         {t("reader.quickAskSubmit")}
       </Button>
+      {result?.answer ? (
+        <div className="reader-quick-ask-answer">
+          <Text c="dimmed" size="xs" lineClamp={1}>
+            {result.question}
+          </Text>
+          <MarkdownContent content={result.answer} referenceTargets={{}} />
+          {onSaveNote ? (
+            <Button
+              size="compact-xs"
+              variant="light"
+              leftSection={<Pin size={13} aria-hidden="true" />}
+              loading={saving}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSaveNote(block);
+              }}
+            >
+              {t("reader.saveAnswerAsNote")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </form>
   );
 }
@@ -1019,7 +1158,7 @@ function readerQuickAskPlacement(target: HTMLElement): CSSProperties {
     left: Math.round(left),
     top: Math.round(top),
     width: Math.round(width),
-    maxHeight: `calc(100vh - ${Math.round(top)}px - ${margin}px)`
+    maxHeight: `calc(100dvh - ${Math.round(top)}px - ${margin}px)`
   };
 }
 
@@ -1050,13 +1189,13 @@ function sourceTypeLabel(card: ReaderCard, t: (key: MessageKey) => string) {
   return t("reader.cardPaperSource");
 }
 
-const blockColorOptions: { value: ReaderBlockColor; labelKey: MessageKey; swatch: string }[] = [
-  { value: "none", labelKey: "reader.colorNone", swatch: "transparent" },
-  { value: "yellow", labelKey: "reader.colorKeyIdea", swatch: "#ffd60a" },
-  { value: "blue", labelKey: "reader.colorMethod", swatch: "#64a8ff" },
-  { value: "green", labelKey: "reader.colorEvidence", swatch: "#30d158" },
-  { value: "pink", labelKey: "reader.colorQuestion", swatch: "#ff6b9a" },
-  { value: "purple", labelKey: "reader.colorReview", swatch: "#bf8cff" }
+const blockColorOptions: { value: ReaderBlockColor; labelKey: MessageKey }[] = [
+  { value: "none", labelKey: "reader.colorNone" },
+  { value: "yellow", labelKey: "reader.colorKeyIdea" },
+  { value: "blue", labelKey: "reader.colorMethod" },
+  { value: "green", labelKey: "reader.colorEvidence" },
+  { value: "pink", labelKey: "reader.colorQuestion" },
+  { value: "purple", labelKey: "reader.colorReview" }
 ];
 
 function BlockColorPalette({
@@ -1088,7 +1227,6 @@ function BlockColorPalette({
               event.stopPropagation();
               onChange(blockUid, option.value);
             }}
-            style={{ "--block-swatch": option.swatch } as CSSProperties}
           />
         </Tooltip>
       ))}
@@ -1139,14 +1277,34 @@ function TranslationVariantSelect({
   );
 }
 
+interface RectBox {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+function boundingBoxForRects(left: DOMRect, right: DOMRect): RectBox {
+  return {
+    left: Math.min(left.left, right.left),
+    right: Math.max(left.right, right.right),
+    top: Math.min(left.top, right.top),
+    bottom: Math.max(left.bottom, right.bottom)
+  };
+}
+
+function pointInExpandedBox(box: RectBox, clientX: number, clientY: number, margin: number) {
+  return (
+    clientX >= box.left - margin &&
+    clientX <= box.right + margin &&
+    clientY >= box.top - margin &&
+    clientY <= box.bottom + margin
+  );
+}
+
 function pointInExpandedRect(rect: DOMRect, clientX: number, clientY: number, margin: number) {
   if (!measurableRect(rect)) return false;
-  return (
-    clientX >= rect.left - margin &&
-    clientX <= rect.right + margin &&
-    clientY >= rect.top - margin &&
-    clientY <= rect.bottom + margin
-  );
+  return pointInExpandedBox(rect, clientX, clientY, margin);
 }
 
 function measurableRect(rect: DOMRect) {
@@ -1456,6 +1614,14 @@ function cleanLatexmlCaptionMarkdown(value: string) {
 function captionFromLegacyMarkdown(
   markdown: string
 ): { kind: "figure" | "table"; number?: string; text: string } | null {
+  const direct = markdown.trim().match(/^\*\*(Table|Figure)\s+([A-Za-z0-9.:-]+)\.\*\*\s*(.*)$/i);
+  if (direct?.[1] && direct[3]) {
+    return {
+      kind: direct[1].toLowerCase() === "table" ? "table" : "figure",
+      number: direct[2]?.replace(/[:.]$/, ""),
+      text: direct[3]
+    };
+  }
   const withoutOuterPrefix = stripMarkdownEnvironmentPrefix(markdown);
   if (!withoutOuterPrefix) return null;
   const match = withoutOuterPrefix.match(/^(Table|Figure)\s+([A-Za-z0-9.:-]+)[:.]\s*(.*)$/i);
@@ -1632,7 +1798,10 @@ function BlockContent({
   sentenceHighlightKind?: SentenceHighlightKind;
   trailingInline?: ReactNode;
 }) {
-  const displayContent = cleanLatexmlDisplayMarkdown(content);
+  const displayContent = normalizeEnvironmentCaptionMath(
+    cleanLatexmlDisplayMarkdown(content),
+    block
+  );
   if (block.block_type === "equation") {
     const equationNumber = equationNumberForBlock(block);
     return (
@@ -2182,7 +2351,9 @@ function renderTermAnnotatedText(text: string, annotations: TermAnnotation[]): R
   for (const match of matches) {
     if (match.start > cursor) {
       parts.push(
-        <Fragment key={`plain-${cursor}-${match.start}`}>{text.slice(cursor, match.start)}</Fragment>
+        <Fragment key={`plain-${cursor}-${match.start}`}>
+          {text.slice(cursor, match.start)}
+        </Fragment>
       );
     }
     const label = text.slice(match.start, match.end);
@@ -2201,9 +2372,7 @@ function renderTermAnnotatedText(text: string, annotations: TermAnnotation[]): R
     cursor = match.end;
   }
   if (cursor < text.length) {
-    parts.push(
-      <Fragment key={`plain-${cursor}-${text.length}`}>{text.slice(cursor)}</Fragment>
-    );
+    parts.push(<Fragment key={`plain-${cursor}-${text.length}`}>{text.slice(cursor)}</Fragment>);
   }
   return <Fragment>{parts}</Fragment>;
 }
@@ -2445,37 +2614,6 @@ interface LatexmlImageMetrics {
   hasFlexLayout: boolean;
 }
 
-const assetLightboxStyle: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 2147483647,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "100vw",
-  height: "100vh",
-  boxSizing: "border-box",
-  padding: "32px",
-  background: "rgba(0, 0, 0, 0.88)",
-  cursor: "zoom-out",
-  isolation: "isolate"
-};
-
-const assetLightboxImageStyle: CSSProperties = {
-  position: "fixed",
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)",
-  zIndex: 2147483647,
-  display: "block",
-  maxWidth: "min(96vw, 1600px)",
-  maxHeight: "92vh",
-  objectFit: "contain",
-  background: "#ffffff",
-  borderRadius: 6,
-  boxShadow: "0 24px 80px rgba(0, 0, 0, 0.55)"
-};
-
 function AdaptiveAssetImage({
   src,
   alt,
@@ -2519,14 +2657,12 @@ function AdaptiveAssetImage({
             role="dialog"
             aria-modal="true"
             aria-label={alt}
-            style={assetLightboxStyle}
             onClick={() => setLightboxOpen(false)}
           >
             <img
               className="asset-image-lightbox-image"
               src={src}
               alt={alt}
-              style={assetLightboxImageStyle}
               onClick={(event) => {
                 event.stopPropagation();
                 setLightboxOpen(false);
@@ -3048,6 +3184,81 @@ function cleanLatexmlDisplayMarkdown(value: string) {
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+function normalizeEnvironmentCaptionMath(value: string, block: DocumentBlock) {
+  if (!["figure", "table", "algorithm"].includes(block.block_type)) return value;
+  if (/\$[^$\n]+\$|\\\(.+?\\\)/.test(value)) return value;
+  if (!legacyCaptionNeedsMathRepair(value)) return value;
+  return repairLegacyCaptionInlineMath(value);
+}
+
+function legacyCaptionNeedsMathRepair(value: string) {
+  return /\\(?:mathbb|mathcal|mathrm|mathbf|mathsf|sqrt|frac|nabla|Pi|Phi|eta|alpha|beta|varepsilon)\b|[A-Za-z0-9)}]\s*[_^]\s*(?:\{|[A-Za-z0-9])/.test(
+    value
+  );
+}
+
+function repairLegacyCaptionInlineMath(value: string) {
+  const prefix = value.match(/^(\*\*(?:Figure|Table|Algorithm)\s+[A-Za-z0-9.:-]+\.\*\*\s*)/i);
+  const head = prefix?.[1] ?? "";
+  const body = head ? value.slice(head.length) : value;
+  return head + wrapLegacyCaptionMathRuns(body);
+}
+
+function wrapLegacyCaptionMathRuns(value: string) {
+  const tokens = value.split(/(\s+)/);
+  const repaired: string[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    const raw = run.join("").trim();
+    const leading = run.join("").match(/^\s*/)?.[0] ?? "";
+    const trailing = run.join("").match(/\s*$/)?.[0] ?? "";
+    const trimmed = trimCaptionMathPunctuation(raw);
+    const before = raw.slice(0, raw.indexOf(trimmed));
+    const after = raw.slice(raw.indexOf(trimmed) + trimmed.length);
+    repaired.push(`${leading}${before}$${trimmed}$${after}${trailing}`);
+    run = [];
+  };
+
+  for (const token of tokens) {
+    if (!token) continue;
+    if (/^\s+$/.test(token)) {
+      if (run.length > 0) run.push(token);
+      else repaired.push(token);
+      continue;
+    }
+    if (isLegacyCaptionMathToken(token) || (run.length > 0 && isMathConnectorToken(token))) {
+      run.push(token);
+      continue;
+    }
+    flush();
+    repaired.push(token);
+  }
+  flush();
+  return repaired.join("");
+}
+
+function isLegacyCaptionMathToken(token: string) {
+  const stripped = token.replace(/^[([{,;:.]+|[)\]},;:.]+$/g, "");
+  if (!stripped) return false;
+  return (
+    /\\(?:mathbb|mathcal|mathrm|mathbf|mathsf|sqrt|frac|nabla|Pi|Phi|eta|alpha|beta|varepsilon)\b/.test(
+      stripped
+    ) ||
+    /[A-Za-z0-9)}]\s*[_^]\s*(?:\{|[A-Za-z0-9])/.test(stripped) ||
+    /^\|[^|]+?\|$/.test(stripped) ||
+    /^\\\|.*\\\|$/.test(stripped)
+  );
+}
+
+function isMathConnectorToken(token: string) {
+  return /^(?:[\]+*/=<>≤≥.,;:(){}[|-]|\\(?:left|right)\b)+$/.test(token);
+}
+
+function trimCaptionMathPunctuation(value: string) {
+  return value.replace(/^[,;:]+/, "").replace(/[.,;:]+$/, "");
 }
 
 function flattenLatexmlEquationMarkdownTables(value: string) {

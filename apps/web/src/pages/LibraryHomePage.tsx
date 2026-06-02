@@ -135,7 +135,9 @@ export function LibraryHomePage() {
       </Group>
 
       <div className="panel library-create-panel">
-        <Title order={3}>{t("library.createTitle")}</Title>
+        <Title order={2} className="panel-title">
+          {t("library.createTitle")}
+        </Title>
         <div className="library-create-form">
           <TextInput
             label={t("library.name")}
@@ -167,7 +169,9 @@ export function LibraryHomePage() {
 
       <div className="panel library-table-panel">
         <Group justify="space-between" align="center">
-          <Title order={3}>{t("library.registered")}</Title>
+          <Title order={2} className="panel-title">
+            {t("library.registered")}
+          </Title>
           {libraryActionMessage ? (
             <Text c={libraryActionMessage.kind === "success" ? "dimmed" : "red"} size="sm">
               {libraryActionMessage.text}

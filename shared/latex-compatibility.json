@@ -95,6 +95,62 @@
       "risk": "medium",
       "reason": "Box styling is layout-only, but environments created by newtcolorbox must be stubbed so their contents survive parsing.",
       "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "tikz",
+      "disable_for_latexml": true,
+      "fallback": "code-generated-diagram",
+      "risk": "medium",
+      "reason": "TikZ diagrams are code-generated figures; Bilin preserves surrounding figure captions while avoiding brittle diagram macro execution during structural parsing.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "circuitikz",
+      "disable_for_latexml": true,
+      "fallback": "code-generated-diagram",
+      "risk": "medium",
+      "reason": "Circuitikz diagrams are code-generated figures; Bilin keeps captions and surrounding prose instead of executing circuit drawing macros in LaTeXML.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "pgfplots",
+      "disable_for_latexml": true,
+      "fallback": "code-generated-diagram",
+      "risk": "medium",
+      "reason": "Pgfplots content is generated graphical output; structural parsing should not depend on LaTeXML successfully interpreting plot macros.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "blochsphere",
+      "disable_for_latexml": true,
+      "fallback": "code-generated-diagram",
+      "risk": "medium",
+      "reason": "Bloch sphere diagrams are generated figures; Bilin preserves captions while deferring exact rendering to controlled asset paths.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "tikz-3dplot",
+      "disable_for_latexml": true,
+      "fallback": "code-generated-diagram",
+      "risk": "medium",
+      "reason": "TikZ 3D plot content is generated graphical output and pulls in PGF; structural parsing should preserve captions without executing drawing macros.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "titletoc",
+      "disable_for_latexml": true,
+      "fallback": "section-toc-layout",
+      "risk": "low",
+      "reason": "Title and local table-of-contents styling is layout-only; Bilin keeps document headings while stubbing local TOC commands.",
+      "fixture": "latex-corpus/legacy-compatibility"
+    },
+    {
+      "package": "listings",
+      "disable_for_latexml": true,
+      "fallback": "listings-environment",
+      "risk": "medium",
+      "reason": "Listings environments contain display code that is expensive and brittle for structural LaTeXML parsing; Bilin keeps the surrounding document structure and records code blocks as parser-compatible placeholders.",
+      "fixture": "latex-corpus/legacy-compatibility"
     }
   ],
   "command_group_rules": [

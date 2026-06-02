@@ -126,39 +126,86 @@ import type { ReaderToolbarActionId } from "../components/readerToolbarActions";
 import { activeGlossaryTerms, applyGlossaryToMarkdown } from "../glossary";
 import { useT, type MessageKey } from "../i18n";
 import { TRANSLATION_TARGET_LOCALES } from "../product";
-import { type ReaderPreferences, type ReaderViewMode, useUiStore } from "../state/ui";
+import {
+  type ReaderOverlayKind,
+  type ReaderPreferences,
+  type ReaderViewMode,
+  useUiStore
+} from "../state/ui";
 
 const emptyReaderAssetFiles: ReaderAssetFile[] = [];
 const emptyCitationLookup: CitationLookup = {};
 const READING_PROGRESS_RECORD_INTERVAL_MS = 30_000;
 const READING_PROGRESS_MAX_IDLE_MS = 60_000;
-const READER_CHROME_HIDE_SCROLL_Y = 128;
-const READER_CHROME_REVEAL_SCROLL_Y = 48;
-const READER_CHROME_SCROLL_INTENT_PX = 32;
+const READER_OVERLAY_SCROLL_CLOSE_DISTANCE_PX = 64;
+const READER_OVERLAY_SCROLL_CLOSE_DELAY_MS = 350;
+const READER_OVERLAY_SCROLL_CLOSE_COOLDOWN_MS = 500;
 const DESKTOP_READER_RAIL_QUERY = "(min-width: 1181px)";
+const CHAPTER_RENDER_SOURCE_MIN_BLOCKS = 220;
+const READER_PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
+
+type ReaderOverlayTone = "teal" | "amber" | "blue" | "neutral";
+type ReaderWorkspaceGroupId = "read" | "assist" | "output";
+type ReaderWorkspacePanel = Exclude<ReaderOverlayKind, "articles">;
+
+interface ReaderWorkspaceItem {
+  panel: ReaderWorkspacePanel;
+  label: string;
+  icon: ReactNode;
+  tone: ReaderOverlayTone;
+  badge?: number;
+}
+
+interface ReaderWorkspaceGroup {
+  id: ReaderWorkspaceGroupId;
+  label: string;
+  items: ReaderWorkspaceItem[];
+}
 
 function defaultDesktopReaderRailOpen() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia(DESKTOP_READER_RAIL_QUERY).matches;
 }
 
+function useMediaQueryMatch(query: string) {
+  const [matches, setMatches] = useState(() => mediaQueryMatches(query));
+
+  useEffect(() => {
+    if (typeof globalThis.window === "undefined" || !globalThis.window.matchMedia) return;
+    const media = globalThis.window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
+}
+
+function mediaQueryMatches(query: string) {
+  if (typeof globalThis.window === "undefined" || !globalThis.window.matchMedia) return false;
+  return globalThis.window.matchMedia(query).matches;
+}
+
 interface ReaderCardDraft {
   cardId?: string;
   blockUid: string;
+  cardType: ReaderCard["card_type"];
   anchorText: string;
   title: string;
   bodyMarkdown: string;
+  sourceType: ReaderCard["source_type"];
+  position: ReaderCard["position"];
+  metadata?: ReaderCard["metadata"];
 }
 
-type ReaderToolbarPanel =
-  | "tasks"
-  | "providers"
-  | "ask"
-  | "translate"
-  | "glossary"
-  | "notes"
-  | "export"
-  | "preferences";
+interface ReaderRenderSource {
+  uid: string;
+  title: string;
+  startIndex: number;
+  endIndex: number;
+  blockCount: number;
+}
 
 export function ReaderPage() {
   const t = useT();
@@ -172,6 +219,13 @@ export function ReaderPage() {
   const readerSurfaceMode = useUiStore((state) => state.readerSurfaceMode);
   const setReaderSurfaceMode = useUiStore((state) => state.setReaderSurfaceMode);
   const openTaskDrawer = useUiStore((state) => state.openTaskDrawer);
+  const activeReaderOverlay = useUiStore((state) => state.activeReaderOverlay);
+  const setActiveReaderOverlay = useUiStore((state) => state.setActiveReaderOverlay);
+  const setReaderStudyContext = useUiStore((state) => state.setReaderStudyContext);
+  const readerOverlayAutoCloseEnabled = useUiStore((state) => state.readerOverlayAutoCloseEnabled);
+  const readerNoteStickiesOverride = useUiStore((state) => state.readerNoteStickiesOverride);
+  const setReaderNoteStickiesOverride = useUiStore((state) => state.setReaderNoteStickiesOverride);
+  const taskNotificationOpenDelayMs = useUiStore((state) => state.taskNotificationOpenDelayMs);
   const readerPreferences = useUiStore((state) => state.readerPreferences);
   const setReaderPreference = useUiStore((state) => state.setReaderPreference);
   const readerFeaturePreferences = useUiStore((state) => state.readerFeaturePreferences);
@@ -190,12 +244,6 @@ export function ReaderPage() {
   const [chatBlockUid, setChatBlockUid] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [readerArticleSearchQuery, setReaderArticleSearchQuery] = useState("");
-  const [readerArticleRailOpen, setReaderArticleRailOpen] = useState(defaultDesktopReaderRailOpen);
-  const [readerRightRailVisible, setReaderRightRailVisible] = useState(
-    defaultDesktopReaderRailOpen
-  );
-  const [activeReaderToolbarPanel, setActiveReaderToolbarPanel] =
-    useState<ReaderToolbarPanel | null>(null);
   const [nativeSearch, setNativeSearch] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("deep_reading");
   const [exportKind, setExportKind] = useState<ArticleExportKind>("bilingual_markdown");
@@ -207,33 +255,44 @@ export function ReaderPage() {
   const [streamingCitedBlocks, setStreamingCitedBlocks] = useState<RetrievedBlock[]>([]);
   const [readerActionMessage, setReaderActionMessage] = useState<string | null>(null);
   const [activeBlockUid, setActiveBlockUid] = useState<string | null>(null);
+  const [activeRenderSourceUid, setActiveRenderSourceUid] = useState<string | null>(null);
   const [forcedBlockUid, setForcedBlockUid] = useState<string | null>(null);
   const [pendingNavigationBlockUid, setPendingNavigationBlockUid] = useState<string | null>(null);
   const [readerSearchQuery, setReaderSearchQuery] = useState("");
   const [readerSearchCursor, setReaderSearchCursor] = useState(0);
   const [blockColors, setBlockColors] = useState<Record<string, ReaderBlockColor>>({});
-  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [chaptersOpen, setChaptersOpen] = useState(defaultDesktopReaderRailOpen);
+  const [studyRailOpen, setStudyRailOpen] = useState(defaultDesktopReaderRailOpen);
+  const [activeReaderWorkspaceGroup, setActiveReaderWorkspaceGroup] =
+    useState<ReaderWorkspaceGroupId>("read");
   const [termWikiEnabled, setTermWikiEnabled] = useState(false);
   const [readerModeMenuOpen, setReaderModeMenuOpen] = useState(false);
-  const [readerChromeHidden, setReaderChromeHidden] = useState(false);
   const [kindleChromeHidden, setKindleChromeHidden] = useState(false);
   const [expandedReaderCardByBlock, setExpandedReaderCardByBlock] = useState<
     Record<string, string | null>
   >({});
-  const [quickAskBlockUid, setQuickAskBlockUid] = useState<string | null>(null);
   const [readerCardDraft, setReaderCardDraft] = useState<ReaderCardDraft | null>(null);
+  const [paragraphAskResultByBlockUid, setParagraphAskResultByBlockUid] = useState<
+    Record<string, { question: string; answer: string }>
+  >({});
+  const [quickAskPendingBlockUid, setQuickAskPendingBlockUid] = useState<string | null>(null);
+  const [quickAskSavingBlockUid, setQuickAskSavingBlockUid] = useState<string | null>(null);
   const lastExportDownloadKey = useRef<string | null>(null);
   const lastInitialHashNavigation = useRef<string | null>(null);
   const lastSavedProgressNavigation = useRef<string | null>(null);
-  const lastReaderScrollY = useRef(0);
-  const readerChromeHiddenRef = useRef(false);
-  const readerChromeHideIntentPx = useRef(0);
-  const readerChromeRevealIntentPx = useRef(0);
+  const readerOverlayRef = useRef<HTMLElement | null>(null);
+  const readerOverlayPointerInside = useRef(false);
+  const readerOverlayScrollDirection = useRef<1 | -1 | 0>(0);
+  const readerOverlayScrollDistance = useRef(0);
+  const readerOverlayScrollStartedAt = useRef(0);
+  const lastReaderOverlayScrollY = useRef(0);
+  const lastReaderOverlayAutoCloseAt = useRef(0);
   const activeBlockUidRef = useRef<string | null>(null);
   const lastReaderActivityAt = useRef(Date.now());
   const lastReadingProgressSampleAt = useRef(Date.now());
   const pendingReadingProgressDeltas = useRef<Record<string, number>>({});
   const previousTargetLanguage = useRef(targetLanguage);
+  const desktopReaderRailPreferred = useMediaQueryMatch(DESKTOP_READER_RAIL_QUERY);
   const document = useArticleDocument(libraryId, articleId);
   const readingProgress = useArticleReadingProgress(libraryId, articleId);
   const citations = useArticleCitations(libraryId, articleId);
@@ -271,6 +330,40 @@ export function ReaderPage() {
   const assets = useMemo(() => document.data?.assets ?? [], [document.data?.assets]);
   const title = articleTitle(document.data, t);
   const recoveredLatexmlDocument = isRecoveredLatexmlDocument(document.data);
+  const renderSources = useMemo(() => readerRenderSourcesForBlocks(blocks, title), [blocks, title]);
+  const segmentedReaderEnabled =
+    blocks.length >= CHAPTER_RENDER_SOURCE_MIN_BLOCKS && renderSources.length > 1;
+  const renderSourceByUid = useMemo(
+    () => new Map(renderSources.map((source) => [source.uid, source] as const)),
+    [renderSources]
+  );
+  const renderSourceByBlockUid = useMemo(
+    () => renderSourceMapForBlocks(blocks, renderSources),
+    [blocks, renderSources]
+  );
+  const activeRenderSource = useMemo(() => {
+    if (!segmentedReaderEnabled) return null;
+    const activeSource = activeBlockUid
+      ? (renderSourceByBlockUid.get(activeBlockUid) ?? null)
+      : null;
+    if (activeSource) return activeSource;
+    if (activeRenderSourceUid) {
+      const explicitSource = renderSourceByUid.get(activeRenderSourceUid);
+      if (explicitSource) return explicitSource;
+    }
+    return renderSources[0] ?? null;
+  }, [
+    activeBlockUid,
+    activeRenderSourceUid,
+    renderSourceByBlockUid,
+    renderSourceByUid,
+    renderSources,
+    segmentedReaderEnabled
+  ]);
+  const renderBlocks = useMemo(() => {
+    if (!segmentedReaderEnabled || !activeRenderSource) return blocks;
+    return blocks.slice(activeRenderSource.startIndex, activeRenderSource.endIndex);
+  }, [activeRenderSource, blocks, segmentedReaderEnabled]);
   const readerArticleItems = useMemo(() => libraryArticles.data ?? [], [libraryArticles.data]);
   const visibleReaderArticleItems = useMemo(
     () => filterReaderArticleItems(readerArticleItems, readerArticleSearchQuery),
@@ -281,6 +374,10 @@ export function ReaderPage() {
     [articleId, readerArticleItems]
   );
   const blockIndexByUid = useMemo(() => blockIndexMapForBlocks(blocks), [blocks]);
+  const navigationBlockUids = useMemo(
+    () => new Set(blocks.map((block) => block.block_uid)),
+    [blocks]
+  );
   const navBlocks = useMemo(
     () => blocks.filter((block) => block.block_type === "section"),
     [blocks]
@@ -297,11 +394,33 @@ export function ReaderPage() {
   const activeBlockOrdinal = activeBlockIndex >= 0 ? activeBlockIndex + 1 : 0;
   const readerProgress =
     blocks.length > 0 ? Math.round((activeBlockOrdinal / blocks.length) * 100) : 0;
+  const readerProgressMilestone = readerProgressMilestoneForProgress(readerProgress, t);
   const activeChapterLabel = useMemo(() => {
+    if (segmentedReaderEnabled && activeRenderSource) return activeRenderSource.title;
     const activeChapter = navBlocks.find((block) => block.block_uid === activeNavBlockUid);
     return activeChapter ? chapterTitle(activeChapter) : t("reader.noChapter");
-  }, [activeNavBlockUid, navBlocks, t]);
-  const chapterRailEnabled = readerFeaturePreferences.chapterIndexVisible && navBlocks.length > 0;
+  }, [activeNavBlockUid, activeRenderSource, navBlocks, segmentedReaderEnabled, t]);
+  const chapterNavItems = useMemo(
+    () =>
+      segmentedReaderEnabled
+        ? renderSources.map((source, index) => ({
+            uid: source.uid,
+            targetBlockUid: source.uid,
+            title: source.title,
+            number: String(index + 1),
+            blockCount: source.blockCount
+          }))
+        : navBlocks.map((block, index) => ({
+            uid: block.block_uid,
+            targetBlockUid: block.block_uid,
+            title: chapterTitle(block),
+            number: chapterNumber(index, block)
+          })),
+    [navBlocks, renderSources, segmentedReaderEnabled]
+  );
+  const activeChapterNavUid =
+    segmentedReaderEnabled && activeRenderSource ? activeRenderSource.uid : activeNavBlockUid;
+  const chapterRailEnabled = chapterNavItems.length > 0;
   const chapterRailOpen = chapterRailEnabled && chaptersOpen;
   const referenceTargets = useMemo(() => referenceTargetsForBlocks(blocks), [blocks]);
   const citationLookup = useMemo(
@@ -312,7 +431,16 @@ export function ReaderPage() {
     ? citationLookup
     : emptyCitationLookup;
   const kindleMode = readerSurfaceMode === "kindle";
-  const readerRightRailOpen = readerRightRailVisible || activeReaderToolbarPanel !== null;
+  const readerRightRailOpen = !kindleMode && studyRailOpen;
+  const activeWorkspaceOverlay: ReaderOverlayKind =
+    activeReaderOverlay && activeReaderOverlay !== "articles" ? activeReaderOverlay : "ask";
+  const readerOverlayInline =
+    readerRightRailOpen && Boolean(activeReaderOverlay) && activeReaderOverlay !== "articles";
+
+  useEffect(() => {
+    const workspaceGroup = readerWorkspaceGroupForOverlay(activeReaderOverlay);
+    if (workspaceGroup) setActiveReaderWorkspaceGroup(workspaceGroup);
+  }, [activeReaderOverlay]);
 
   const assetById = useMemo(
     () => new Map(assets.map((asset) => [asset.asset_id, asset] as const)),
@@ -366,10 +494,10 @@ export function ReaderPage() {
   const translationVariantOptionsByBlockUid = useMemo(() => {
     const map = new Map<string, { value: string; label: string }[]>();
     for (const [blockUid, variants] of variantsByBlockUid.entries()) {
-      map.set(blockUid, translationVariantOptions(variants));
+      map.set(blockUid, translationVariantOptions(variants, t));
     }
     return map;
-  }, [variantsByBlockUid]);
+  }, [t, variantsByBlockUid]);
   const translationByBlockUid = useMemo(() => {
     const map = new Map<string, string>();
     const terms = readerFeaturePreferences.glossaryReplacementEnabled
@@ -384,10 +512,11 @@ export function ReaderPage() {
     readerFeaturePreferences.glossaryReplacementEnabled,
     selectedVariantByBlockUid
   ]);
-  const readerCardsByBlockUid = useMemo(() => {
+  const knowledgeCardsByBlockUid = useMemo(() => {
     const map = new Map<string, ReaderCard[]>();
     for (const card of readerCards.data?.cards ?? []) {
       if (card.status === "archived") continue;
+      if (card.card_type === "note") continue;
       const cards = map.get(card.anchor_block_uid) ?? [];
       cards.push(card);
       map.set(card.anchor_block_uid, cards);
@@ -401,10 +530,29 @@ export function ReaderPage() {
     }
     return map;
   }, [readerCards.data?.cards]);
+  const pinnedNoteCardsByBlockUid = useMemo(() => {
+    const map = new Map<string, ReaderCard[]>();
+    for (const card of readerCards.data?.cards ?? []) {
+      if (card.card_type !== "note" || card.status !== "pinned") continue;
+      const cards = map.get(card.anchor_block_uid) ?? [];
+      cards.push(card);
+      map.set(card.anchor_block_uid, cards);
+    }
+    for (const cards of map.values()) {
+      cards.sort((left, right) => String(left.updated_at).localeCompare(String(right.updated_at)));
+    }
+    return map;
+  }, [readerCards.data?.cards]);
+  const pinnedNoteCount = useMemo(
+    () => [...pinnedNoteCardsByBlockUid.values()].reduce((total, cards) => total + cards.length, 0),
+    [pinnedNoteCardsByBlockUid]
+  );
+  const readerNoteStickiesEnabled =
+    !kindleMode && (readerNoteStickiesOverride ?? pinnedNoteCount > 0);
   const termCardsVisible =
     readerFeaturePreferences.termCardsEnabled &&
     hasArticleContext &&
-    (termWikiEnabled || readerCardsByBlockUid.size > 0);
+    (termWikiEnabled || knowledgeCardsByBlockUid.size > 0);
   const glossaryTerms = useMemo(() => glossary.data?.terms ?? [], [glossary.data?.terms]);
   const blockTextForPlaceholder = useCallback(
     (block: DocumentBlock) =>
@@ -493,21 +641,38 @@ export function ReaderPage() {
     lastReaderActivityAt.current = Date.now();
   }, []);
 
-  const toggleReaderToolbarPanel = useCallback((panel: ReaderToolbarPanel) => {
-    setReaderModeMenuOpen(false);
-    setReaderRightRailVisible(true);
-    setActiveReaderToolbarPanel((current) => (current === panel ? null : panel));
-  }, []);
+  useEffect(() => {
+    setStudyRailOpen(desktopReaderRailPreferred);
+  }, [desktopReaderRailPreferred]);
 
-  const closeReaderToolbarPanel = useCallback(() => {
-    setReaderRightRailVisible(false);
-    setActiveReaderToolbarPanel(null);
-  }, []);
+  const toggleReaderOverlay = useCallback(
+    (overlay: ReaderOverlayKind) => {
+      setReaderModeMenuOpen(false);
+      setActiveReaderOverlay(activeReaderOverlay === overlay ? null : overlay);
+    },
+    [activeReaderOverlay, setActiveReaderOverlay]
+  );
+
+  const toggleReaderWorkspace = useCallback(() => {
+    setReaderModeMenuOpen(false);
+    if (readerRightRailOpen) {
+      setStudyRailOpen(false);
+      setActiveReaderOverlay(null);
+      return;
+    }
+    setStudyRailOpen(true);
+    setActiveReaderWorkspaceGroup("read");
+    setActiveReaderOverlay("ask");
+  }, [readerRightRailOpen, setActiveReaderOverlay]);
+
+  const closeReaderOverlay = useCallback(() => {
+    setActiveReaderOverlay(null);
+  }, [setActiveReaderOverlay]);
 
   const toggleReaderModeMenu = useCallback(() => {
-    setActiveReaderToolbarPanel(null);
+    setActiveReaderOverlay(null);
     setReaderModeMenuOpen((open) => !open);
-  }, []);
+  }, [setActiveReaderOverlay]);
 
   const mergePendingReadingDeltas = useCallback((deltas: Record<string, number>) => {
     for (const [blockUid, seconds] of Object.entries(deltas)) {
@@ -571,65 +736,72 @@ export function ReaderPage() {
   }, [providers.data, selectedProviderId]);
 
   useEffect(() => {
-    readerChromeHiddenRef.current = readerChromeHidden;
-  }, [readerChromeHidden]);
-
-  useEffect(() => {
     if (!kindleMode) setKindleChromeHidden(false);
   }, [kindleMode]);
 
   useEffect(() => {
-    if (kindleMode || typeof window === "undefined") {
-      readerChromeHiddenRef.current = false;
-      readerChromeHideIntentPx.current = 0;
-      readerChromeRevealIntentPx.current = 0;
-      setReaderChromeHidden(false);
-      return undefined;
-    }
-    lastReaderScrollY.current = window.scrollY;
-    const handleReaderChromeScroll = () => {
-      const scrollY = Math.max(0, window.scrollY);
-      const delta = scrollY - lastReaderScrollY.current;
-      lastReaderScrollY.current = scrollY;
-      if (Math.abs(delta) < 4) return;
-      if (scrollY < READER_CHROME_REVEAL_SCROLL_Y) {
-        readerChromeHideIntentPx.current = 0;
-        readerChromeRevealIntentPx.current = 0;
-        readerChromeHiddenRef.current = false;
-        setReaderChromeHidden(false);
+    if (typeof window === "undefined") return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (activeReaderOverlay) {
+        event.preventDefault();
+        closeReaderOverlay();
         return;
       }
-      if (delta > 0) {
-        readerChromeHideIntentPx.current += delta;
-        readerChromeRevealIntentPx.current = 0;
-      } else {
-        readerChromeRevealIntentPx.current += Math.abs(delta);
-        readerChromeHideIntentPx.current = 0;
-      }
-      if (
-        delta > 0 &&
-        !readerChromeHiddenRef.current &&
-        scrollY > READER_CHROME_HIDE_SCROLL_Y &&
-        readerChromeHideIntentPx.current >= READER_CHROME_SCROLL_INTENT_PX
-      ) {
-        readerChromeHiddenRef.current = true;
-        setReaderChromeHidden(true);
+      if (readerModeMenuOpen) {
+        event.preventDefault();
         setReaderModeMenuOpen(false);
-        setActiveReaderToolbarPanel(null);
-        return;
-      }
-      if (
-        delta < 0 &&
-        readerChromeHiddenRef.current &&
-        readerChromeRevealIntentPx.current >= READER_CHROME_SCROLL_INTENT_PX
-      ) {
-        readerChromeHiddenRef.current = false;
-        setReaderChromeHidden(false);
       }
     };
-    window.addEventListener("scroll", handleReaderChromeScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleReaderChromeScroll);
-  }, [kindleMode]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeReaderOverlay, closeReaderOverlay, readerModeMenuOpen]);
+
+  useEffect(() => {
+    if (
+      !activeReaderOverlay ||
+      !readerOverlayAutoCloseEnabled ||
+      kindleMode ||
+      typeof window === "undefined"
+    ) {
+      return undefined;
+    }
+    readerOverlayScrollDirection.current = 0;
+    readerOverlayScrollDistance.current = 0;
+    readerOverlayScrollStartedAt.current = 0;
+    lastReaderOverlayScrollY.current = Math.max(0, window.scrollY);
+    const handleOverlayScroll = () => {
+      const scrollY = Math.max(0, window.scrollY);
+      const delta = scrollY - lastReaderOverlayScrollY.current;
+      lastReaderOverlayScrollY.current = scrollY;
+      if (Math.abs(delta) < 4) return;
+      if (readerOverlayPointerInside.current) {
+        readerOverlayScrollDirection.current = 0;
+        readerOverlayScrollDistance.current = 0;
+        readerOverlayScrollStartedAt.current = 0;
+        return;
+      }
+      const direction: 1 | -1 = delta > 0 ? 1 : -1;
+      const now = Date.now();
+      if (readerOverlayScrollDirection.current !== direction) {
+        readerOverlayScrollDirection.current = direction;
+        readerOverlayScrollDistance.current = Math.abs(delta);
+        readerOverlayScrollStartedAt.current = now;
+        return;
+      }
+      readerOverlayScrollDistance.current += Math.abs(delta);
+      if (
+        readerOverlayScrollDistance.current >= READER_OVERLAY_SCROLL_CLOSE_DISTANCE_PX &&
+        now - readerOverlayScrollStartedAt.current >= READER_OVERLAY_SCROLL_CLOSE_DELAY_MS &&
+        now - lastReaderOverlayAutoCloseAt.current >= READER_OVERLAY_SCROLL_CLOSE_COOLDOWN_MS
+      ) {
+        lastReaderOverlayAutoCloseAt.current = now;
+        closeReaderOverlay();
+      }
+    };
+    window.addEventListener("scroll", handleOverlayScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleOverlayScroll);
+  }, [activeReaderOverlay, closeReaderOverlay, kindleMode, readerOverlayAutoCloseEnabled]);
 
   useEffect(() => {
     if (searchParams.get("kindle") === "1") {
@@ -645,14 +817,21 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!kindleMode) return;
-    setActiveReaderToolbarPanel(null);
-  }, [kindleMode]);
+    setActiveReaderOverlay(null);
+  }, [kindleMode, setActiveReaderOverlay]);
 
   useEffect(() => {
     if (!termWikiEnabled || !readerFeaturePreferences.termCardsEnabled) return;
-    setChaptersOpen(false);
-    setActiveReaderToolbarPanel(null);
-  }, [readerFeaturePreferences.termCardsEnabled, termWikiEnabled]);
+    setActiveReaderOverlay(null);
+  }, [readerFeaturePreferences.termCardsEnabled, setActiveReaderOverlay, termWikiEnabled]);
+
+  useEffect(() => {
+    if (navBlocks.length === 0) {
+      setChaptersOpen(false);
+      return;
+    }
+    setChaptersOpen(defaultDesktopReaderRailOpen());
+  }, [articleId, navBlocks.length]);
 
   useEffect(() => {
     activeBlockUidRef.current = activeBlockUid;
@@ -686,12 +865,20 @@ export function ReaderPage() {
     setPendingNavigationBlockUid(null);
     setReaderSearchQuery("");
     setReaderSearchCursor(0);
+    setChatBlockUid(null);
+    setQuestion("");
+    setReaderStudyContext({ scope: "article", blockUid: null });
+    setReaderNoteStickiesOverride(null);
+    setActiveRenderSourceUid(null);
+    setParagraphAskResultByBlockUid({});
+    setQuickAskPendingBlockUid(null);
+    setQuickAskSavingBlockUid(null);
     setExpandedReaderCardByBlock({});
     lastInitialHashNavigation.current = null;
     lastSavedProgressNavigation.current = null;
     lastReadingProgressSampleAt.current = Date.now();
     pendingReadingProgressDeltas.current = {};
-  }, [articleId, targetLanguage]);
+  }, [articleId, setReaderNoteStickiesOverride, setReaderStudyContext, targetLanguage]);
 
   useEffect(() => {
     if (blocks.length === 0 || typeof window === "undefined") return;
@@ -776,12 +963,29 @@ export function ReaderPage() {
   useEffect(() => {
     if (blocks.length === 0) {
       setActiveBlockUid(null);
+      setActiveRenderSourceUid(null);
       return;
     }
     if (!activeBlockUid || !blockIndexByUid.has(activeBlockUid)) {
       setActiveBlockUid(blocks[0].block_uid);
     }
   }, [activeBlockUid, blockIndexByUid, blocks]);
+
+  useEffect(() => {
+    if (!segmentedReaderEnabled) {
+      if (activeRenderSourceUid !== null) setActiveRenderSourceUid(null);
+      return;
+    }
+    const source = activeBlockUid ? renderSourceByBlockUid.get(activeBlockUid) : renderSources[0];
+    const nextUid = source?.uid ?? null;
+    if (nextUid !== activeRenderSourceUid) setActiveRenderSourceUid(nextUid);
+  }, [
+    activeBlockUid,
+    activeRenderSourceUid,
+    renderSourceByBlockUid,
+    renderSources,
+    segmentedReaderEnabled
+  ]);
 
   useEffect(() => {
     if (!libraryId || !articleId || blocks.length === 0 || typeof window === "undefined") {
@@ -839,6 +1043,8 @@ export function ReaderPage() {
   const navigateToBlock = useCallback(
     (blockUid: string) => {
       markReaderActivity();
+      const targetSource = renderSourceByBlockUid.get(blockUid);
+      if (targetSource) setActiveRenderSourceUid(targetSource.uid);
       setForcedBlockUid(blockUid);
       setActiveBlockUid(blockUid);
       setPendingNavigationBlockUid(kindleMode ? null : blockUid);
@@ -847,12 +1053,14 @@ export function ReaderPage() {
         window.history.replaceState(null, "", nextUrl);
       }
     },
-    [kindleMode, markReaderActivity]
+    [kindleMode, markReaderActivity, renderSourceByBlockUid]
   );
 
   const changeKindlePageBlock = useCallback(
     (blockUid: string) => {
       markReaderActivity();
+      const targetSource = renderSourceByBlockUid.get(blockUid);
+      if (targetSource) setActiveRenderSourceUid(targetSource.uid);
       setForcedBlockUid(blockUid);
       setActiveBlockUid(blockUid);
       setPendingNavigationBlockUid(null);
@@ -861,15 +1069,15 @@ export function ReaderPage() {
         window.history.replaceState(null, "", nextUrl);
       }
     },
-    [markReaderActivity]
+    [markReaderActivity, renderSourceByBlockUid]
   );
 
   const hideKindleChrome = useCallback(() => {
     if (!kindleMode) return;
     setKindleChromeHidden(true);
     setReaderModeMenuOpen(false);
-    setActiveReaderToolbarPanel(null);
-  }, [kindleMode]);
+    setActiveReaderOverlay(null);
+  }, [kindleMode, setActiveReaderOverlay]);
 
   const showKindleChrome = useCallback(() => {
     if (kindleMode) setKindleChromeHidden(false);
@@ -903,16 +1111,26 @@ export function ReaderPage() {
 
   const openTaskDrawerForBackgroundWork = useCallback(() => {
     if (readerFeaturePreferences.taskNotificationsEnabled) {
-      openTaskDrawer();
+      if (typeof window === "undefined" || taskNotificationOpenDelayMs <= 0) {
+        openTaskDrawer();
+        return;
+      }
+      window.setTimeout(openTaskDrawer, taskNotificationOpenDelayMs);
     }
-  }, [openTaskDrawer, readerFeaturePreferences.taskNotificationsEnabled]);
+  }, [
+    openTaskDrawer,
+    readerFeaturePreferences.taskNotificationsEnabled,
+    taskNotificationOpenDelayMs
+  ]);
 
   const handleActiveBlockChange = useCallback(
     (blockUid: string) => {
       markReaderActivity();
       setActiveBlockUid((current) => (current === blockUid ? current : blockUid));
+      setChatBlockUid(blockUid);
+      setReaderStudyContext({ scope: "block", blockUid });
     },
-    [markReaderActivity]
+    [markReaderActivity, setReaderStudyContext]
   );
 
   const queueArticleTranslation = useCallback(() => {
@@ -1075,16 +1293,23 @@ export function ReaderPage() {
     }));
   }, []);
 
-  const openReaderCardDraft = useCallback((block: DocumentBlock, card?: ReaderCard) => {
-    const selection = selectedTextInsideBlock(block.block_uid);
-    setReaderCardDraft({
-      cardId: card?.id,
-      blockUid: block.block_uid,
-      anchorText: card?.anchor_text || selection || conciseAnchorText(block.source_markdown),
-      title: card?.title || selection || conciseAnchorText(block.source_markdown),
-      bodyMarkdown: card?.body_markdown || ""
-    });
-  }, []);
+  const openReaderCardDraft = useCallback(
+    (block: DocumentBlock, card?: ReaderCard, cardType: ReaderCard["card_type"] = "note") => {
+      const selection = selectedTextInsideBlock(block.block_uid);
+      setReaderCardDraft({
+        cardId: card?.id,
+        blockUid: block.block_uid,
+        cardType: card?.card_type ?? cardType,
+        anchorText: card?.anchor_text || selection || conciseAnchorText(block.source_markdown),
+        title: card?.title || selection || conciseAnchorText(block.source_markdown),
+        bodyMarkdown: card?.body_markdown || "",
+        sourceType: card?.source_type ?? "user_note",
+        position: card?.position ?? "right",
+        metadata: card?.metadata
+      });
+    },
+    []
+  );
 
   const submitReaderCardDraft = useCallback(() => {
     if (!readerCardDraft) return;
@@ -1096,14 +1321,19 @@ export function ReaderPage() {
             anchor_text: readerCardDraft.anchorText,
             title: readerCardDraft.title,
             body_markdown: readerCardDraft.bodyMarkdown,
-            status: "pinned"
+            status: "pinned",
+            metadata: { ...(readerCardDraft.metadata ?? {}), user_edited: true }
           }
         },
         {
           onSuccess: () => {
             setReaderCardDraft(null);
-            setReaderFeaturePreference("termCardsEnabled", true);
-            setTermWikiEnabled(true);
+            if (readerCardDraft.cardType === "note") {
+              setReaderNoteStickiesOverride(true);
+            } else {
+              setReaderFeaturePreference("termCardsEnabled", true);
+              setTermWikiEnabled(true);
+            }
             setReaderActionMessage(t("reader.cardCreated"));
           },
           onError: (error) => setCardActionError(error, setReaderActionMessage, t)
@@ -1113,22 +1343,26 @@ export function ReaderPage() {
     }
     createReaderCard.mutate(
       {
-        card_type: "note",
+        card_type: readerCardDraft.cardType,
         anchor_block_uid: readerCardDraft.blockUid,
         anchor_text: readerCardDraft.anchorText,
         title: readerCardDraft.title,
         body_markdown: readerCardDraft.bodyMarkdown,
         target_language: targetLanguage,
-        source_type: "user_note",
+        source_type: readerCardDraft.sourceType,
         status: "pinned",
-        position: "right",
-        metadata: { source: "reader_selection" }
+        position: readerCardDraft.position,
+        metadata: { source: "reader_selection", user_edited: true }
       },
       {
         onSuccess: () => {
           setReaderCardDraft(null);
-          setReaderFeaturePreference("termCardsEnabled", true);
-          setTermWikiEnabled(true);
+          if (readerCardDraft.cardType === "note") {
+            setReaderNoteStickiesOverride(true);
+          } else {
+            setReaderFeaturePreference("termCardsEnabled", true);
+            setTermWikiEnabled(true);
+          }
           setReaderActionMessage(t("reader.cardCreated"));
         },
         onError: (error) => setCardActionError(error, setReaderActionMessage, t)
@@ -1137,6 +1371,7 @@ export function ReaderPage() {
   }, [
     createReaderCard,
     readerCardDraft,
+    setReaderNoteStickiesOverride,
     setReaderFeaturePreference,
     t,
     targetLanguage,
@@ -1178,6 +1413,57 @@ export function ReaderPage() {
       selectedProviderId,
       setReaderFeaturePreference,
       t
+    ]
+  );
+
+  const optimizeNoteCard = useCallback(
+    async (card: ReaderCard) => {
+      try {
+        const protectedMetadata = { ...card.metadata, user_edited: true };
+        await updateReaderCard.mutateAsync({
+          cardId: card.id,
+          payload: { metadata: protectedMetadata }
+        });
+        const result = await generateReaderCard.mutateAsync({
+          anchor_block_uid: card.anchor_block_uid,
+          anchor_text: card.anchor_text,
+          target_language: card.target_language,
+          provider_profile_id: selectedProviderId,
+          model: selectedProvider?.default_model ?? null,
+          native_search: true,
+          card_type: "note",
+          title: card.title,
+          abbreviation: card.abbreviation,
+          full_form: card.full_form
+        });
+        const suggestedBody =
+          metadataString(result.card.metadata, "suggested_body_markdown") ||
+          result.card.body_markdown ||
+          card.body_markdown;
+        setReaderCardDraft({
+          cardId: card.id,
+          blockUid: card.anchor_block_uid,
+          cardType: "note",
+          anchorText: card.anchor_text,
+          title: result.card.title || card.title,
+          bodyMarkdown: suggestedBody,
+          sourceType: card.source_type,
+          position: card.position,
+          metadata: protectedMetadata
+        });
+        setReaderNoteStickiesOverride(true);
+        setReaderActionMessage(t("reader.cardGenerated"));
+      } catch (error) {
+        setCardActionError(error, setReaderActionMessage, t);
+      }
+    },
+    [
+      generateReaderCard,
+      selectedProvider?.default_model,
+      selectedProviderId,
+      setReaderNoteStickiesOverride,
+      t,
+      updateReaderCard
     ]
   );
 
@@ -1255,7 +1541,7 @@ export function ReaderPage() {
     translationPayload
   ]);
 
-  const submitQuestion = () => {
+  const submitQuestion = (blockUid: string | null = chatBlockUid) => {
     if (!selectedProviderId || !question.trim()) return;
     setStreamingAnswer("");
     setStreamingCitedBlocks([]);
@@ -1264,7 +1550,7 @@ export function ReaderPage() {
         question: question.trim(),
         provider_profile_id: selectedProviderId,
         model: selectedProvider?.default_model ?? null,
-        current_block_uid: chatBlockUid,
+        current_block_uid: blockUid,
         max_blocks: 6,
         native_search: nativeSearch,
         retrieval_mode: "auto"
@@ -1286,70 +1572,74 @@ export function ReaderPage() {
     setQuestion("");
   };
 
-  const submitBlockQuestion = useCallback(
-    (block: DocumentBlock, blockQuestion: string) => {
-      if (!selectedProviderId) {
-        setReaderActionMessage(t("reader.quickAskNeedsProvider"));
-        return;
-      }
-      setQuickAskBlockUid(block.block_uid);
+  const askParagraphQuestion = useCallback(
+    (block: DocumentBlock, nextQuestion: string) => {
+      if (!selectedProviderId || !nextQuestion.trim()) return;
+      setQuickAskPendingBlockUid(block.block_uid);
       askBlockQuestion.mutate(
         {
-          question: blockQuestion,
+          question: nextQuestion.trim(),
           provider_profile_id: selectedProviderId,
           model: selectedProvider?.default_model ?? null,
           current_block_uid: block.block_uid,
-          max_blocks: 4,
-          native_search: nativeSearch,
-          retrieval_mode: "auto"
+          max_blocks: 3,
+          native_search: false,
+          retrieval_mode: "fts"
         },
         {
           onSuccess: (result) => {
-            const answer = result.assistant_message.content.trim();
-            createReaderCard.mutate(
-              {
-                card_type: "question",
-                anchor_block_uid: block.block_uid,
-                anchor_text: block.source_markdown.slice(0, 220),
-                abbreviation: "Q",
-                title: questionCardTitle(blockQuestion),
-                body_markdown: answer,
-                target_language: targetLanguage,
-                source_type: result.native_search_used ? "ai_search" : "paper_local",
-                status: "pinned",
-                position: "left",
-                metadata: {
-                  source: "quick_block_question",
-                  chat_message_id: result.assistant_message.id,
-                  cited_blocks: (result.cited_blocks ?? []).map((item) => item.block_uid)
-                }
-              },
-              {
-                onSuccess: (card) => {
-                  setReaderFeaturePreference("termCardsEnabled", true);
-                  setTermWikiEnabled(true);
-                  setExpandedReaderCardByBlock((current) => ({
-                    ...current,
-                    [card.anchor_block_uid]: card.id
-                  }));
-                  setReaderActionMessage(t("reader.quickAskCardCreated"));
-                },
-                onError: (error) => setCardActionError(error, setReaderActionMessage, t)
+            setParagraphAskResultByBlockUid((current) => ({
+              ...current,
+              [block.block_uid]: {
+                question: nextQuestion.trim(),
+                answer: result.assistant_message.content
               }
-            );
+            }));
           },
           onError: (error) => setCardActionError(error, setReaderActionMessage, t),
-          onSettled: () => setQuickAskBlockUid(null)
+          onSettled: () => setQuickAskPendingBlockUid(null)
+        }
+      );
+    },
+    [askBlockQuestion, selectedProvider?.default_model, selectedProviderId, t]
+  );
+
+  const saveParagraphAnswerAsNote = useCallback(
+    (block: DocumentBlock) => {
+      const result = paragraphAskResultByBlockUid[block.block_uid];
+      if (!result) return;
+      setQuickAskSavingBlockUid(block.block_uid);
+      createReaderCard.mutate(
+        {
+          card_type: "note",
+          anchor_block_uid: block.block_uid,
+          anchor_text: conciseAnchorText(block.source_markdown),
+          title: result.question.slice(0, 160),
+          body_markdown: result.answer,
+          target_language: targetLanguage,
+          source_type: "user_note",
+          status: "pinned",
+          position: "right",
+          metadata: {
+            source: "paragraph_qa",
+            question: result.question,
+            user_edited: true
+          }
+        },
+        {
+          onSuccess: () => {
+            setReaderNoteStickiesOverride(true);
+            setReaderActionMessage(t("reader.quickAskCardCreated"));
+          },
+          onError: (error) => setCardActionError(error, setReaderActionMessage, t),
+          onSettled: () => setQuickAskSavingBlockUid(null)
         }
       );
     },
     [
-      askBlockQuestion,
       createReaderCard,
-      nativeSearch,
-      selectedProvider?.default_model,
-      selectedProviderId,
-      setReaderFeaturePreference,
+      paragraphAskResultByBlockUid,
+      setReaderNoteStickiesOverride,
       t,
       targetLanguage
     ]
@@ -1381,23 +1671,26 @@ export function ReaderPage() {
     });
   };
 
-  const copyText = useCallback(async (text: string, label: string) => {
-    if (!text.trim()) {
-      setReaderActionMessage(`${label} has no text to copy.`);
-      return;
-    }
-    try {
-      await writeClipboardText(text);
-      setReaderActionMessage(`${label} copied.`);
-    } catch {
-      setReaderActionMessage("Clipboard is unavailable. Select the text and copy it manually.");
-    }
-  }, []);
+  const copyText = useCallback(
+    async (text: string, label: string) => {
+      if (!text.trim()) {
+        setReaderActionMessage(t("reader.copyEmpty", { label }));
+        return;
+      }
+      try {
+        await writeClipboardText(text);
+        setReaderActionMessage(t("reader.copySuccess", { label }));
+      } catch {
+        setReaderActionMessage(t("reader.clipboardUnavailable"));
+      }
+    },
+    [t]
+  );
 
   const handleToolbarAction = useCallback(
     (actionId: ReaderToolbarActionId, block: DocumentBlock, content: string) => {
       if (actionId === "copy-source" || actionId === "copy-block") {
-        void copyText(block.source_markdown, "Source block");
+        void copyText(block.source_markdown, t("reader.sourceBlockLabel"));
         return;
       }
       if (actionId === "copy-obsidian") {
@@ -1411,29 +1704,33 @@ export function ReaderPage() {
             color
           },
           {
-            onSuccess: (result) => setReaderActionMessage(`Saved to Obsidian: ${result.note_path}`),
+            onSuccess: (result) =>
+              setReaderActionMessage(t("reader.obsidianSaved", { path: result.note_path })),
             onError: () =>
               void copyText(
                 obsidianCalloutForBlock(block, translationByBlockUid.get(block.block_uid), color),
-                "Obsidian callout"
+                t("reader.obsidianCalloutLabel")
               )
           }
         );
         return;
       }
       if (actionId === "copy-translation") {
-        void copyText(content, "Translation block");
+        void copyText(content, t("reader.translationBlockLabel"));
         return;
       }
       if (actionId === "ask-source" || actionId === "explain-block") {
         setChatBlockUid(block.block_uid);
-        setReaderActionMessage(`Current block set to ${block.block_uid}.`);
+        setReaderStudyContext({ scope: "block", blockUid: block.block_uid });
+        setReaderNoteStickiesOverride(true);
+        closeReaderOverlay();
+        setReaderActionMessage(t("reader.currentBlockSelected", { blockUid: block.block_uid }));
         return;
       }
       if (actionId === "create-card") {
         setReaderFeaturePreference("termCardsEnabled", true);
         setTermWikiEnabled(true);
-        openReaderCardDraft(block);
+        openReaderCardDraft(block, undefined, "term");
         return;
       }
       if (actionId === "show-latex" || actionId === "show-source") {
@@ -1442,7 +1739,7 @@ export function ReaderPage() {
       }
       if (actionId === "retranslate") {
         if (!selectedProviderId) {
-          setReaderActionMessage("Select a provider before retranslating this block.");
+          setReaderActionMessage(t("reader.selectProviderForBlockRetranslation"));
           return;
         }
         setRetranslationBlock(block);
@@ -1451,16 +1748,23 @@ export function ReaderPage() {
       }
       if (actionId === "add-note-patch") {
         setChatBlockUid(block.block_uid);
-        setReaderActionMessage(`Block ${block.block_uid} is selected for notes and questions.`);
+        setReaderStudyContext({ scope: "block", blockUid: block.block_uid });
+        setActiveReaderOverlay("noteGenerator");
+        setReaderActionMessage(t("reader.blockSelectedForNotes", { blockUid: block.block_uid }));
       }
     },
     [
       blockColors,
+      closeReaderOverlay,
       copyText,
       readerFeaturePreferences.colorMarkersEnabled,
       saveObsidianClip,
       selectedProviderId,
+      setActiveReaderOverlay,
+      setReaderNoteStickiesOverride,
       setReaderFeaturePreference,
+      setReaderStudyContext,
+      t,
       targetLanguage,
       translationByBlockUid,
       openReaderCardDraft
@@ -1471,123 +1775,145 @@ export function ReaderPage() {
     (block: DocumentBlock) => {
       const asset = assetForBlock(block, assetById);
       const assetId = asset?.asset_id;
+      const blockNotes = pinnedNoteCardsByBlockUid.get(block.block_uid) ?? [];
+      const knowledgeCards = knowledgeCardsByBlockUid.get(block.block_uid) ?? [];
       return (
-        <ReaderBlock
-          key={block.block_uid}
+        <ReaderBlockFrame
           block={block}
-          asset={asset}
-          assetUrl={assetId ? assetUrlByAssetId.get(assetId) : undefined}
-          assetFileUrls={
-            assetId
-              ? (assetFileUrlsByAssetId.get(assetId) ?? emptyReaderAssetFiles)
-              : emptyReaderAssetFiles
-          }
-          referenceTargets={referenceTargets}
-          citations={effectiveCitationLookup}
-          citationImportPending={
-            readerFeaturePreferences.citationPreviewEnabled && importCitationArxiv.isPending
-          }
-          canImportCitationWithTranslation={
-            readerFeaturePreferences.citationPreviewEnabled && Boolean(selectedProviderId)
-          }
-          onCitationImport={
-            readerFeaturePreferences.citationPreviewEnabled && libraryId && articleId
-              ? importCitationToLibrary
-              : undefined
-          }
-          translation={translationByBlockUid.get(block.block_uid)}
-          translationVariantOptions={translationVariantOptionsByBlockUid.get(block.block_uid) ?? []}
-          selectedTranslationVariantId={selectedVariantByBlockUid.get(block.block_uid)?.id}
-          glossaryAffected={
-            readerFeaturePreferences.glossaryReplacementEnabled &&
-            affectedBlockUids.has(block.block_uid)
-          }
-          viewMode={viewMode}
-          active={activeBlockUid === block.block_uid}
-          controlsVisible={
-            readerFeaturePreferences.blockToolsEnabled && currentSearchBlockUid === block.block_uid
-          }
-          blockToolsEnabled={readerFeaturePreferences.blockToolsEnabled}
-          colorMarkersEnabled={readerFeaturePreferences.colorMarkersEnabled}
-          sentenceHoverAccentEnabled={readerFeaturePreferences.sentenceHoverAccentEnabled}
-          imageLightboxEnabled={readerFeaturePreferences.imageLightboxEnabled}
-          searchActive={currentSearchBlockUid === block.block_uid}
-          blockColor={blockColors[block.block_uid] ?? "none"}
-          termAnnotations={
-            readerFeaturePreferences.termCardsEnabled
-              ? termAnnotationsForBlock(
-                  block,
-                  glossaryTerms,
-                  readerCardsByBlockUid.get(block.block_uid) ?? []
-                )
-              : []
-          }
-          termWikiEnabled={termCardsVisible}
-          readerCards={readerCardsByBlockUid.get(block.block_uid) ?? []}
-          expandedReaderCardId={expandedReaderCardByBlock[block.block_uid] ?? null}
-          onActivate={handleActiveBlockChange}
-          onBlockColorChange={
-            readerFeaturePreferences.colorMarkersEnabled ? handleBlockColorChange : undefined
-          }
-          onTranslationVariantChange={handleTranslationVariantChange}
-          onReaderCardToggle={handleReaderCardToggle}
-          onReaderCardGenerate={generateCard}
-          onReaderCardEdit={(card) => openReaderCardDraft(block, card)}
-          onReaderCardPin={pinCard}
-          onReaderCardDelete={deleteCard}
-          onReaderCardExport={exportCard}
-          canQuickAsk={readerFeaturePreferences.quickAskEnabled && Boolean(selectedProviderId)}
-          quickAskPending={quickAskBlockUid === block.block_uid && askBlockQuestion.isPending}
-          onQuickAsk={readerFeaturePreferences.quickAskEnabled ? submitBlockQuestion : undefined}
-          onToolbarAction={
-            readerFeaturePreferences.blockToolsEnabled ? handleToolbarAction : undefined
-          }
-        />
+          notes={blockNotes}
+          noteStickiesEnabled={readerNoteStickiesEnabled}
+          onAddNote={() => openReaderCardDraft(block)}
+          onEditNote={(card) => openReaderCardDraft(block, card)}
+          onDeleteNote={deleteCard}
+          onOptimizeNote={optimizeNoteCard}
+          isOptimizingNote={generateReaderCard.isPending || updateReaderCard.isPending}
+          canOptimizeNote={Boolean(selectedProviderId)}
+          key={block.block_uid}
+        >
+          <ReaderBlock
+            block={block}
+            asset={asset}
+            assetUrl={assetId ? assetUrlByAssetId.get(assetId) : undefined}
+            assetFileUrls={
+              assetId
+                ? (assetFileUrlsByAssetId.get(assetId) ?? emptyReaderAssetFiles)
+                : emptyReaderAssetFiles
+            }
+            referenceTargets={referenceTargets}
+            citations={effectiveCitationLookup}
+            citationImportPending={
+              readerFeaturePreferences.citationPreviewEnabled && importCitationArxiv.isPending
+            }
+            canImportCitationWithTranslation={
+              readerFeaturePreferences.citationPreviewEnabled && Boolean(selectedProviderId)
+            }
+            onCitationImport={
+              readerFeaturePreferences.citationPreviewEnabled && libraryId && articleId
+                ? importCitationToLibrary
+                : undefined
+            }
+            translation={translationByBlockUid.get(block.block_uid)}
+            translationVariantOptions={
+              translationVariantOptionsByBlockUid.get(block.block_uid) ?? []
+            }
+            selectedTranslationVariantId={selectedVariantByBlockUid.get(block.block_uid)?.id}
+            glossaryAffected={
+              readerFeaturePreferences.glossaryReplacementEnabled &&
+              affectedBlockUids.has(block.block_uid)
+            }
+            viewMode={viewMode}
+            active={activeBlockUid === block.block_uid}
+            controlsVisible={
+              readerFeaturePreferences.blockToolsEnabled &&
+              currentSearchBlockUid === block.block_uid
+            }
+            blockToolsEnabled={readerFeaturePreferences.blockToolsEnabled}
+            colorMarkersEnabled={readerFeaturePreferences.colorMarkersEnabled}
+            sentenceHoverAccentEnabled={readerFeaturePreferences.sentenceHoverAccentEnabled}
+            imageLightboxEnabled={readerFeaturePreferences.imageLightboxEnabled}
+            searchActive={currentSearchBlockUid === block.block_uid}
+            blockColor={blockColors[block.block_uid] ?? "none"}
+            termAnnotations={
+              readerFeaturePreferences.termCardsEnabled
+                ? termAnnotationsForBlock(block, glossaryTerms, knowledgeCards)
+                : []
+            }
+            termWikiEnabled={termCardsVisible}
+            readerCards={knowledgeCards}
+            expandedReaderCardId={expandedReaderCardByBlock[block.block_uid] ?? null}
+            onActivate={handleActiveBlockChange}
+            onBlockColorChange={
+              readerFeaturePreferences.colorMarkersEnabled ? handleBlockColorChange : undefined
+            }
+            onTranslationVariantChange={handleTranslationVariantChange}
+            onReaderCardToggle={handleReaderCardToggle}
+            onReaderCardGenerate={generateCard}
+            onReaderCardEdit={(card) => openReaderCardDraft(block, card)}
+            onReaderCardPin={pinCard}
+            onReaderCardDelete={deleteCard}
+            onReaderCardExport={exportCard}
+            canQuickAsk={Boolean(selectedProviderId && readerNoteStickiesEnabled)}
+            quickAskPending={quickAskPendingBlockUid === block.block_uid}
+            quickAskResult={paragraphAskResultByBlockUid[block.block_uid]}
+            quickAskSaving={quickAskSavingBlockUid === block.block_uid}
+            onQuickAsk={readerNoteStickiesEnabled ? askParagraphQuestion : undefined}
+            onQuickAskSaveNote={readerNoteStickiesEnabled ? saveParagraphAnswerAsNote : undefined}
+            onToolbarAction={
+              readerFeaturePreferences.blockToolsEnabled ? handleToolbarAction : undefined
+            }
+          />
+        </ReaderBlockFrame>
       );
     },
     [
       activeBlockUid,
       affectedBlockUids,
       articleId,
+      askParagraphQuestion,
       assetById,
       assetFileUrlsByAssetId,
       assetUrlByAssetId,
       blockColors,
-      effectiveCitationLookup,
       currentSearchBlockUid,
       deleteCard,
+      effectiveCitationLookup,
       expandedReaderCardByBlock,
       exportCard,
       generateCard,
+      generateReaderCard.isPending,
+      glossaryTerms,
       handleActiveBlockChange,
       handleBlockColorChange,
       handleReaderCardToggle,
       handleToolbarAction,
       handleTranslationVariantChange,
-      glossaryTerms,
       importCitationArxiv.isPending,
       importCitationToLibrary,
+      knowledgeCardsByBlockUid,
       libraryId,
       openReaderCardDraft,
+      optimizeNoteCard,
+      paragraphAskResultByBlockUid,
       pinCard,
-      referenceTargets,
-      readerCardsByBlockUid,
+      pinnedNoteCardsByBlockUid,
+      quickAskPendingBlockUid,
+      quickAskSavingBlockUid,
       readerFeaturePreferences.blockToolsEnabled,
       readerFeaturePreferences.citationPreviewEnabled,
       readerFeaturePreferences.colorMarkersEnabled,
       readerFeaturePreferences.glossaryReplacementEnabled,
       readerFeaturePreferences.imageLightboxEnabled,
-      readerFeaturePreferences.quickAskEnabled,
       readerFeaturePreferences.sentenceHoverAccentEnabled,
       readerFeaturePreferences.termCardsEnabled,
+      readerNoteStickiesEnabled,
+      referenceTargets,
+      saveParagraphAnswerAsNote,
       selectedProviderId,
       selectedVariantByBlockUid,
-      askBlockQuestion.isPending,
-      quickAskBlockUid,
       termCardsVisible,
       translationByBlockUid,
       translationVariantOptionsByBlockUid,
-      submitBlockQuestion,
+      updateReaderCard.isPending,
       viewMode
     ]
   );
@@ -1640,63 +1966,409 @@ export function ReaderPage() {
     ]
   );
 
-  const readerToolbarItems: {
-    panel: ReaderToolbarPanel;
-    label: string;
-    icon: ReactNode;
-    badge?: number;
-  }[] = [
+  const readerWorkspaceItems: ReaderWorkspaceItem[] = [
+    {
+      panel: "ask",
+      label: t("reader.fullArticleAsk"),
+      icon: <MessageSquare size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("ask")
+    },
+    {
+      panel: "search",
+      label: t("reader.searchPaper"),
+      icon: <Search size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("search"),
+      badge: readerSearchMatches.length
+    },
     {
       panel: "tasks",
       label: t("nav.tasks"),
       icon: <TerminalSquare size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("tasks"),
       badge: articleTaskSummary.data?.active ?? 0
     },
     {
       panel: "providers",
       label: t("reader.providerPanel"),
       icon: <Sparkles size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("providers"),
       badge: providers.data?.length ?? 0
-    },
-    {
-      panel: "ask",
-      label: t("reader.askPanel"),
-      icon: <MessageSquare size={15} aria-hidden="true" />
     },
     {
       panel: "translate",
       label: t("reader.translate"),
-      icon: <Languages size={15} aria-hidden="true" />
+      icon: <Languages size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("translate")
     },
     {
       panel: "glossary",
       label: t("reader.terms"),
-      icon: <BookMarked size={15} aria-hidden="true" />
+      icon: <BookMarked size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("glossary")
     },
     {
-      panel: "notes",
-      label: t("reader.notes"),
-      icon: <FileText size={15} aria-hidden="true" />
+      panel: "noteGenerator",
+      label: t("reader.noteGenerator"),
+      icon: <FileText size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("noteGenerator")
     },
     {
       panel: "export",
       label: t("reader.export"),
-      icon: <Download size={15} aria-hidden="true" />
+      icon: <Download size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("export")
     },
     {
       panel: "preferences",
       label: t("reader.preferences"),
-      icon: <Type size={15} aria-hidden="true" />
+      icon: <Type size={15} aria-hidden="true" />,
+      tone: readerOverlayTone("preferences")
     }
   ];
+  const readerWorkspaceGroups: ReaderWorkspaceGroup[] = [
+    {
+      id: "read",
+      label: t("reader.workspaceGroupRead"),
+      items: readerWorkspaceItems.filter(
+        (item) => readerWorkspaceGroupForOverlay(item.panel) === "read"
+      )
+    },
+    {
+      id: "assist",
+      label: t("reader.workspaceGroupAssist"),
+      items: readerWorkspaceItems.filter(
+        (item) => readerWorkspaceGroupForOverlay(item.panel) === "assist"
+      )
+    },
+    {
+      id: "output",
+      label: t("reader.workspaceGroupOutput"),
+      items: readerWorkspaceItems.filter(
+        (item) => readerWorkspaceGroupForOverlay(item.panel) === "output"
+      )
+    }
+  ];
+  const activeReaderWorkspace =
+    readerWorkspaceGroups.find((group) => group.id === activeReaderWorkspaceGroup) ??
+    readerWorkspaceGroups[0]!;
+  const selectReaderWorkspaceGroup = (group: ReaderWorkspaceGroup) => {
+    setStudyRailOpen(true);
+    setActiveReaderWorkspaceGroup(group.id);
+    if (readerWorkspaceGroupForOverlay(activeReaderOverlay) !== group.id) {
+      setActiveReaderOverlay(group.items[0]?.panel ?? null);
+    }
+  };
 
+  const renderReaderOverlayContent = (overlay: ReaderOverlayKind | null = activeReaderOverlay) => {
+    if (overlay === "articles") {
+      return (
+        <ArticleSwitcherPanel
+          currentArticleId={articleId}
+          currentArticleItem={currentArticleItem}
+          isLoading={libraryArticles.isLoading}
+          items={visibleReaderArticleItems}
+          query={readerArticleSearchQuery}
+          onQueryChange={setReaderArticleSearchQuery}
+          onSelect={(item) => {
+            switchReaderArticle(item);
+            closeReaderOverlay();
+          }}
+        />
+      );
+    }
+    if (overlay === "search") {
+      return (
+        <ReaderSearchPanel
+          query={readerSearchQuery}
+          matches={readerSearchMatches}
+          cursor={readerSearchCursor}
+          onQueryChange={setReaderSearchQuery}
+          onMove={moveReaderSearch}
+          onClear={() => {
+            setReaderSearchQuery("");
+            setReaderSearchCursor(0);
+          }}
+          onSelect={(blockUid) => {
+            navigateToBlock(blockUid);
+            closeReaderOverlay();
+          }}
+        />
+      );
+    }
+    if (overlay === "tasks") {
+      return (
+        <Stack gap="sm">
+          <div className="reader-dock-task-grid">
+            <span>{t("task.statusQueued", { count: articleTaskSummary.data?.queued ?? 0 })}</span>
+            <span>{t("task.statusRunning", { count: articleTaskSummary.data?.running ?? 0 })}</span>
+            <span>{t("task.statusPaused", { count: articleTaskSummary.data?.paused ?? 0 })}</span>
+            <span>{t("task.statusFailed", { count: failedArticleTaskCount })}</span>
+          </div>
+          <Button
+            fullWidth
+            size="xs"
+            variant="light"
+            leftSection={<TerminalSquare size={14} aria-hidden="true" />}
+            onClick={openTaskDrawer}
+          >
+            {t("reader.manageTasks")}
+          </Button>
+        </Stack>
+      );
+    }
+    if (overlay === "ask") {
+      return (
+        <ChatPanel
+          messages={chat.data?.messages ?? []}
+          citedBlocks={
+            streamingCitedBlocks.length > 0
+              ? streamingCitedBlocks
+              : (askQuestion.data?.cited_blocks ?? [])
+          }
+          streamingAnswer={streamingAnswer}
+          referenceTargets={referenceTargets}
+          selectedBlockUid={null}
+          question={question}
+          nativeSearch={nativeSearch}
+          nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
+          isAsking={askQuestion.isPending}
+          isCreatingNotePatch={createNotePatchFromChat.isPending}
+          canAsk={Boolean(selectedProviderId)}
+          canCreateNotePatch={Boolean(selectedProviderId)}
+          error={askQuestion.isError}
+          onQuestionChange={setQuestion}
+          onNativeSearchChange={setNativeSearch}
+          onClearBlock={() => {
+            setChatBlockUid(null);
+            setReaderStudyContext({ scope: "article", blockUid: null });
+          }}
+          onAsk={() => {
+            setChatBlockUid(null);
+            setReaderStudyContext({ scope: "article", blockUid: null });
+            submitQuestion(null);
+          }}
+          onCreateNotePatch={createNotePatchFromMessage}
+        />
+      );
+    }
+    if (overlay === "providers") {
+      return (
+        <Stack gap="sm">
+          <Select
+            label={t("reader.provider")}
+            placeholder={t("reader.configureProvider")}
+            value={selectedProviderId}
+            onChange={setSelectedProviderId}
+            data={(providers.data ?? []).map((provider) => ({
+              label: `${provider.name} · ${provider.default_model ?? t("reader.noModel")}`,
+              value: provider.id
+            }))}
+          />
+          <Select
+            label={t("reader.targetLanguage")}
+            data={TRANSLATION_TARGET_LOCALES.map((item) => ({
+              value: item.value,
+              label: item.nativeLabel
+            }))}
+            searchable
+            value={targetLanguage}
+            onChange={(value) => {
+              if (value) setTargetLanguage(value);
+            }}
+          />
+          {(providers.data ?? []).slice(0, 5).map((provider) => (
+            <div
+              className="reader-provider-row"
+              data-active={provider.id === selectedProviderId || undefined}
+              key={provider.id}
+            >
+              <Text size="sm" fw={620} lineClamp={1}>
+                {provider.name}
+              </Text>
+              <Text c="dimmed" size="xs" lineClamp={1}>
+                {provider.default_model ?? t("reader.noModel")}
+              </Text>
+            </div>
+          ))}
+          {(providers.data ?? []).length === 0 ? (
+            <Text c="dimmed" size="sm">
+              {t("library.noProviderConfigured")}
+            </Text>
+          ) : null}
+          <Button size="xs" variant="subtle" onClick={() => navigate("/settings")}>
+            {t("nav.settings")}
+          </Button>
+        </Stack>
+      );
+    }
+    if (overlay === "translate") {
+      return (
+        <div className="panel reader-translation-panel">
+          <Stack gap="sm">
+            <Button
+              fullWidth
+              leftSection={<Languages size={16} />}
+              onClick={queueArticleTranslation}
+              loading={translateArticle.isPending}
+              disabled={!selectedProviderId || !targetLanguage.trim() || blocks.length === 0}
+            >
+              {t("reader.translatePaper")}
+            </Button>
+            <Checkbox
+              checked={autoTranslateOnLanguageSwitch}
+              label={t("reader.autoTranslateOnLanguageSwitch")}
+              onChange={(event) => setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)}
+            />
+            <Text c="dimmed" size="sm">
+              {t("reader.translationHelp")}
+            </Text>
+            {translateArticle.data ? (
+              <Text c="dimmed" size="sm">
+                {t("reader.translationQueued", {
+                  jobs: translateArticle.data.jobs_created,
+                  cached: translateArticle.data.cached_blocks
+                })}
+              </Text>
+            ) : null}
+            {translateArticle.isError || translateBlock.isError ? (
+              <Text c="red" size="sm">
+                {t("reader.translationQueueError")}
+              </Text>
+            ) : null}
+          </Stack>
+        </div>
+      );
+    }
+    if (overlay === "glossary") {
+      return (
+        <GlossaryPanel
+          terms={glossary.data?.terms ?? []}
+          targetLanguage={targetLanguage}
+          activeVersion={glossary.data?.active_version ?? "glossary:none"}
+          affectedBlockUids={glossary.data?.affected_block_uids ?? []}
+          isLoading={glossary.isLoading}
+          isExtracting={extractGlossary.isPending}
+          isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
+          canRetranslate={Boolean(selectedProviderId)}
+          onExtract={() =>
+            extractGlossary.mutate({
+              target_language: targetLanguage,
+              limit: 40
+            })
+          }
+          onCreate={(sourceTerm, targetTerm) =>
+            createGlossaryTerm.mutate({
+              source_term: sourceTerm,
+              target_term: targetTerm,
+              language_direction: `en->${targetLanguage}`,
+              status: "active",
+              metadata: { target_language: targetLanguage }
+            })
+          }
+          onConfirm={(term, targetTerm) =>
+            updateGlossaryTerm.mutate({
+              termId: term.id,
+              payload: {
+                target_term: targetTerm,
+                status: "active",
+                metadata: { target_language: targetLanguage }
+              }
+            })
+          }
+          onRetranslateAffected={queueAffectedRetranslation}
+        />
+      );
+    }
+    if (overlay === "noteGenerator") {
+      return (
+        <Stack gap="sm">
+          <Group gap="xs" grow>
+            <Button
+              size="xs"
+              variant={readerFeaturePreferences.termCardsEnabled ? "light" : "subtle"}
+              leftSection={<StickyNote size={14} aria-hidden="true" />}
+              onClick={() => {
+                const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
+                setReaderFeaturePreference("termCardsEnabled", nextEnabled);
+                setTermWikiEnabled(nextEnabled);
+              }}
+            >
+              {t("reader.termWiki")}
+            </Button>
+            <Button
+              size="xs"
+              variant="subtle"
+              leftSection={<Sparkles size={14} aria-hidden="true" />}
+              disabled={!hasArticleContext || extractReaderCards.isPending}
+              loading={extractReaderCards.isPending}
+              onClick={runCardExtraction}
+            >
+              {t("reader.extractCards")}
+            </Button>
+          </Group>
+          <NotesPanel
+            templates={noteTemplates.data ?? []}
+            patches={notePatches.data?.patches ?? []}
+            selectedTemplateId={selectedTemplateId}
+            isLoading={noteTemplates.isLoading || notePatches.isLoading}
+            isGenerating={generateNotePatch.isPending}
+            isSavingPatch={updateNotePatch.isPending}
+            isSavingTemplate={createNoteTemplate.isPending}
+            isRejecting={rejectNotePatch.isPending}
+            canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
+            error={
+              generateNotePatch.isError ||
+              createNoteTemplate.isError ||
+              updateNotePatch.isError ||
+              rejectNotePatch.isError
+            }
+            onTemplateChange={setSelectedTemplateId}
+            onGenerate={queueNoteGeneration}
+            onCreateTemplate={(name, description) =>
+              createNoteTemplate.mutate(
+                { name, description, metadata: { source: "reader" } },
+                { onSuccess: (template) => setSelectedTemplateId(template.id) }
+              )
+            }
+            onSavePatch={(patchId, payload) => updateNotePatch.mutate({ patchId, payload })}
+            onAcceptEdited={(patchId, payload) =>
+              updateNotePatch.mutate({
+                patchId,
+                payload: {
+                  ...payload,
+                  status: "accepted"
+                }
+              })
+            }
+            onReject={(patchId) => rejectNotePatch.mutate(patchId)}
+          />
+        </Stack>
+      );
+    }
+    if (overlay === "export") {
+      return (
+        <ExportPanel
+          exportKind={exportKind}
+          targetLanguage={targetLanguage}
+          result={exportResult}
+          isExporting={exportArticle.isPending}
+          error={exportArticle.isError}
+          downloadUrl={currentExportDownloadUrl}
+          onExportKindChange={setExportKind}
+          onExport={queueExport}
+        />
+      );
+    }
+    if (overlay === "preferences") {
+      return <ReaderPreferencesPanel showTitle={false} />;
+    }
+    return null;
+  };
   return (
     <div
       className={`reader-page${kindleMode ? " reader-page-kindle" : ""}${
         kindleMode && kindleBlockViewMode === "bilingual" ? " reader-page-kindle-landscape" : ""
-      }${
-        kindleMode && kindleChromeHidden ? " reader-kindle-chrome-hidden" : ""
-      }${!kindleMode && readerChromeHidden ? " reader-workbench-chrome-hidden" : ""}`}
+      }${kindleMode && kindleChromeHidden ? " reader-kindle-chrome-hidden" : ""}`}
       style={readerPreferenceStyle}
       onMouseMove={
         kindleMode && kindleChromeHidden
@@ -1801,6 +2473,27 @@ export function ReaderPage() {
           </Group>
         </Stack>
       </Modal>
+      <Modal
+        opened={Boolean(activeReaderOverlay) && !kindleMode && !readerOverlayInline}
+        onClose={closeReaderOverlay}
+        title={activeReaderOverlay ? readerOverlayTitle(activeReaderOverlay, t) : undefined}
+        size={readerOverlaySize(activeReaderOverlay)}
+        closeOnClickOutside
+        closeOnEscape
+        closeButtonProps={{ "aria-label": t("reader.closeToolPanel") }}
+      >
+        <section
+          ref={readerOverlayRef}
+          onPointerEnter={() => {
+            readerOverlayPointerInside.current = true;
+          }}
+          onPointerLeave={() => {
+            readerOverlayPointerInside.current = false;
+          }}
+        >
+          {renderReaderOverlayContent()}
+        </section>
+      </Modal>
       <main className="reader-main">
         {kindleMode && kindleChromeHidden ? (
           <button
@@ -1827,12 +2520,12 @@ export function ReaderPage() {
               </Button>
               <Button
                 className="reader-chrome-button"
-                aria-pressed={readerArticleRailOpen}
+                aria-pressed={activeReaderOverlay === "articles"}
                 title={t("reader.articleSwitcher")}
-                variant={readerArticleRailOpen ? "light" : "subtle"}
+                variant={activeReaderOverlay === "articles" ? "light" : "subtle"}
                 size="xs"
                 leftSection={<BookMarked size={15} aria-hidden="true" />}
-                onClick={() => setReaderArticleRailOpen((open) => !open)}
+                onClick={() => toggleReaderOverlay("articles")}
               >
                 {t("nav.library")}
               </Button>
@@ -1901,7 +2594,10 @@ export function ReaderPage() {
                 </Collapse>
               </div>
               {kindleMode ? (
-                <div className="reader-kindle-font-controls" aria-label={t("reader.kindleFontSize")}>
+                <div
+                  className="reader-kindle-font-controls"
+                  aria-label={t("reader.kindleFontSize")}
+                >
                   <ActionIcon
                     aria-label={t("reader.decreaseFontSize")}
                     disabled={readerPreferences.fontScale <= 0.9}
@@ -1927,31 +2623,38 @@ export function ReaderPage() {
                 </div>
               ) : null}
               {!kindleMode ? (
-                <div className="reader-tool-menu" aria-label={t("reader.toolbar")}>
-                  {readerToolbarItems.map((item) => (
-                    <button
-                      key={item.panel}
-                      type="button"
-                      className="reader-toolbar-button"
-                      aria-label={item.label}
-                      aria-pressed={activeReaderToolbarPanel === item.panel}
-                      title={item.label}
-                      onClick={() => toggleReaderToolbarPanel(item.panel)}
-                    >
-                      {item.icon}
-                      {typeof item.badge === "number" && item.badge > 0 ? (
-                        <span className="reader-toolbar-badge">{item.badge}</span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
+                <Button
+                  className="reader-chrome-button"
+                  aria-pressed={readerRightRailOpen}
+                  aria-label={t("reader.workspaceRail")}
+                  title={t("reader.workspaceRail")}
+                  variant={readerRightRailOpen ? "light" : "subtle"}
+                  size="xs"
+                  leftSection={<Columns2 size={15} aria-hidden="true" />}
+                  onClick={toggleReaderWorkspace}
+                >
+                  {t("reader.workspaceShort")}
+                </Button>
+              ) : null}
+              {!kindleMode ? (
+                <Button
+                  className="reader-chrome-button"
+                  aria-pressed={activeReaderOverlay === "preferences"}
+                  title={t("reader.preferences")}
+                  variant={activeReaderOverlay === "preferences" ? "light" : "subtle"}
+                  size="xs"
+                  leftSection={<Type size={15} aria-hidden="true" />}
+                  onClick={() => toggleReaderOverlay("preferences")}
+                >
+                  {t("reader.preferences")}
+                </Button>
               ) : null}
             </div>
           </div>
         </section>
         {kindleMode ? (
           <KindlePagedReader
-            blocks={blocks}
+            blocks={renderBlocks}
             activeBlockUid={activeBlockUid}
             title={title}
             fontScale={readerPreferences.fontScale}
@@ -1968,173 +2671,82 @@ export function ReaderPage() {
         ) : (
           <section
             className={`reader-mosaic${
-              readerArticleRailOpen ? "" : " reader-mosaic-left-collapsed"
-            }${readerRightRailOpen ? "" : " reader-mosaic-right-collapsed"}`}
+              chapterRailEnabled ? " reader-mosaic-has-chapters" : ""
+            }${chapterRailOpen ? " reader-mosaic-chapters-open" : " reader-mosaic-left-collapsed reader-mosaic-chapters-collapsed"}${
+              readerRightRailOpen
+                ? " reader-mosaic-study-open"
+                : " reader-mosaic-right-collapsed reader-mosaic-study-collapsed"
+            }`}
           >
-            <aside
-              className={`reader-side-rail reader-article-rail${
-                readerArticleRailOpen ? "" : " reader-side-rail-collapsed"
-              }`}
-              aria-label={t("reader.articleSwitcher")}
-            >
-              {readerArticleRailOpen ? (
-                <>
-                  <div className="reader-rail-header">
-                    <div>
-                      <Text fw={720} size="sm">
-                        {t("reader.articleSwitcher")}
-                      </Text>
-                      <Text c="dimmed" size="xs" lineClamp={1}>
-                        {currentArticleItem
-                          ? readerArticleTitle(currentArticleItem)
-                          : t("reader.noCurrentArticle")}
-                      </Text>
-                    </div>
-                    <ActionIcon
-                      aria-label={t("reader.collapseArticles")}
-                      variant="subtle"
-                      size="sm"
-                      onClick={() => setReaderArticleRailOpen(false)}
-                    >
-                      <ChevronLeft size={15} aria-hidden="true" />
-                    </ActionIcon>
-                  </div>
-                  <TextInput
-                    className="reader-article-switch-search"
-                    aria-label={t("reader.searchLibraryArticles")}
-                    placeholder={t("reader.searchLibraryArticles")}
-                    value={readerArticleSearchQuery}
-                    leftSection={<Search size={14} aria-hidden="true" />}
-                    onChange={(event) => setReaderArticleSearchQuery(event.currentTarget.value)}
-                  />
-                  <div className="reader-article-switch-list">
-                    {libraryArticles.isLoading ? (
-                      <Group gap="xs" className="reader-side-loading">
-                        <Loader size="xs" />
-                        <Text c="dimmed" size="xs">
-                          {t("reader.loadingArticles")}
+            {chapterRailEnabled ? (
+              <aside
+                className={`reader-side-rail reader-article-rail reader-chapter-rail${
+                  chapterRailOpen ? "" : " reader-chapter-rail-collapsed"
+                }`}
+                aria-label={t("reader.chapters")}
+              >
+                {chapterRailOpen ? (
+                  <>
+                    <div className="reader-chapter-rail-header">
+                      <div>
+                        <Text fw={720} size="sm">
+                          {t("reader.chapters")}
                         </Text>
-                      </Group>
-                    ) : null}
-                    {visibleReaderArticleItems.map((item) => {
-                      const isActive = item.article_revision.id === articleId;
-                      return (
-                        <button
-                          key={item.article_revision.id}
-                          type="button"
-                          className="reader-article-switch-item"
-                          aria-current={isActive ? "page" : undefined}
-                          data-active={isActive || undefined}
-                          onClick={() => switchReaderArticle(item)}
-                        >
-                          <span className="reader-article-switch-title">
-                            {readerArticleTitle(item)}
-                          </span>
-                          <span className="reader-article-switch-meta">
-                            {readerArticleSourceLabel(item)} · {readerArticleProgressLabel(item)}
-                          </span>
-                          <span className="reader-article-switch-progress" aria-hidden="true">
-                            <span
-                              style={{
-                                width: `${readerArticleProgressPercent(item)}%`
-                              }}
-                            />
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {!libraryArticles.isLoading && visibleReaderArticleItems.length === 0 ? (
-                      <Text c="dimmed" size="xs" className="reader-side-empty">
-                        {t("reader.noLibraryArticles")}
-                      </Text>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="reader-rail-collapsed-button"
-                  aria-label={t("reader.expandArticles")}
-                  aria-expanded={false}
-                  onClick={() => setReaderArticleRailOpen(true)}
-                >
-                  <BookMarked size={15} aria-hidden="true" />
-                  <span>{t("reader.articleSwitcher")}</span>
-                </button>
-              )}
-            </aside>
-            <div
-              className={`reader-paper-layout${
-                chapterRailEnabled ? "" : " reader-paper-layout-no-chapters"
-              }${chapterRailOpen ? "" : " reader-paper-layout-chapters-collapsed"}`}
-            >
-              {chapterRailEnabled ? (
-                <aside
-                  className={`reader-chapter-rail${
-                    chapterRailOpen ? "" : " reader-chapter-rail-collapsed"
-                  }`}
-                  aria-label={t("reader.chapters")}
-                >
-                  {chapterRailOpen ? (
-                    <>
-                      <div className="reader-chapter-rail-header">
-                        <div>
-                          <Text fw={720} size="sm">
-                            {t("reader.chapters")}
-                          </Text>
-                          <Text c="dimmed" size="xs" lineClamp={1}>
-                            {activeChapterLabel}
-                          </Text>
-                        </div>
-                        <ActionIcon
-                          aria-label={t("reader.collapsePanel", { panel: t("reader.chapters") })}
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => setChaptersOpen(false)}
-                        >
-                          <ChevronLeft size={15} aria-hidden="true" />
-                        </ActionIcon>
+                        <Text c="dimmed" size="xs" lineClamp={1}>
+                          {activeChapterLabel}
+                        </Text>
                       </div>
-                      <nav className="reader-chapter-list" aria-label={t("reader.chapters")}>
-                        {navBlocks.map((block, index) => (
-                          <a
-                            key={block.block_uid}
-                            href={`#${block.block_uid}`}
-                            className={
-                              activeNavBlockUid === block.block_uid
-                                ? "reader-nav-active"
-                                : undefined
-                            }
-                            aria-current={
-                              activeNavBlockUid === block.block_uid ? "location" : undefined
-                            }
-                            onClick={(event) => {
-                              event.preventDefault();
-                              navigateToBlock(block.block_uid);
-                            }}
-                          >
-                            <Badge variant="light" size="sm">
-                              {chapterNumber(index, block)}
-                            </Badge>
-                            <span>{chapterTitle(block)}</span>
-                          </a>
-                        ))}
-                      </nav>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="reader-chapter-rail-tab"
-                      aria-expanded={false}
-                      onClick={() => setChaptersOpen(true)}
-                    >
-                      <ListTree size={15} aria-hidden="true" />
-                      <span>{t("reader.chapters")}</span>
-                    </button>
-                  )}
-                </aside>
-              ) : null}
-              <section className="reader-paper-shell" aria-label={title}>
+                      <ActionIcon
+                        aria-label={t("reader.collapsePanel", { panel: t("reader.chapters") })}
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => setChaptersOpen(false)}
+                      >
+                        <ChevronLeft size={15} aria-hidden="true" />
+                      </ActionIcon>
+                    </div>
+                    <nav className="reader-chapter-list" aria-label={t("reader.chapters")}>
+                      {chapterNavItems.map((item) => (
+                        <a
+                          key={item.uid}
+                          href={`#${item.targetBlockUid}`}
+                          className={
+                            activeChapterNavUid === item.uid ? "reader-nav-active" : undefined
+                          }
+                          aria-current={activeChapterNavUid === item.uid ? "location" : undefined}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            navigateToBlock(item.targetBlockUid);
+                          }}
+                        >
+                          <Badge variant="light" size="sm">
+                            {item.number}
+                          </Badge>
+                          <span>{item.title}</span>
+                        </a>
+                      ))}
+                    </nav>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="reader-chapter-rail-tab"
+                    aria-expanded={false}
+                    onClick={() => setChaptersOpen(true)}
+                  >
+                    <ListTree size={15} aria-hidden="true" />
+                    <span>{t("reader.chapters")}</span>
+                  </button>
+                )}
+              </aside>
+            ) : null}
+            <div className="reader-paper-layout reader-paper-layout-no-chapters">
+              <section
+                className={`reader-paper-shell${
+                  readerNoteStickiesEnabled ? " reader-paper-notes-enabled" : ""
+                }`}
+                aria-label={title}
+              >
                 {readerFeaturePreferences.watermarkVisible ? (
                   <p className="reader-content-watermark">{t("reader.contentWatermark")}</p>
                 ) : null}
@@ -2166,12 +2778,13 @@ export function ReaderPage() {
                   </Alert>
                 ) : null}
                 <ReaderBlockList
-                  blocks={blocks}
+                  blocks={renderBlocks}
                   activeBlockUid={activeBlockUid}
                   fontScale={readerPreferences.fontScale}
                   paragraphSpacingEm={readerPreferences.paragraphSpacingEm}
                   forcedBlockUid={forcedBlockUid}
                   searchTargetBlockUid={currentSearchBlockUid}
+                  navigationBlockUids={navigationBlockUids}
                   getBlockText={blockTextForPlaceholder}
                   onActiveBlockChange={handleActiveBlockChange}
                   onNavigateToBlock={navigateToBlock}
@@ -2180,349 +2793,128 @@ export function ReaderPage() {
               </section>
             </div>
             <aside
-              className={`reader-side-rail reader-right-rail${
+              className={`reader-side-rail reader-right-rail reader-study-rail${
                 readerRightRailOpen ? "" : " reader-side-rail-collapsed"
               }`}
               aria-label={t("reader.workspaceRail")}
             >
               {readerRightRailOpen ? (
                 <>
-                  <div className="reader-rail-header">
+                  <div className="reader-rail-header reader-workspace-header">
                     <div>
                       <Text fw={720} size="sm">
                         {t("reader.workspaceRail")}
                       </Text>
-                      <Text c="dimmed" size="xs">
+                      <Text c="dimmed" size="xs" lineClamp={1}>
                         {t("reader.workspaceRailHelp")}
                       </Text>
                     </div>
                     <ActionIcon
-                      aria-label={t("reader.collapseRightRail")}
+                      aria-label={t("reader.collapsePanel", {
+                        panel: t("reader.workspaceRail")
+                      })}
                       variant="subtle"
                       size="sm"
-                      onClick={closeReaderToolbarPanel}
+                      onClick={() => {
+                        setStudyRailOpen(false);
+                        setActiveReaderOverlay(null);
+                      }}
                     >
                       <ChevronRight size={15} aria-hidden="true" />
                     </ActionIcon>
                   </div>
-                  <ReaderSideTile
-                    title={t("nav.tasks")}
-                    icon={<TerminalSquare size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "tasks"}
-                    onToggle={() => toggleReaderToolbarPanel("tasks")}
-                    badge={
-                      <Badge size="sm" variant="light">
-                        {articleTaskSummary.data?.active ?? 0}
-                      </Badge>
-                    }
-                  >
-                    <div className="reader-dock-task-grid">
-                      <span>
-                        {t("task.statusQueued", { count: articleTaskSummary.data?.queued ?? 0 })}
-                      </span>
-                      <span>
-                        {t("task.statusRunning", { count: articleTaskSummary.data?.running ?? 0 })}
-                      </span>
-                      <span>
-                        {t("task.statusPaused", { count: articleTaskSummary.data?.paused ?? 0 })}
-                      </span>
-                      <span>
-                        {t("task.statusFailed", { count: failedArticleTaskCount })}
-                      </span>
-                    </div>
-                    <Button
-                      fullWidth
-                      size="xs"
-                      variant="light"
-                      leftSection={<TerminalSquare size={14} aria-hidden="true" />}
-                      onClick={openTaskDrawer}
+                  <div className="reader-workspace-tools">
+                    <div
+                      className="reader-workspace-groups"
+                      role="group"
+                      aria-label={t("reader.workspaceModes")}
                     >
-                      {t("reader.manageTasks")}
-                    </Button>
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    title={t("reader.providerPanel")}
-                    icon={<Sparkles size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "providers"}
-                    onToggle={() => toggleReaderToolbarPanel("providers")}
-                    badge={
-                      <Badge size="sm" variant="light">
-                        {providers.data?.length ?? 0}
-                      </Badge>
-                    }
-                  >
-                    <Stack gap="xs">
-                      <Select
-                        label={t("reader.provider")}
-                        placeholder={t("reader.configureProvider")}
-                        value={selectedProviderId}
-                        onChange={setSelectedProviderId}
-                        data={(providers.data ?? []).map((provider) => ({
-                          label: `${provider.name} · ${
-                            provider.default_model ?? t("reader.noModel")
-                          }`,
-                          value: provider.id
-                        }))}
-                      />
-                      <Select
-                        label={t("reader.targetLanguage")}
-                        data={TRANSLATION_TARGET_LOCALES.map((item) => ({
-                          value: item.value,
-                          label: item.nativeLabel
-                        }))}
-                        searchable
-                        value={targetLanguage}
-                        onChange={(value) => {
-                          if (value) setTargetLanguage(value);
-                        }}
-                      />
-                      {(providers.data ?? []).slice(0, 3).map((provider) => (
-                        <div
-                          className="reader-provider-row"
-                          data-active={provider.id === selectedProviderId || undefined}
-                          key={provider.id}
+                      {readerWorkspaceGroups.map((group) => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          className="reader-workspace-group"
+                          aria-pressed={activeReaderWorkspace.id === group.id}
+                          onClick={() => selectReaderWorkspaceGroup(group)}
                         >
-                          <Text size="sm" fw={620} lineClamp={1}>
-                            {provider.name}
-                          </Text>
-                          <Text c="dimmed" size="xs" lineClamp={1}>
-                            {provider.default_model ?? t("reader.noModel")}
-                          </Text>
-                        </div>
+                          <span>{group.label}</span>
+                        </button>
                       ))}
-                      {(providers.data ?? []).length === 0 ? (
-                        <Text c="dimmed" size="xs">
-                          {t("library.noProviderConfigured")}
-                        </Text>
-                      ) : null}
-                      <Button size="xs" variant="subtle" onClick={() => navigate("/settings")}>
-                        {t("nav.settings")}
-                      </Button>
-                    </Stack>
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-ask-tile"
-                    title={t("reader.askPanel")}
-                    icon={<MessageSquare size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "ask"}
-                    onToggle={() => toggleReaderToolbarPanel("ask")}
-                  >
-                    <ChatPanel
-                      messages={chat.data?.messages ?? []}
-                      citedBlocks={
-                        streamingCitedBlocks.length > 0
-                          ? streamingCitedBlocks
-                          : (askQuestion.data?.cited_blocks ?? [])
-                      }
-                      streamingAnswer={streamingAnswer}
-                      referenceTargets={referenceTargets}
-                      selectedBlockUid={chatBlockUid}
-                      question={question}
-                      nativeSearch={nativeSearch}
-                      nativeSearchAvailable={Boolean(selectedProvider?.capabilities?.native_search)}
-                      isAsking={askQuestion.isPending}
-                      isCreatingNotePatch={createNotePatchFromChat.isPending}
-                      canAsk={Boolean(selectedProviderId)}
-                      canCreateNotePatch={Boolean(selectedProviderId)}
-                      error={askQuestion.isError}
-                      onQuestionChange={setQuestion}
-                      onNativeSearchChange={setNativeSearch}
-                      onClearBlock={() => setChatBlockUid(null)}
-                      onAsk={submitQuestion}
-                      onCreateNotePatch={createNotePatchFromMessage}
-                    />
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-tool-tile"
-                    title={t("reader.translate")}
-                    icon={<Languages size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "translate"}
-                    onToggle={() => toggleReaderToolbarPanel("translate")}
-                  >
-                    <div className="panel reader-translation-panel">
-                      <Stack gap="sm">
-                        <Button
-                          fullWidth
-                          leftSection={<Languages size={16} />}
-                          onClick={queueArticleTranslation}
-                          loading={translateArticle.isPending}
-                          disabled={
-                            !selectedProviderId || !targetLanguage.trim() || blocks.length === 0
-                          }
-                        >
-                          {t("reader.translatePaper")}
-                        </Button>
-                        <Checkbox
-                          checked={autoTranslateOnLanguageSwitch}
-                          label={t("reader.autoTranslateOnLanguageSwitch")}
-                          onChange={(event) =>
-                            setAutoTranslateOnLanguageSwitch(event.currentTarget.checked)
-                          }
-                        />
-                        <Text c="dimmed" size="sm">
-                          {t("reader.translationHelp")}
-                        </Text>
-                        {translateArticle.data ? (
-                          <Text c="dimmed" size="sm">
-                            {t("reader.translationQueued", {
-                              jobs: translateArticle.data.jobs_created,
-                              cached: translateArticle.data.cached_blocks
-                            })}
-                          </Text>
-                        ) : null}
-                        {translateArticle.isError || translateBlock.isError ? (
-                          <Text c="red" size="sm">
-                            {t("reader.translationQueueError")}
-                          </Text>
-                        ) : null}
-                      </Stack>
                     </div>
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-tool-tile"
-                    title={t("reader.terms")}
-                    icon={<BookMarked size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "glossary"}
-                    onToggle={() => toggleReaderToolbarPanel("glossary")}
-                  >
-                    <GlossaryPanel
-                      terms={glossary.data?.terms ?? []}
-                      targetLanguage={targetLanguage}
-                      activeVersion={glossary.data?.active_version ?? "glossary:none"}
-                      affectedBlockUids={glossary.data?.affected_block_uids ?? []}
-                      isLoading={glossary.isLoading}
-                      isExtracting={extractGlossary.isPending}
-                      isSaving={createGlossaryTerm.isPending || updateGlossaryTerm.isPending}
-                      canRetranslate={Boolean(selectedProviderId)}
-                      onExtract={() =>
-                        extractGlossary.mutate({
-                          target_language: targetLanguage,
-                          limit: 40
-                        })
-                      }
-                      onCreate={(sourceTerm, targetTerm) =>
-                        createGlossaryTerm.mutate({
-                          source_term: sourceTerm,
-                          target_term: targetTerm,
-                          language_direction: `en->${targetLanguage}`,
-                          status: "active",
-                          metadata: { target_language: targetLanguage }
-                        })
-                      }
-                      onConfirm={(term, targetTerm) =>
-                        updateGlossaryTerm.mutate({
-                          termId: term.id,
-                          payload: {
-                            target_term: targetTerm,
-                            status: "active",
-                            metadata: { target_language: targetLanguage }
-                          }
-                        })
-                      }
-                      onRetranslateAffected={queueAffectedRetranslation}
-                    />
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-tool-tile"
-                    title={t("reader.notes")}
-                    icon={<FileText size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "notes"}
-                    onToggle={() => toggleReaderToolbarPanel("notes")}
-                  >
-                    <Stack gap="sm">
-                      <Group gap="xs" grow>
-                        <Button
-                          size="xs"
-                          variant={readerFeaturePreferences.termCardsEnabled ? "light" : "subtle"}
-                          leftSection={<StickyNote size={14} aria-hidden="true" />}
+                    <div className="reader-workspace-tabs" aria-label={activeReaderWorkspace.label}>
+                      {activeReaderWorkspace.items.map((item) => (
+                        <button
+                          key={item.panel}
+                          type="button"
+                          className="reader-workspace-tab"
+                          aria-label={item.label}
+                          aria-pressed={activeWorkspaceOverlay === item.panel}
+                          data-tone={item.tone}
+                          title={item.label}
                           onClick={() => {
-                            const nextEnabled = !readerFeaturePreferences.termCardsEnabled;
-                            setReaderFeaturePreference("termCardsEnabled", nextEnabled);
-                            setTermWikiEnabled(nextEnabled);
+                            setStudyRailOpen(true);
+                            setActiveReaderOverlay(item.panel);
                           }}
                         >
-                          {t("reader.termWiki")}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          leftSection={<Sparkles size={14} aria-hidden="true" />}
-                          disabled={!hasArticleContext || extractReaderCards.isPending}
-                          loading={extractReaderCards.isPending}
-                          onClick={runCardExtraction}
+                          {item.icon}
+                          <span>{item.label}</span>
+                          {typeof item.badge === "number" && item.badge > 0 ? (
+                            <span className="reader-toolbar-badge">{item.badge}</span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div
+                    className="reader-side-tile reader-workspace-panel reader-tool-tile"
+                    data-tone={readerOverlayTone(activeWorkspaceOverlay)}
+                  >
+                    <div className="reader-workspace-panel-header">
+                      <div className="reader-side-tile-title">
+                        {readerOverlayIcon(activeWorkspaceOverlay)}
+                        <span>{readerOverlayTitle(activeWorkspaceOverlay, t)}</span>
+                      </div>
+                      {activeWorkspaceOverlay === "ask" ? (
+                        <button
+                          type="button"
+                          className="reader-note-stickies-toggle"
+                          aria-pressed={readerNoteStickiesEnabled}
+                          onClick={() => setReaderNoteStickiesOverride(!readerNoteStickiesEnabled)}
                         >
-                          {t("reader.extractCards")}
-                        </Button>
-                      </Group>
-                      <NotesPanel
-                        templates={noteTemplates.data ?? []}
-                        patches={notePatches.data?.patches ?? []}
-                        selectedTemplateId={selectedTemplateId}
-                        isLoading={noteTemplates.isLoading || notePatches.isLoading}
-                        isGenerating={generateNotePatch.isPending}
-                        isSavingPatch={updateNotePatch.isPending}
-                        isSavingTemplate={createNoteTemplate.isPending}
-                        isRejecting={rejectNotePatch.isPending}
-                        canGenerate={Boolean(selectedProviderId && blocks.length > 0)}
-                        error={
-                          generateNotePatch.isError ||
-                          createNoteTemplate.isError ||
-                          updateNotePatch.isError ||
-                          rejectNotePatch.isError
-                        }
-                        onTemplateChange={setSelectedTemplateId}
-                        onGenerate={queueNoteGeneration}
-                        onCreateTemplate={(name, description) =>
-                          createNoteTemplate.mutate(
-                            { name, description, metadata: { source: "reader" } },
-                            { onSuccess: (template) => setSelectedTemplateId(template.id) }
-                          )
-                        }
-                        onSavePatch={(patchId, payload) =>
-                          updateNotePatch.mutate({ patchId, payload })
-                        }
-                        onAcceptEdited={(patchId, payload) =>
-                          updateNotePatch.mutate({
-                            patchId,
-                            payload: {
-                              ...payload,
-                              status: "accepted"
-                            }
-                          })
-                        }
-                        onReject={(patchId) => rejectNotePatch.mutate(patchId)}
-                      />
-                    </Stack>
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-tool-tile"
-                    title={t("reader.export")}
-                    icon={<Download size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "export"}
-                    onToggle={() => toggleReaderToolbarPanel("export")}
-                  >
-                    <ExportPanel
-                      exportKind={exportKind}
-                      targetLanguage={targetLanguage}
-                      result={exportResult}
-                      isExporting={exportArticle.isPending}
-                      error={exportArticle.isError}
-                      downloadUrl={currentExportDownloadUrl}
-                      onExportKindChange={setExportKind}
-                      onExport={queueExport}
-                    />
-                  </ReaderSideTile>
-                  <ReaderSideTile
-                    className="reader-tool-tile"
-                    title={t("reader.preferences")}
-                    icon={<Type size={15} aria-hidden="true" />}
-                    open={activeReaderToolbarPanel === "preferences"}
-                    onToggle={() => toggleReaderToolbarPanel("preferences")}
-                  >
-                    <ReaderPreferencesPanel compact showTitle={false} />
-                  </ReaderSideTile>
+                          <StickyNote size={14} aria-hidden="true" />
+                          <span>{t("reader.notes")}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    <section
+                      ref={readerOverlayRef}
+                      className="reader-side-tile-body reader-workspace-body"
+                      data-overlay={activeWorkspaceOverlay}
+                      onPointerEnter={() => {
+                        readerOverlayPointerInside.current = true;
+                      }}
+                      onPointerLeave={() => {
+                        readerOverlayPointerInside.current = false;
+                      }}
+                    >
+                      {renderReaderOverlayContent(activeWorkspaceOverlay)}
+                    </section>
+                  </div>
                 </>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  className="reader-rail-collapsed-button reader-study-rail-spine"
+                  aria-expanded={false}
+                  onClick={() => {
+                    setStudyRailOpen(true);
+                    setActiveReaderOverlay(null);
+                  }}
+                >
+                  <MessageSquare size={15} aria-hidden="true" />
+                  <span>{t("reader.workspaceShort")}</span>
+                </button>
+              )}
             </aside>
           </section>
         )}
@@ -2532,7 +2924,7 @@ export function ReaderPage() {
             aria-label={t("reader.readingProgress", { progress: readerProgress })}
           >
             <div className="reader-progress-group">
-              <span>
+              <span className="reader-progress-label">
                 {readerSearchQuery
                   ? readerSearchMatches.length > 0
                     ? t("reader.searchCount", {
@@ -2542,11 +2934,32 @@ export function ReaderPage() {
                     : t("reader.searchNoMatches")
                   : t("reader.readingProgress", { progress: readerProgress })}
               </span>
-              <progress value={readerProgress} max={100} />
+              <div
+                className="reader-progress-track"
+                data-complete={readerProgress >= 100 || undefined}
+              >
+                <progress value={readerProgress} max={100} />
+                <span className="reader-progress-milestones" aria-hidden="true">
+                  {READER_PROGRESS_MILESTONES.map((milestone) => (
+                    <span
+                      className="reader-progress-milestone"
+                      data-active={readerProgress >= milestone || undefined}
+                      key={milestone}
+                      style={{ left: `${milestone}%` }}
+                    />
+                  ))}
+                </span>
+              </div>
+              {!readerSearchQuery && readerProgressMilestone ? (
+                <span className="reader-progress-milestone-label" key={readerProgressMilestone.key}>
+                  {readerProgressMilestone.label}
+                </span>
+              ) : null}
             </div>
             <div className="reader-block-counter" aria-live="polite">
               <button
                 type="button"
+                aria-label={t("reader.searchPrevious")}
                 onClick={() => moveReaderSearch(-1)}
                 disabled={readerSearchMatches.length === 0}
               >
@@ -2557,6 +2970,7 @@ export function ReaderPage() {
               </span>
               <button
                 type="button"
+                aria-label={t("reader.searchNext")}
                 onClick={() => moveReaderSearch(1)}
                 disabled={readerSearchMatches.length === 0}
               >
@@ -2573,53 +2987,360 @@ export function ReaderPage() {
   );
 }
 
-interface ReaderSideTileProps {
-  title: string;
-  icon: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  badge?: ReactNode;
-  children: ReactNode;
-  className?: string;
+interface ArticleSwitcherPanelProps {
+  currentArticleId?: string;
+  currentArticleItem: ArticleListItem | null;
+  isLoading: boolean;
+  items: ArticleListItem[];
+  query: string;
+  onQueryChange: (value: string) => void;
+  onSelect: (item: ArticleListItem) => void;
 }
 
-function ReaderSideTile({
-  title,
-  icon,
-  open,
-  onToggle,
-  badge,
-  children,
-  className
-}: ReaderSideTileProps) {
+function ArticleSwitcherPanel({
+  currentArticleId,
+  currentArticleItem,
+  isLoading,
+  items,
+  query,
+  onQueryChange,
+  onSelect
+}: ArticleSwitcherPanelProps) {
   const t = useT();
   return (
-    <section
-      className={`reader-side-tile${open ? " reader-side-tile-open" : ""}${
-        className ? ` ${className}` : ""
-      }`}
-    >
-      <button
-        type="button"
-        className="reader-side-tile-toggle"
-        aria-expanded={open}
-        aria-label={t(open ? "reader.collapsePanel" : "reader.expandPanel", { panel: title })}
-        onClick={onToggle}
-      >
-        <span className="reader-side-tile-title">
-          {icon}
-          <span>{title}</span>
-        </span>
-        <span className="reader-side-tile-actions">
-          {badge}
-          <ChevronDown data-open={open || undefined} size={15} aria-hidden="true" />
-        </span>
-      </button>
-      <Collapse in={open}>
-        <div className="reader-side-tile-body">{children}</div>
-      </Collapse>
-    </section>
+    <Stack gap="sm">
+      <Text c="dimmed" size="xs" lineClamp={2}>
+        {currentArticleItem ? readerArticleTitle(currentArticleItem) : t("reader.noCurrentArticle")}
+      </Text>
+      <TextInput
+        className="reader-article-switch-search"
+        aria-label={t("reader.searchLibraryArticles")}
+        placeholder={t("reader.searchLibraryArticles")}
+        value={query}
+        leftSection={<Search size={14} aria-hidden="true" />}
+        onChange={(event) => onQueryChange(event.currentTarget.value)}
+      />
+      <div className="reader-article-switch-list">
+        {isLoading ? (
+          <Group gap="xs" className="reader-side-loading">
+            <Loader size="xs" />
+            <Text c="dimmed" size="xs">
+              {t("reader.loadingArticles")}
+            </Text>
+          </Group>
+        ) : null}
+        {items.map((item) => {
+          const isActive = item.article_revision.id === currentArticleId;
+          return (
+            <button
+              key={item.article_revision.id}
+              type="button"
+              className="reader-article-switch-item"
+              aria-current={isActive ? "page" : undefined}
+              data-active={isActive || undefined}
+              onClick={() => onSelect(item)}
+            >
+              <span className="reader-article-switch-title">{readerArticleTitle(item)}</span>
+              <span className="reader-article-switch-meta">
+                {readerArticleSourceLabel(item)} · {readerArticleProgressLabel(item)}
+              </span>
+              <span className="reader-article-switch-progress" aria-hidden="true">
+                <span style={{ width: `${readerArticleProgressPercent(item)}%` }} />
+              </span>
+            </button>
+          );
+        })}
+        {!isLoading && items.length === 0 ? (
+          <Text c="dimmed" size="xs" className="reader-side-empty">
+            {t("reader.noLibraryArticles")}
+          </Text>
+        ) : null}
+      </div>
+    </Stack>
   );
+}
+
+interface ReaderSearchPanelProps {
+  query: string;
+  matches: ReaderSearchMatch[];
+  cursor: number;
+  onQueryChange: (value: string) => void;
+  onMove: (delta: number) => void;
+  onClear: () => void;
+  onSelect: (blockUid: string) => void;
+}
+
+function ReaderSearchPanel({
+  query,
+  matches,
+  cursor,
+  onQueryChange,
+  onMove,
+  onClear,
+  onSelect
+}: ReaderSearchPanelProps) {
+  const t = useT();
+  const activeCursor = matches.length > 0 ? Math.min(cursor, matches.length - 1) : 0;
+  return (
+    <Stack gap="sm">
+      <TextInput
+        className="reader-search-input"
+        label={t("reader.searchPaper")}
+        placeholder={t("reader.searchPlaceholder")}
+        value={query}
+        leftSection={<Search size={14} aria-hidden="true" />}
+        onChange={(event) => onQueryChange(event.currentTarget.value)}
+      />
+      <Group justify="space-between" gap="xs">
+        <Text c="dimmed" size="xs" className="reader-search-status">
+          {query
+            ? matches.length > 0
+              ? t("reader.searchCount", {
+                  current: activeCursor + 1,
+                  total: matches.length
+                })
+              : t("reader.searchNoMatches")
+            : t("reader.searchHelp")}
+        </Text>
+        <Group gap={4}>
+          <ActionIcon
+            aria-label={t("reader.searchPrevious")}
+            variant="subtle"
+            size="sm"
+            disabled={matches.length === 0}
+            onClick={() => onMove(-1)}
+          >
+            <ChevronLeft size={14} aria-hidden="true" />
+          </ActionIcon>
+          <ActionIcon
+            aria-label={t("reader.searchNext")}
+            variant="subtle"
+            size="sm"
+            disabled={matches.length === 0}
+            onClick={() => onMove(1)}
+          >
+            <ChevronRight size={14} aria-hidden="true" />
+          </ActionIcon>
+          <Button size="xs" variant="subtle" onClick={onClear}>
+            {t("reader.searchClear")}
+          </Button>
+        </Group>
+      </Group>
+      {matches.length > 0 ? (
+        <Stack gap={4}>
+          {matches.slice(0, 12).map((match, index) => (
+            <button
+              key={`${match.blockUid}-${match.index}`}
+              type="button"
+              className="reader-article-switch-item"
+              data-active={index === activeCursor || undefined}
+              onClick={() => onSelect(match.blockUid)}
+            >
+              <span className="reader-article-switch-title">{match.label}</span>
+              <span className="reader-article-switch-meta">{match.blockUid}</span>
+            </button>
+          ))}
+        </Stack>
+      ) : null}
+    </Stack>
+  );
+}
+
+function ReaderBlockFrame({
+  block,
+  notes,
+  noteStickiesEnabled,
+  isOptimizingNote,
+  canOptimizeNote,
+  onAddNote,
+  onEditNote,
+  onDeleteNote,
+  onOptimizeNote,
+  children
+}: {
+  block: DocumentBlock;
+  notes: ReaderCard[];
+  noteStickiesEnabled: boolean;
+  isOptimizingNote: boolean;
+  canOptimizeNote: boolean;
+  onAddNote: () => void;
+  onEditNote: (card: ReaderCard) => void;
+  onDeleteNote: (card: ReaderCard) => void;
+  onOptimizeNote: (card: ReaderCard) => void;
+  children: ReactNode;
+}) {
+  const t = useT();
+  const canAddNote = block.block_type === "paragraph";
+  return (
+    <div
+      className={`reader-block-frame${noteStickiesEnabled ? " reader-block-frame-notes" : ""}`}
+      data-note-count={notes.length}
+    >
+      <div className="reader-block-frame-main">{children}</div>
+      {noteStickiesEnabled ? (
+        <aside className="reader-note-sticky-slot" aria-label={t("reader.noteStickies")}>
+          {notes.map((card) => (
+            <article className="reader-note-sticky" key={card.id}>
+              <Group justify="space-between" gap={6} wrap="nowrap">
+                <Text fw={700} size="xs" lineClamp={2}>
+                  {card.title}
+                </Text>
+                <Badge size="xs" variant="light">
+                  {t("reader.notes")}
+                </Badge>
+              </Group>
+              {card.body_markdown.trim() ? (
+                <MarkdownContent content={card.body_markdown} referenceTargets={{}} />
+              ) : (
+                <Text c="dimmed" size="xs">
+                  {card.anchor_text}
+                </Text>
+              )}
+              <Group gap={4} wrap="nowrap" className="reader-note-sticky-actions">
+                <Button size="compact-xs" variant="subtle" onClick={() => onEditNote(card)}>
+                  {t("reader.editCard")}
+                </Button>
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  loading={isOptimizingNote}
+                  disabled={!canOptimizeNote}
+                  onClick={() => onOptimizeNote(card)}
+                >
+                  {t("reader.noteOptimize")}
+                </Button>
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="red"
+                  onClick={() => onDeleteNote(card)}
+                >
+                  {t("reader.cardDelete")}
+                </Button>
+              </Group>
+            </article>
+          ))}
+          {notes.length === 0 && canAddNote ? (
+            <Button
+              className="reader-note-sticky-add"
+              size="compact-xs"
+              variant="subtle"
+              leftSection={<StickyNote size={13} aria-hidden="true" />}
+              onClick={onAddNote}
+            >
+              {t("reader.addNoteSticky")}
+            </Button>
+          ) : null}
+        </aside>
+      ) : null}
+    </div>
+  );
+}
+
+function metadataString(metadata: ReaderCard["metadata"] | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readerOverlayTitle(
+  overlay: ReaderOverlayKind,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string
+): string {
+  switch (overlay) {
+    case "ask":
+      return t("reader.fullArticleAsk");
+    case "articles":
+      return t("reader.articleSwitcher");
+    case "search":
+      return t("reader.searchPaper");
+    case "tasks":
+      return t("nav.tasks");
+    case "providers":
+      return t("reader.providerPanel");
+    case "translate":
+      return t("reader.translate");
+    case "glossary":
+      return t("reader.terms");
+    case "noteGenerator":
+      return t("reader.noteGenerator");
+    case "export":
+      return t("reader.export");
+    case "preferences":
+      return t("reader.preferences");
+  }
+}
+
+function readerOverlayIcon(overlay: ReaderOverlayKind): ReactNode {
+  switch (overlay) {
+    case "ask":
+      return <MessageSquare size={15} aria-hidden="true" />;
+    case "articles":
+      return <BookMarked size={15} aria-hidden="true" />;
+    case "search":
+      return <Search size={15} aria-hidden="true" />;
+    case "tasks":
+      return <TerminalSquare size={15} aria-hidden="true" />;
+    case "providers":
+      return <Sparkles size={15} aria-hidden="true" />;
+    case "translate":
+      return <Languages size={15} aria-hidden="true" />;
+    case "glossary":
+      return <BookMarked size={15} aria-hidden="true" />;
+    case "noteGenerator":
+      return <FileText size={15} aria-hidden="true" />;
+    case "export":
+      return <Download size={15} aria-hidden="true" />;
+    case "preferences":
+      return <Type size={15} aria-hidden="true" />;
+  }
+}
+
+function readerOverlayTone(overlay: ReaderOverlayKind): ReaderOverlayTone {
+  switch (overlay) {
+    case "tasks":
+    case "glossary":
+    case "noteGenerator":
+      return "amber";
+    case "ask":
+    case "articles":
+    case "search":
+    case "export":
+      return "blue";
+    case "providers":
+    case "translate":
+      return "teal";
+    case "preferences":
+      return "neutral";
+  }
+}
+
+function readerWorkspaceGroupForOverlay(
+  overlay: ReaderOverlayKind | null
+): ReaderWorkspaceGroupId | null {
+  switch (overlay) {
+    case "ask":
+    case "search":
+    case "preferences":
+      return "read";
+    case "tasks":
+    case "providers":
+    case "translate":
+    case "glossary":
+      return "assist";
+    case "noteGenerator":
+    case "export":
+      return "output";
+    case "articles":
+    case null:
+      return null;
+  }
+}
+
+function readerOverlaySize(overlay: ReaderOverlayKind | null): string {
+  if (overlay === "ask") return "xl";
+  if (overlay === "glossary" || overlay === "noteGenerator") return "xl";
+  if (overlay === "preferences" || overlay === "export") return "lg";
+  return "md";
 }
 
 function filterReaderArticleItems(items: ArticleListItem[], query: string) {
@@ -2725,13 +3446,11 @@ function setCardActionError(
   );
 }
 
-function questionCardTitle(question: string): string {
-  const normalized = question.replace(/\s+/g, " ").trim();
-  if (normalized.length <= 48) return normalized;
-  return `${normalized.slice(0, 47)}...`;
-}
-
 type ReaderPreferenceStyle = CSSProperties & Record<`--${string}`, string>;
+
+function readerRem(pxAtDefaultScale: number, scale: number) {
+  return `${Number(((pxAtDefaultScale * scale) / 16).toFixed(4))}rem`;
+}
 
 function readerStyleForPreferences(preferences: ReaderPreferences): ReaderPreferenceStyle {
   const lineWidthPercent = Math.round(preferences.lineWidthPercent);
@@ -2744,9 +3463,9 @@ function readerStyleForPreferences(preferences: ReaderPreferences): ReaderPrefer
     "--reader-line-width": `${lineWidthPercent}%`,
     "--reader-wide-width": `${Math.round(wideWidthPercent)}%`,
     "--reader-table-width": "min(92%, 860px)",
-    "--reader-body-font-size": `${16.32 * fontScale}px`,
-    "--reader-source-font-size": `${16.72 * fontScale}px`,
-    "--reader-translation-font-size": `${16.24 * fontScale}px`,
+    "--reader-body-font-size": readerRem(16.32, fontScale),
+    "--reader-source-font-size": readerRem(16.72, fontScale),
+    "--reader-translation-font-size": readerRem(16.24, fontScale),
     "--reader-paragraph-spacing": `${preferences.paragraphSpacingEm}em`,
     "--reader-source-column": `${sourceRatio}fr`,
     "--reader-translation-column": `${translationRatio}fr`
@@ -2930,7 +3649,9 @@ function ChatPanel({
         <div>
           <Group gap="xs">
             <MessageSquare size={18} />
-            <Title order={3}>{t("reader.paperChat")}</Title>
+            <Title order={2} className="reader-tool-panel-title">
+              {t("reader.paperChat")}
+            </Title>
           </Group>
           <Text c="dimmed" size="sm">
             {t("reader.paperChatHelp")}
@@ -3103,14 +3824,16 @@ function linkChatSourceRefs(content: string, sourceRefs: string[]) {
 }
 
 function ExternalEvidence({ refs }: { refs: ExternalCitation[] }) {
+  const t = useT();
   return (
     <div className="external-evidence">
       <Text fw={600} size="xs">
-        External evidence
+        {t("reader.externalEvidence")}
       </Text>
       <Stack gap={4} mt={4}>
         {refs.map((ref, index) => {
-          const label = ref.title || ref.url || ref.doi || ref.arxiv_id || "External citation";
+          const label =
+            ref.title || ref.url || ref.doi || ref.arxiv_id || t("reader.externalCitation");
           return (
             <Text size="xs" c="dimmed" key={`${label}-${index}`}>
               {ref.url ? (
@@ -3144,33 +3867,41 @@ function ExportPanel({
   const missingTranslationBlockUids = result?.missing_translation_block_uids ?? [];
   return (
     <div className="panel reader-export-panel">
-      <Group justify="space-between" align="flex-start">
-        <div>
+      <Group className="reader-tool-panel-header" justify="space-between" align="flex-start">
+        <div className="reader-tool-panel-copy">
           <Group gap="xs">
             <Download size={18} />
-            <Title order={3}>Export</Title>
+            <Title order={2} className="reader-tool-panel-title">
+              {t("reader.export")}
+            </Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Create a complete Markdown file or portable bundle and download it through the browser.
+            {t("reader.exportHelp")}
           </Text>
         </div>
-        <Group align="end">
+        <Group className="reader-tool-panel-actions reader-export-actions" align="end">
           <Select
-            label="Export kind"
+            label={t("reader.exportKind")}
             value={exportKind}
             data={[
-              { value: "bilingual_markdown", label: `Bilingual Markdown (${targetLanguage})` },
-              { value: "translated_markdown", label: `Translated Markdown (${targetLanguage})` },
-              { value: "source_markdown", label: "Source Markdown" },
-              { value: "lecture_notes", label: "Lecture notes" },
-              { value: "bundle_zip", label: "Article bundle zip" }
+              {
+                value: "bilingual_markdown",
+                label: t("reader.exportKindBilingual", { language: targetLanguage })
+              },
+              {
+                value: "translated_markdown",
+                label: t("reader.exportKindTranslated", { language: targetLanguage })
+              },
+              { value: "source_markdown", label: t("reader.exportKindSource") },
+              { value: "lecture_notes", label: t("reader.exportKindLectureNotes") },
+              { value: "bundle_zip", label: t("reader.exportKindBundle") }
             ]}
             onChange={(value) => {
               if (value) onExportKindChange(value as ArticleExportKind);
             }}
           />
           <Button leftSection={<Download size={16} />} onClick={onExport} loading={isExporting}>
-            Export and download
+            {t("reader.exportDownload")}
           </Button>
         </Group>
       </Group>
@@ -3180,12 +3911,16 @@ function ExportPanel({
       {result ? (
         <div className="export-result">
           <Text size="sm">
-            Ready: {result.file_name} ({result.bytes_written} bytes). The browser download should
-            start automatically.
+            {t("reader.exportReady", {
+              fileName: result.file_name,
+              bytes: result.bytes_written
+            })}
           </Text>
           {missingTranslationBlockUids.length > 0 ? (
             <Text c="yellow" size="sm">
-              Missing translations: {missingTranslationBlockUids.join(", ")}
+              {t("reader.exportMissingTranslations", {
+                blockUids: missingTranslationBlockUids.join(", ")
+              })}
             </Text>
           ) : null}
           {downloadUrl ? (
@@ -3198,14 +3933,14 @@ function ExportPanel({
               size="xs"
               leftSection={<Download size={14} />}
             >
-              Download file
+              {t("reader.downloadFile")}
             </Button>
           ) : null}
         </div>
       ) : null}
       {error ? (
         <Text c="red" size="sm" mt="xs">
-          Export failed. Check that the article has parsed document artifacts.
+          {t("reader.exportError")}
         </Text>
       ) : null}
     </div>
@@ -3230,6 +3965,7 @@ function NotesPanel({
   onAcceptEdited,
   onReject
 }: NotesPanelProps) {
+  const t = useT();
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
   const [patchDrafts, setPatchDrafts] = useState<Record<string, NotePatchDraft>>({});
@@ -3237,9 +3973,11 @@ function NotesPanel({
     templates.length > 0
       ? templates.map((template) => ({
           value: template.id,
-          label: template.custom ? `${template.name} · custom` : template.name
+          label: template.custom
+            ? t("reader.customTemplateOption", { name: template.name })
+            : template.name
         }))
-      : [{ value: "deep_reading", label: "精读模板" }];
+      : [{ value: "deep_reading", label: t("reader.defaultNoteTemplate") }];
 
   useEffect(() => {
     setPatchDrafts((current) => {
@@ -3280,19 +4018,21 @@ function NotesPanel({
 
   return (
     <div className="panel reader-notes-panel">
-      <Group justify="space-between" align="flex-start">
-        <div>
+      <Group className="reader-tool-panel-header" justify="space-between" align="flex-start">
+        <div className="reader-tool-panel-copy">
           <Group gap="xs">
             <FileText size={18} />
-            <Title order={3}>Lecture notes</Title>
+            <Title order={2} className="reader-tool-panel-title">
+              {t("reader.lectureNotes")}
+            </Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Generate editable learning-note patches from article evidence and saved chat.
+            {t("reader.lectureNotesHelp")}
           </Text>
         </div>
-        <Group align="end">
+        <Group className="reader-tool-panel-actions reader-note-actions" align="end">
           <Select
-            label="Template"
+            label={t("reader.noteTemplate")}
             value={selectedTemplateId}
             data={templateOptions}
             onChange={(value) => {
@@ -3305,21 +4045,21 @@ function NotesPanel({
             loading={isGenerating}
             disabled={!canGenerate || !selectedTemplateId}
           >
-            Generate patch
+            {t("reader.generatePatch")}
           </Button>
         </Group>
       </Group>
-      <Stack gap="xs" mt="md">
-        <Group align="end">
+      <Stack className="reader-tool-form-section" gap="xs" mt="md">
+        <Group className="reader-note-template-form" align="end">
           <TextInput
-            label="Custom template name"
-            placeholder="Seminar critique"
+            label={t("reader.customTemplateName")}
+            placeholder={t("reader.customTemplateNamePlaceholder")}
             value={templateName}
             onChange={(event) => setTemplateName(event.currentTarget.value)}
           />
           <Textarea
-            label="Custom template prompt"
-            placeholder="Focus on assumptions, open questions, and discussion points"
+            label={t("reader.customTemplatePrompt")}
+            placeholder={t("reader.customTemplatePromptPlaceholder")}
             autosize
             minRows={2}
             value={templateDescription}
@@ -3331,7 +4071,7 @@ function NotesPanel({
             loading={isSavingTemplate}
             disabled={!templateName.trim() || !templateDescription.trim()}
           >
-            Save template
+            {t("reader.saveTemplate")}
           </Button>
         </Group>
       </Stack>
@@ -3339,19 +4079,19 @@ function NotesPanel({
         <Group mt="sm">
           <Loader size="sm" />
           <Text c="dimmed" size="sm">
-            Loading note patches...
+            {t("reader.loadingNotePatches")}
           </Text>
         </Group>
       ) : null}
       {error ? (
         <Text c="red" size="sm" mt="xs">
-          Note patch action failed. Check provider settings and the article document.
+          {t("reader.notePatchError")}
         </Text>
       ) : null}
       <Stack gap="sm" mt="md">
         {patches.length === 0 ? (
           <Text c="dimmed" size="sm">
-            No lecture-note patches yet. Generate one from the selected template.
+            {t("reader.notePatchEmpty")}
           </Text>
         ) : null}
         {patches.map((patch) => {
@@ -3362,9 +4102,9 @@ function NotesPanel({
           };
           return (
             <div className="note-patch" key={patch.id}>
-              <Group justify="space-between" align="flex-start">
-                <div>
-                  <Group gap="xs">
+              <Group className="note-patch-header" justify="space-between" align="flex-start">
+                <div className="note-patch-copy">
+                  <Group className="note-patch-title-row" gap="xs">
                     <Badge variant="light" color={noteStatusColor(patch.status)}>
                       {patch.status}
                     </Badge>
@@ -3381,7 +4121,7 @@ function NotesPanel({
                   ) : null}
                 </div>
                 {patch.status === "proposed" ? (
-                  <Group gap="xs">
+                  <Group className="note-patch-actions" gap="xs">
                     <Button
                       size="xs"
                       variant="light"
@@ -3393,7 +4133,7 @@ function NotesPanel({
                       }
                       loading={isSavingPatch}
                     >
-                      Save draft
+                      {t("reader.saveDraft")}
                     </Button>
                     <Button
                       size="xs"
@@ -3408,7 +4148,7 @@ function NotesPanel({
                         })
                       }
                     >
-                      Accept edited
+                      {t("reader.acceptEdited")}
                     </Button>
                     <Button
                       size="xs"
@@ -3418,7 +4158,7 @@ function NotesPanel({
                       loading={isRejecting}
                       onClick={() => onReject(patch.id)}
                     >
-                      Reject
+                      {t("reader.rejectPatch")}
                     </Button>
                   </Group>
                 ) : null}
@@ -3426,14 +4166,14 @@ function NotesPanel({
               {patch.status === "proposed" ? (
                 <Stack gap="xs" mt="sm">
                   <TextInput
-                    label={`Note title for ${patch.id}`}
+                    label={t("reader.noteTitleForPatch", { patchId: patch.id })}
                     value={draft.title}
                     onChange={(event) =>
                       updatePatchDraft(patch.id, { title: event.currentTarget.value })
                     }
                   />
                   <Textarea
-                    label={`Patch markdown for ${patch.id}`}
+                    label={t("reader.patchMarkdownForPatch", { patchId: patch.id })}
                     autosize
                     minRows={5}
                     value={draft.patchMarkdown}
@@ -3472,6 +4212,7 @@ function GlossaryPanel({
   onConfirm,
   onRetranslateAffected
 }: GlossaryPanelProps) {
+  const t = useT();
   const [sourceTerm, setSourceTerm] = useState("");
   const [targetTerm, setTargetTerm] = useState("");
   const [candidateTargets, setCandidateTargets] = useState<Record<string, string>>({});
@@ -3495,24 +4236,26 @@ function GlossaryPanel({
 
   return (
     <div className="panel reader-glossary-panel">
-      <Group justify="space-between" align="flex-start">
-        <div>
+      <Group className="reader-tool-panel-header" justify="space-between" align="flex-start">
+        <div className="reader-tool-panel-copy">
           <Group gap="xs">
             <BookMarked size={18} />
-            <Title order={3}>Glossary</Title>
+            <Title order={2} className="reader-tool-panel-title">
+              {t("reader.glossary")}
+            </Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Article terminology for {targetLanguage}. Active version {activeVersion}.
+            {t("reader.glossaryHelp", { language: targetLanguage, version: activeVersion })}
           </Text>
         </div>
-        <Group>
+        <Group className="reader-tool-panel-actions reader-glossary-actions">
           <Button
             variant="light"
             leftSection={<Sparkles size={16} />}
             onClick={onExtract}
             loading={isExtracting}
           >
-            Extract terms
+            {t("reader.extractTerms")}
           </Button>
           <Button
             variant="light"
@@ -3521,7 +4264,7 @@ function GlossaryPanel({
             disabled={!canRetranslate || affectedBlockUids.length === 0}
             onClick={onRetranslateAffected}
           >
-            Retranslate affected
+            {t("reader.retranslateAffected")}
           </Button>
         </Group>
       </Group>
@@ -3529,24 +4272,23 @@ function GlossaryPanel({
         <Group mt="sm">
           <Loader size="sm" />
           <Text c="dimmed" size="sm">
-            Loading glossary...
+            {t("reader.loadingGlossary")}
           </Text>
         </Group>
       ) : null}
       {affectedBlockUids.length > 0 ? (
         <Alert color="yellow" mt="sm">
-          {affectedBlockUids.length} translated blocks were generated with an older glossary
-          version.
+          {t("reader.glossaryOutdatedBlocks", { count: affectedBlockUids.length })}
         </Alert>
       ) : null}
-      <Group align="end" mt="md">
+      <Group className="reader-glossary-entry-form" align="end" mt="md">
         <TextInput
-          label="Source term"
+          label={t("reader.sourceTerm")}
           value={sourceTerm}
           onChange={(event) => setSourceTerm(event.target.value)}
         />
         <TextInput
-          label="Target term"
+          label={t("reader.targetTerm")}
           value={targetTerm}
           onChange={(event) => setTargetTerm(event.target.value)}
         />
@@ -3556,24 +4298,25 @@ function GlossaryPanel({
           loading={isSaving}
           disabled={!sourceTerm.trim() || !targetTerm.trim()}
         >
-          Add term
+          {t("reader.addTerm")}
         </Button>
       </Group>
       <Divider my="md" />
       <Stack gap="sm">
         {activeTerms.length === 0 && candidates.length === 0 ? (
           <Text c="dimmed" size="sm">
-            No glossary terms yet. Extract candidates from the parsed article or add a term
-            manually.
+            {t("reader.glossaryEmpty")}
           </Text>
         ) : null}
         {activeTerms.map((term) => (
           <div className="glossary-row" key={term.id}>
-            <Badge variant="light" color="green">
-              Active
+            <Badge className="glossary-status" variant="light" color="green">
+              {t("reader.glossaryStatusActive")}
             </Badge>
-            <Text fw={600}>{term.source_term}</Text>
-            <Text c="dimmed">
+            <Text className="glossary-source" fw={600}>
+              {term.source_term}
+            </Text>
+            <Text className="glossary-target" c="dimmed">
               {"=>"} {term.target_term}
             </Text>
           </div>
@@ -3583,17 +4326,17 @@ function GlossaryPanel({
             <div>
               <Group gap="xs">
                 <Badge variant="light" color="gray">
-                  Candidate
+                  {t("reader.glossaryStatusCandidate")}
                 </Badge>
                 <Text fw={600}>{term.source_term}</Text>
               </Group>
               <Text c="dimmed" size="xs">
-                {candidateSummary(term)}
+                {candidateSummary(term, t)}
               </Text>
             </div>
             <TextInput
-              aria-label={`Target term for ${term.source_term}`}
-              placeholder="Confirmed target term"
+              aria-label={t("reader.targetTermForSource", { sourceTerm: term.source_term })}
+              placeholder={t("reader.confirmedTargetTerm")}
               value={candidateTargets[term.id] ?? term.target_term}
               onChange={(event) =>
                 setCandidateTargets((current) => ({
@@ -3609,7 +4352,7 @@ function GlossaryPanel({
               loading={isSaving}
               disabled={!(candidateTargets[term.id] ?? term.target_term).trim()}
             >
-              Confirm
+              {t("reader.confirmTerm")}
             </Button>
           </div>
         ))}
@@ -3624,22 +4367,57 @@ function noteStatusColor(status: string): string {
   return "blue";
 }
 
-function candidateSummary(term: GlossaryTerm): string {
+function candidateSummary(
+  term: GlossaryTerm,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string
+): string {
   const count = term.metadata?.occurrence_count;
   const blockUids = term.metadata?.block_uids;
-  const occurrenceText = typeof count === "number" ? `${count} occurrences` : "rule candidate";
-  const blockText = Array.isArray(blockUids) ? ` · ${blockUids.length} blocks` : "";
+  const occurrenceText =
+    typeof count === "number"
+      ? t("reader.termOccurrenceCount", { count })
+      : t("reader.termRuleCandidate");
+  const blockText = Array.isArray(blockUids)
+    ? ` · ${t("reader.termBlockCount", { count: blockUids.length })}`
+    : "";
   return `${occurrenceText}${blockText}`;
 }
 
-function translationVariantOptions(variants: TranslationVariant[]) {
+function readerProgressMilestoneForProgress(
+  progress: number,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string
+) {
+  if (progress >= 100) {
+    return { key: "complete", label: t("reader.progressMilestoneComplete") };
+  }
+  if (progress >= 75) {
+    return { key: "final", label: t("reader.progressMilestoneFinal") };
+  }
+  if (progress >= 50) {
+    return { key: "half", label: t("reader.progressMilestoneHalf") };
+  }
+  if (progress >= 25) {
+    return { key: "quarter", label: t("reader.progressMilestoneQuarter") };
+  }
+  return null;
+}
+
+function translationVariantOptions(
+  variants: TranslationVariant[],
+  t: (key: MessageKey, values?: Record<string, string | number>) => string
+) {
   return variants.map((variant, index) => {
     const source =
       variant.metadata?.cache_source === "translation_memory"
-        ? "memory"
-        : (variant.model ?? "local");
-    const status = variant.validation_status === "ok" ? "ok" : variant.validation_status;
-    const prefix = variant.is_default ? "Default" : `Variant ${index + 1}`;
+        ? t("reader.translationSourceMemory")
+        : (variant.model ?? t("reader.translationSourceLocal"));
+    const status =
+      variant.validation_status === "ok"
+        ? t("reader.translationStatusOk")
+        : variant.validation_status;
+    const prefix = variant.is_default
+      ? t("reader.translationVariantDefault")
+      : t("reader.translationVariantNumber", { number: index + 1 });
     return {
       value: variant.id,
       label: `${prefix} · ${source} · ${status}`
@@ -3859,10 +4637,7 @@ function termAnnotationsForBlock(
   return [...annotations.values()];
 }
 
-function addTermAnnotation(
-  annotations: Map<string, TermAnnotation>,
-  annotation: TermAnnotation
-) {
+function addTermAnnotation(annotations: Map<string, TermAnnotation>, annotation: TermAnnotation) {
   const term = annotation.term.trim();
   const definition = annotation.definition.trim();
   if (!term || !definition) return;
@@ -3950,6 +4725,97 @@ function navBlockUidMapForBlocks(blocks: DocumentBlock[]) {
     if (!map.has(block.block_uid)) map.set(block.block_uid, firstSection);
   }
   return map;
+}
+
+function readerRenderSourcesForBlocks(blocks: DocumentBlock[], documentTitle: string) {
+  if (blocks.length === 0) return [];
+  const sections = blocks.flatMap((block, index) =>
+    block.block_type === "section" ? [{ block, index, level: readerStructuralLevel(block) }] : []
+  );
+  if (sections.length === 0) return [wholeDocumentRenderSource(blocks, documentTitle)];
+
+  const titleKey = normalizedRenderSourceTitle(documentTitle);
+  const candidateSections = sections.filter(
+    ({ block, index }) =>
+      !(index <= 1 && titleKey && normalizedRenderSourceTitle(chapterTitle(block)) === titleKey)
+  );
+  const boundaryLevel = renderSourceBoundaryLevel(candidateSections);
+  if (boundaryLevel === null) return [wholeDocumentRenderSource(blocks, documentTitle)];
+  const boundaries = candidateSections.filter((entry) => entry.level === boundaryLevel);
+  if (boundaries.length === 0) return [wholeDocumentRenderSource(blocks, documentTitle)];
+
+  const sources: ReaderRenderSource[] = [];
+  const firstBoundaryIndex = boundaries[0]?.index ?? 0;
+  if (firstBoundaryIndex > 0) {
+    sources.push({
+      uid: blocks[0].block_uid,
+      title: documentTitle || "Front matter",
+      startIndex: 0,
+      endIndex: firstBoundaryIndex,
+      blockCount: firstBoundaryIndex
+    });
+  }
+
+  boundaries.forEach((entry, index) => {
+    const endIndex = boundaries[index + 1]?.index ?? blocks.length;
+    sources.push({
+      uid: entry.block.block_uid,
+      title: chapterTitle(entry.block),
+      startIndex: entry.index,
+      endIndex,
+      blockCount: endIndex - entry.index
+    });
+  });
+  return sources.length > 0 ? sources : [wholeDocumentRenderSource(blocks, documentTitle)];
+}
+
+function wholeDocumentRenderSource(blocks: DocumentBlock[], title: string): ReaderRenderSource {
+  return {
+    uid: blocks[0]?.block_uid ?? "document",
+    title: title || "Document",
+    startIndex: 0,
+    endIndex: blocks.length,
+    blockCount: blocks.length
+  };
+}
+
+function renderSourceBoundaryLevel(
+  sections: { block: DocumentBlock; index: number; level: number }[]
+) {
+  if (sections.length === 0) return null;
+  const counts = new Map<number, number>();
+  for (const section of sections) {
+    counts.set(section.level, (counts.get(section.level) ?? 0) + 1);
+  }
+  const levels = [...counts.keys()].sort((left, right) => left - right);
+  return levels.find((level) => (counts.get(level) ?? 0) >= 2) ?? levels[0] ?? null;
+}
+
+function renderSourceMapForBlocks(blocks: DocumentBlock[], sources: ReaderRenderSource[]) {
+  const map = new Map<string, ReaderRenderSource>();
+  for (const source of sources) {
+    for (
+      let index = source.startIndex;
+      index < Math.min(source.endIndex, blocks.length);
+      index += 1
+    ) {
+      map.set(blocks[index].block_uid, source);
+    }
+  }
+  return map;
+}
+
+function normalizedRenderSourceTitle(value: string) {
+  return value
+    .replace(/^#+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function readerStructuralLevel(block: DocumentBlock): number {
+  const level = block.metadata?.level;
+  return typeof level === "number" && Number.isFinite(level) ? level : 2;
 }
 
 function assetUrl(

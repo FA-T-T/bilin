@@ -2,21 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from time import monotonic
+from time import monotonic, time
 
 import httpx
+
+from bilin_api.database import init_global_db, open_db, utc_now
+
+ArxivApiParams = Mapping[str, str | int | float | bool | None]
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_SOURCE_URL = "https://arxiv.org/e-print/{idv}"
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{idv}.pdf"
+ARXIV_RATE_LIMIT_SETTING_KEY = "network.arxiv.last_request_at"
 DEFAULT_ARXIV_API_INTERVAL_SECONDS = 3.0
 DEFAULT_ARXIV_API_RETRIES = 2
+DEFAULT_ARXIV_API_TIMEOUT_SECONDS = 120.0
+DEFAULT_ARXIV_DOWNLOAD_TIMEOUT_SECONDS = 300.0
 MAX_RETRY_AFTER_SECONDS = 60.0
+RETRYABLE_ARXIV_STATUS_CODES = {429, 500, 502, 503, 504}
 OLD_STYLE_ARCHIVE_ALIASES = {
     "condmat": "cond-mat",
     "adaporg": "adap-org",
@@ -44,8 +54,8 @@ class ArxivFetchError(RuntimeError):
     pass
 
 
-_ARXIV_API_LOCK = asyncio.Lock()
-_LAST_ARXIV_API_REQUEST_AT = 0.0
+_ARXIV_REQUEST_LOCK = asyncio.Lock()
+_LAST_ARXIV_REQUEST_AT = 0.0
 
 
 @dataclass(frozen=True)
@@ -92,6 +102,42 @@ class ArxivMetadata:
         }
 
 
+def arxiv_metadata_from_json(data: Mapping[str, object]) -> ArxivMetadata:
+    return ArxivMetadata(
+        bare_id=required_string(data, "bare_id"),
+        version=required_string(data, "version"),
+        concrete_id=required_string(data, "concrete_id"),
+        title=required_string(data, "title"),
+        authors=string_list(data.get("authors")),
+        summary=required_string(data, "summary"),
+        published=optional_string(data.get("published")),
+        updated=optional_string(data.get("updated")),
+        primary_category=optional_string(data.get("primary_category")),
+        categories=string_list(data.get("categories")),
+        abs_url=required_string(data, "abs_url"),
+        source_url=required_string(data, "source_url"),
+        pdf_url=required_string(data, "pdf_url"),
+    )
+
+
+def required_string(data: Mapping[str, object], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str):
+        msg = f"Invalid cached arXiv metadata field: {key}"
+        raise ValueError(msg)
+    return value
+
+
+def optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def parse_arxiv_identity(value: str, version: str | None = None) -> ArxivIdentity:
     cleaned = value.strip()
     cleaned = cleaned.removeprefix("arXiv:").removeprefix("arxiv:")
@@ -135,7 +181,7 @@ async def resolve_arxiv_metadata(
     identity = parse_arxiv_identity(arxiv_id, version)
     id_for_query = identity.concrete_id if identity.version else identity.bare_id
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=30)
+    active_client = client or httpx.AsyncClient(timeout=arxiv_api_timeout_seconds())
     try:
         response = await get_arxiv_api_response(
             active_client,
@@ -160,7 +206,7 @@ async def search_arxiv_latest_by_title(
     if not query:
         return None
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=30)
+    active_client = client or httpx.AsyncClient(timeout=arxiv_api_timeout_seconds())
     try:
         response = await get_arxiv_api_response(
             active_client,
@@ -174,6 +220,8 @@ async def search_arxiv_latest_by_title(
         )
         response.raise_for_status()
         return best_title_match(response.text, query)
+    except httpx.HTTPError as exc:
+        raise ArxivFetchError(http_error_message("arXiv title search", query, exc)) from exc
     finally:
         if owns_client:
             await active_client.aclose()
@@ -266,9 +314,12 @@ def normalize_title(title: str) -> str:
 
 async def download_bytes(url: str, client: httpx.AsyncClient | None = None) -> bytes:
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=120, follow_redirects=True)
+    active_client = client or httpx.AsyncClient(
+        timeout=arxiv_download_timeout_seconds(),
+        follow_redirects=True,
+    )
     try:
-        response = await active_client.get(url)
+        response = await get_arxiv_download_response(active_client, url)
         response.raise_for_status()
         return response.content
     except httpx.HTTPError as exc:
@@ -294,34 +345,127 @@ def http_error_message(action: str, target: str, exc: httpx.HTTPError) -> str:
 async def get_arxiv_api_response(
     client: httpx.AsyncClient,
     *,
-    params: dict[str, object],
+    params: ArxivApiParams,
 ) -> httpx.Response:
-    attempts = max(0, arxiv_api_retries()) + 1
+    attempts = arxiv_request_attempts()
     response: httpx.Response | None = None
+    last_error: httpx.TransportError | None = None
     for attempt in range(attempts):
         await wait_for_arxiv_api_slot()
-        response = await client.get(ARXIV_API_URL, params=params)
-        if response.status_code != 429 or attempt >= attempts - 1:
+        try:
+            response = await client.get(ARXIV_API_URL, params=params)
+        except httpx.TransportError as exc:
+            last_error = exc
+            if attempt >= attempts - 1:
+                raise
+            await sleep_for_arxiv_retry(None, attempt)
+            continue
+        if not should_retry_arxiv_response(response) or attempt >= attempts - 1:
             return response
-        await asyncio.sleep(arxiv_retry_delay(response, attempt))
+        await sleep_for_arxiv_retry(response, attempt)
+    if last_error is not None:
+        raise last_error
     if response is None:
         msg = "arXiv API request did not produce a response."
         raise RuntimeError(msg)
     return response
 
 
-async def wait_for_arxiv_api_slot() -> None:
-    global _LAST_ARXIV_API_REQUEST_AT  # noqa: PLW0603
+async def get_arxiv_download_response(
+    client: httpx.AsyncClient,
+    url: str,
+) -> httpx.Response:
+    attempts = arxiv_request_attempts()
+    response: httpx.Response | None = None
+    last_error: httpx.TransportError | None = None
+    for attempt in range(attempts):
+        await wait_for_arxiv_request_slot()
+        try:
+            response = await client.get(url)
+        except httpx.TransportError as exc:
+            last_error = exc
+            if attempt >= attempts - 1:
+                raise
+            await sleep_for_arxiv_retry(None, attempt)
+            continue
+        if not should_retry_arxiv_response(response) or attempt >= attempts - 1:
+            return response
+        await sleep_for_arxiv_retry(response, attempt)
+    if last_error is not None:
+        raise last_error
+    if response is None:
+        msg = "arXiv download request did not produce a response."
+        raise RuntimeError(msg)
+    return response
 
-    interval = arxiv_api_interval_seconds()
+
+async def wait_for_arxiv_api_slot() -> None:
+    await wait_for_arxiv_request_slot()
+
+
+async def wait_for_arxiv_request_slot() -> None:
+    interval = arxiv_request_interval_seconds()
     if interval <= 0:
         return
-    async with _ARXIV_API_LOCK:
-        elapsed = monotonic() - _LAST_ARXIV_API_REQUEST_AT
+    try:
+        await wait_for_persistent_arxiv_request_slot(interval)
+    except Exception:
+        await wait_for_process_arxiv_request_slot(interval)
+
+
+async def wait_for_persistent_arxiv_request_slot(interval: float) -> None:
+    while True:
+        db_path = await init_global_db()
+        async with open_db(db_path) as conn:
+            await conn.execute("BEGIN IMMEDIATE")
+            cursor = await conn.execute(
+                "SELECT value_json FROM app_settings WHERE key = ?",
+                (ARXIV_RATE_LIMIT_SETTING_KEY,),
+            )
+            row = await cursor.fetchone()
+            last_request_at = arxiv_last_request_at(row["value_json"] if row else None)
+            now = time()
+            wait_seconds = interval - (now - last_request_at)
+            if wait_seconds <= 0:
+                await conn.execute(
+                    """
+                    INSERT INTO app_settings(key, value_json, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value_json = excluded.value_json,
+                      updated_at = excluded.updated_at
+                    """,
+                    (ARXIV_RATE_LIMIT_SETTING_KEY, json.dumps(now), utc_now()),
+                )
+                await conn.commit()
+                return
+            await conn.commit()
+        await asyncio.sleep(wait_seconds)
+
+
+def arxiv_last_request_at(value_json: str | None) -> float:
+    if not value_json:
+        return 0.0
+    try:
+        value = json.loads(value_json)
+    except json.JSONDecodeError:
+        return 0.0
+    return value if isinstance(value, (int, float)) and value > 0 else 0.0
+
+
+async def wait_for_process_arxiv_request_slot(interval: float) -> None:
+    global _LAST_ARXIV_REQUEST_AT  # noqa: PLW0603
+
+    async with _ARXIV_REQUEST_LOCK:
+        elapsed = monotonic() - _LAST_ARXIV_REQUEST_AT
         wait_seconds = interval - elapsed
         if wait_seconds > 0:
             await asyncio.sleep(wait_seconds)
-        _LAST_ARXIV_API_REQUEST_AT = monotonic()
+        _LAST_ARXIV_REQUEST_AT = monotonic()
+
+
+def arxiv_request_interval_seconds() -> float:
+    return env_float("BILIN_ARXIV_REQUEST_INTERVAL_SECONDS", arxiv_api_interval_seconds())
 
 
 def arxiv_api_interval_seconds() -> float:
@@ -332,11 +476,40 @@ def arxiv_api_retries() -> int:
     return max(0, int(env_float("BILIN_ARXIV_API_RETRIES", DEFAULT_ARXIV_API_RETRIES)))
 
 
-def arxiv_retry_delay(response: httpx.Response, attempt: int) -> float:
-    retry_after = parse_retry_after(response.headers.get("Retry-After"))
+def arxiv_api_timeout_seconds() -> float:
+    return env_float("BILIN_ARXIV_API_TIMEOUT_SECONDS", DEFAULT_ARXIV_API_TIMEOUT_SECONDS)
+
+
+def arxiv_download_timeout_seconds() -> float:
+    return env_float(
+        "BILIN_ARXIV_DOWNLOAD_TIMEOUT_SECONDS",
+        DEFAULT_ARXIV_DOWNLOAD_TIMEOUT_SECONDS,
+    )
+
+
+def arxiv_request_retries() -> int:
+    return max(0, int(env_float("BILIN_ARXIV_RETRIES", arxiv_api_retries())))
+
+
+def arxiv_request_attempts() -> int:
+    return arxiv_request_retries() + 1
+
+
+def should_retry_arxiv_response(response: httpx.Response) -> bool:
+    return response.status_code in RETRYABLE_ARXIV_STATUS_CODES
+
+
+async def sleep_for_arxiv_retry(response: httpx.Response | None, attempt: int) -> None:
+    delay = arxiv_retry_delay(response, attempt)
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+
+def arxiv_retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    retry_after = parse_retry_after(response.headers.get("Retry-After")) if response else None
     if retry_after is not None:
         return retry_after
-    return min(MAX_RETRY_AFTER_SECONDS, arxiv_api_interval_seconds() * (2**attempt))
+    return min(MAX_RETRY_AFTER_SECONDS, arxiv_request_interval_seconds() * (2**attempt))
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -376,7 +549,7 @@ async def search_arxiv(
     client: httpx.AsyncClient | None = None,
 ) -> list[ArxivMetadata]:
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=30)
+    active_client = client or httpx.AsyncClient(timeout=arxiv_api_timeout_seconds())
     try:
         response = await get_arxiv_api_response(
             active_client,
@@ -390,6 +563,8 @@ async def search_arxiv(
         )
         response.raise_for_status()
         return parse_arxiv_search_feed(response.text)
+    except httpx.HTTPError as exc:
+        raise ArxivFetchError(http_error_message("arXiv search", search_query, exc)) from exc
     finally:
         if owns_client:
             await active_client.aclose()

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-0.3.4}"
+VERSION="${1:-0.3.5}"
 PACKAGE_NAME="bilin-v${VERSION}-source"
 RELEASE_DIR="${ROOT_DIR}/release"
 STAGING_ROOT="${RELEASE_DIR}/.staging"
@@ -42,6 +42,7 @@ rsync -a "${ROOT_DIR}/" "${STAGING_DIR}/" \
   --exclude "local-data/" \
   --exclude "tmp/" \
   --exclude "marketing/" \
+  --exclude ".impeccable/" \
   --exclude ".bilin/" \
   --exclude ".bilin-test/" \
   --exclude "release/"

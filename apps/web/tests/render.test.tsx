@@ -13,7 +13,12 @@ import { TaskDrawer } from "../src/components/TaskDrawer";
 import { LibraryDetailPage } from "../src/pages/LibraryDetailPage";
 import { ReaderPage } from "../src/pages/ReaderPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
-import type { DocumentBlock, ReaderCard } from "../src/api/types";
+import type {
+  ArticleTaskProgress,
+  ArticleTaskSummary,
+  DocumentBlock,
+  ReaderCard
+} from "../src/api/types";
 import { useUiStore } from "../src/state/ui";
 
 beforeEach(() => {
@@ -21,6 +26,7 @@ beforeEach(() => {
   useUiStore.getState().resetReaderPreferences();
   useUiStore.getState().resetReaderFeaturePreferences();
   useUiStore.getState().setReaderSurfaceMode("workbench");
+  useUiStore.getState().setActiveReaderOverlay(null);
   useUiStore.getState().setTranslationTargetLanguage("zh-CN");
   useUiStore.getState().setAutoTranslateOnLanguageSwitch(true);
   window.history.replaceState(null, "", "/");
@@ -35,6 +41,7 @@ afterEach(() => {
   useUiStore.getState().closeTaskDrawer();
   useUiStore.getState().setReaderViewMode("study");
   useUiStore.getState().setReaderSurfaceMode("workbench");
+  useUiStore.getState().setActiveReaderOverlay(null);
   useUiStore.getState().setLocale("en");
   useUiStore.getState().resetReaderPreferences();
   useUiStore.getState().resetReaderFeaturePreferences();
@@ -93,6 +100,13 @@ function mockElementRect(
 
 function dispatchWindowPointerMove(clientX: number, clientY: number) {
   const event = new Event("pointermove");
+  Object.defineProperty(event, "clientX", { value: clientX });
+  Object.defineProperty(event, "clientY", { value: clientY });
+  window.dispatchEvent(event);
+}
+
+function dispatchWindowPointerDown(clientX: number, clientY: number) {
+  const event = new Event("pointerdown");
   Object.defineProperty(event, "clientX", { value: clientX });
   Object.defineProperty(event, "clientY", { value: clientY });
   window.dispatchEvent(event);
@@ -180,10 +194,79 @@ function syntheticDocumentPayload(count = 300) {
 }
 
 async function openReaderTool(
-  name: "Model provider" | "Translate" | "Terms" | "Ask" | "Notes" | "Export"
+  name: "Model provider" | "Translate" | "Terms" | "Ask" | "Notes" | "Note generator" | "Export"
 ) {
-  if (screen.queryByRole("button", { name: `Collapse ${name}` })) return;
-  await userEvent.click(await screen.findByRole("button", { name }));
+  const toolName = name === "Ask" ? "Full paper Q&A" : name;
+  const groupName =
+    name === "Ask" ? "Read" : name === "Note generator" || name === "Export" ? "Output" : "Assist";
+  if (name === "Ask") {
+    if (screen.queryByLabelText("Question")) return;
+  }
+  if (screen.queryByRole("dialog", { name: toolName })) return;
+  if (screen.queryByRole("button", { name: `Collapse ${toolName}` })) return;
+  const workspaceButton = screen.queryByRole("button", { name: "Reader workspace" });
+  if (workspaceButton && workspaceButton.getAttribute("aria-pressed") !== "true") {
+    await userEvent.click(workspaceButton);
+  }
+  const groupButton = screen.queryByRole("button", { name: groupName });
+  if (groupButton && groupButton.getAttribute("aria-pressed") !== "true") {
+    await userEvent.click(groupButton);
+  }
+  const toolButton = await waitFor(() => {
+    const button = screen
+      .getAllByRole("button", { name: toolName })
+      .find((candidate) => candidate.classList.contains("reader-workspace-tab"));
+    if (!button) throw new Error(`${toolName} workspace button not found.`);
+    return button;
+  });
+  if (toolButton.getAttribute("aria-pressed") !== "true") {
+    await userEvent.click(toolButton);
+  }
+}
+
+function articleTaskProgress(overrides: Partial<ArticleTaskProgress> = {}): ArticleTaskProgress {
+  return {
+    id: "article-task-1",
+    library_id: "library-1",
+    article_revision_id: "revision-1",
+    article_title: "Fixture paper",
+    source_id: "2208.06563",
+    status: "running",
+    stage: "parse_article",
+    message: "Parsing TeX",
+    progress: 0.1,
+    current: 1,
+    total: 1,
+    queued_jobs: 0,
+    running_jobs: 1,
+    paused_jobs: 0,
+    succeeded_jobs: 0,
+    failed_jobs: 0,
+    cancelled_jobs: 0,
+    active_jobs: 1,
+    job_ids: ["job-1"],
+    failed_job_ids: [],
+    error: null,
+    updated_at: new Date().toISOString(),
+    ...overrides
+  };
+}
+
+function articleTaskSummary(overrides: Partial<ArticleTaskSummary> = {}): ArticleTaskSummary {
+  return {
+    total: 0,
+    queued: 0,
+    running: 0,
+    paused: 0,
+    succeeded: 0,
+    failed: 0,
+    cancelled: 0,
+    active: 0,
+    failed_items: 0,
+    updated_at: new Date().toISOString(),
+    items: [],
+    ...overrides
+  };
 }
 
 async function findReaderSourcePane(blockUid = "p-0001") {
@@ -943,7 +1026,7 @@ I_{n}\\[1.0pt]
 
     expect(screen.queryByLabelText("Copy source")).not.toBeInTheDocument();
     await userEvent.hover(container.querySelector(".reader-block") as HTMLElement);
-    expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Copy source")).toBeInTheDocument();
   });
 
   it("keeps block toolbars alive while the pointer stays inside the operation boundary", async () => {
@@ -961,7 +1044,7 @@ I_{n}\\[1.0pt]
     const block = container.querySelector(".reader-block") as HTMLElement;
 
     fireEvent.pointerEnter(block);
-    expect(screen.getByLabelText("Copy source")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Copy source")).toBeInTheDocument();
     const toolbar = container.querySelector(".hover-toolbar") as HTMLElement;
     mockElementRect(block, { left: 100, top: 100, right: 500, bottom: 180 });
     mockElementRect(toolbar, { left: 54, top: 112, right: 90, bottom: 168 });
@@ -984,10 +1067,89 @@ I_{n}\\[1.0pt]
 
     expect(screen.queryByLabelText("Paragraph question")).not.toBeInTheDocument();
     await userEvent.hover(container.querySelector(".reader-block") as HTMLElement);
-    await userEvent.type(screen.getByLabelText("Paragraph question"), "Why does this matter?");
+    await userEvent.type(
+      await screen.findByLabelText("Paragraph question"),
+      "Why does this matter?"
+    );
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(onQuickAsk).toHaveBeenCalledWith(block, "Why does this matter?");
+  });
+
+  it("keeps paragraph quick ask open while the pointer travels into the card", () => {
+    vi.useFakeTimers();
+    try {
+      const onQuickAsk = vi.fn();
+      const { container } = renderWithProviders(
+        <ReaderBlock
+          block={readerTestBlock(
+            "p-quick-ask-delay",
+            "paragraph",
+            "A paragraph with a delayed quick ask card."
+          )}
+          viewMode="source"
+          canQuickAsk
+          onQuickAsk={onQuickAsk}
+        />
+      );
+      const block = container.querySelector(".reader-block") as HTMLElement;
+      mockElementRect(block, { left: 100, top: 100, right: 500, bottom: 190 });
+
+      fireEvent.pointerEnter(block, { clientX: 130, clientY: 130 });
+      expect(screen.queryByLabelText("Paragraph question")).not.toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(120));
+
+      const quickAsk = screen.getByLabelText("Paragraph question");
+      const quickAskForm = quickAsk.closest("form") as HTMLElement;
+      mockElementRect(quickAskForm, { left: 610, top: 108, right: 870, bottom: 260 });
+      expect(quickAsk).toBeInTheDocument();
+
+      act(() => dispatchWindowPointerMove(552, 142));
+      act(() => vi.advanceTimersByTime(700));
+      expect(screen.getByLabelText("Paragraph question")).toBeInTheDocument();
+
+      act(() => dispatchWindowPointerMove(720, 150));
+      act(() => vi.advanceTimersByTime(700));
+      expect(screen.getByLabelText("Paragraph question")).toBeInTheDocument();
+
+      act(() => dispatchWindowPointerMove(24, 48));
+      act(() => vi.advanceTimersByTime(649));
+      expect(screen.getByLabelText("Paragraph question")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.queryByLabelText("Paragraph question")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes paragraph quick ask immediately on outside pointer down", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = renderWithProviders(
+        <ReaderBlock
+          block={readerTestBlock(
+            "p-quick-ask-outside",
+            "paragraph",
+            "A paragraph with an outside pointer dismissal."
+          )}
+          viewMode="source"
+          canQuickAsk
+          onQuickAsk={() => undefined}
+        />
+      );
+      const block = container.querySelector(".reader-block") as HTMLElement;
+      mockElementRect(block, { left: 100, top: 100, right: 500, bottom: 190 });
+
+      fireEvent.pointerEnter(block, { clientX: 130, clientY: 130 });
+      act(() => vi.advanceTimersByTime(120));
+      expect(screen.getByLabelText("Paragraph question")).toBeInTheDocument();
+
+      act(() => dispatchWindowPointerDown(20, 20));
+      expect(screen.queryByLabelText("Paragraph question")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("places paragraph quick ask inside the viewport near the page edge", async () => {
@@ -1506,6 +1668,39 @@ I_{n}\\[1.0pt]
     expect(screen.queryByTestId("reader-block-shell-p-0040")).not.toBeInTheDocument();
   });
 
+  it("reuses virtual placeholder estimates while active reader blocks move", () => {
+    const blocks = syntheticReaderBlocks(300);
+    const getBlockText = vi.fn((block: DocumentBlock) => block.source_markdown);
+    const renderBlock = (block: DocumentBlock) => (
+      <div className="synthetic-block">{block.block_uid}</div>
+    );
+    const { rerender } = render(
+      <ReaderBlockList
+        blocks={blocks}
+        activeBlockUid="p-0001"
+        getBlockText={getBlockText}
+        onActiveBlockChange={() => undefined}
+        renderBlock={renderBlock}
+      />
+    );
+
+    const initialEstimateCount = getBlockText.mock.calls.length;
+    expect(initialEstimateCount).toBeGreaterThan(180);
+
+    getBlockText.mockClear();
+    rerender(
+      <ReaderBlockList
+        blocks={blocks}
+        activeBlockUid="p-0251"
+        getBlockText={getBlockText}
+        onActiveBlockChange={() => undefined}
+        renderBlock={renderBlock}
+      />
+    );
+
+    expect(getBlockText.mock.calls.length).toBeLessThan(20);
+  });
+
   it("materializes virtualized hash targets before navigation callbacks finish", async () => {
     const blocks = syntheticReaderBlocks(300);
     function Harness() {
@@ -1832,46 +2027,39 @@ I_{n}\\[1.0pt]
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/jobs/summary")) {
-          return jsonResponse({
-            total: 1,
-            queued: 0,
-            running: 0,
-            paused: 0,
-            succeeded: 0,
-            failed: 1,
-            cancelled: 0,
-            active: 0,
-            updated_at: new Date().toISOString()
-          });
+        if (url.includes("/jobs/articles?limit=")) {
+          return jsonResponse(
+            articleTaskSummary({
+              total: 1,
+              failed: 1,
+              failed_items: 1,
+              items: [
+                articleTaskProgress({
+                  id: "article-task-parse",
+                  article_title: "Fixture paper",
+                  source_id: "2208.06563",
+                  stage: "parse_article",
+                  message: "Dependency check failed",
+                  progress: 0.1,
+                  running_jobs: 0,
+                  failed_jobs: 1,
+                  failed_job_ids: ["job-parse-1"],
+                  active_jobs: 0,
+                  job_ids: ["job-parse-1"],
+                  status: "failed",
+                  error: {
+                    code: "missing_dependency:latexml",
+                    message: "latexml was not found on PATH. Install LaTeXML to parse TeX sources.",
+                    details: {
+                      install_hint: "Install LaTeXML so both latexml and latexmlpost are on PATH."
+                    }
+                  }
+                })
+              ]
+            })
+          );
         }
-        if (url.includes("/jobs?limit=")) {
-          return jsonResponse([
-            {
-              id: "job-parse-1",
-              type: "parse_article",
-              status: "failed",
-              priority: 0,
-              payload: { article_revision_id: "revision-1" },
-              result: null,
-              error: {
-                code: "missing_dependency:latexml",
-                message: "latexml was not found on PATH. Install LaTeXML to parse TeX sources.",
-                details: {
-                  install_hint: "Install LaTeXML so both latexml and latexmlpost are on PATH."
-                }
-              },
-              progress: 0.1,
-              attempts: 1,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              started_at: new Date().toISOString(),
-              finished_at: new Date().toISOString(),
-              lease_owner: "worker-test"
-            }
-          ]);
-        }
-        return jsonResponse([]);
+        return jsonResponse(articleTaskSummary());
       })
     );
     useUiStore.getState().openTaskDrawer();
@@ -1879,7 +2067,8 @@ I_{n}\\[1.0pt]
     renderWithProviders(<TaskDrawer />);
 
     expect(await screen.findByText("Background tasks")).toBeInTheDocument();
-    expect(await screen.findByText("parse_article")).toBeInTheDocument();
+    expect(await screen.findByText("Fixture paper")).toBeInTheDocument();
+    expect(await screen.findByText("Dependency check failed")).toBeInTheDocument();
     expect(await screen.findByText(/missing_dependency:latexml/)).toBeInTheDocument();
     expect(await screen.findByText(/Install LaTeXML/)).toBeInTheDocument();
   });
@@ -1889,87 +2078,79 @@ I_{n}\\[1.0pt]
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.endsWith("/jobs/summary")) {
-          return jsonResponse({
-            total: 1,
-            queued: 0,
-            running: 0,
-            paused: 0,
-            succeeded: 0,
-            failed: 1,
-            cancelled: 0,
-            active: 0,
-            updated_at: new Date().toISOString()
-          });
+        if (url.includes("/jobs/articles?limit=")) {
+          return jsonResponse(
+            articleTaskSummary({
+              total: 1,
+              failed: 1,
+              failed_items: 1,
+              items: [
+                articleTaskProgress({
+                  id: "article-task-import",
+                  article_title: null,
+                  source_id: "2208.06563",
+                  stage: "import_arxiv",
+                  message: "Import failed",
+                  status: "failed",
+                  progress: 0.1,
+                  running_jobs: 0,
+                  failed_jobs: 1,
+                  active_jobs: 0,
+                  failed_job_ids: ["job-import-1"],
+                  job_ids: ["job-import-1"],
+                  error: {
+                    message: "",
+                    type: "ReadTimeout"
+                  }
+                })
+              ]
+            })
+          );
         }
-        if (url.includes("/jobs?limit=")) {
-          return jsonResponse([
-            {
-              id: "job-import-1",
-              type: "import_arxiv",
-              status: "failed",
-              priority: 0,
-              payload: { arxiv_id: "2208.06563" },
-              result: null,
-              error: {
-                message: "",
-                type: "ReadTimeout"
-              },
-              progress: 0.1,
-              attempts: 1,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              started_at: new Date().toISOString(),
-              finished_at: new Date().toISOString(),
-              lease_owner: "worker-test"
-            }
-          ]);
-        }
-        return jsonResponse([]);
+        return jsonResponse(articleTaskSummary());
       })
     );
     useUiStore.getState().openTaskDrawer();
 
     renderWithProviders(<TaskDrawer />);
 
-    expect(await screen.findByText("import_arxiv")).toBeInTheDocument();
+    expect(await screen.findByText("2208.06563")).toBeInTheDocument();
+    expect(await screen.findByText("Import failed")).toBeInTheDocument();
     expect(await screen.findByText("ReadTimeout.")).toBeInTheDocument();
   });
 
   it("keeps the task drawer bounded when the queue is large", async () => {
-    const recentJobs = Array.from({ length: 120 }, (_, index) => ({
-      id: `job-${index}`,
-      type: "translate_block",
-      status: index === 0 ? "running" : "queued",
-      priority: 0,
-      payload: { index },
-      result: null,
-      error: null,
-      progress: index === 0 ? 0.4 : 0,
-      attempts: index === 0 ? 1 : 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      started_at: index === 0 ? new Date().toISOString() : null,
-      finished_at: null,
-      lease_owner: index === 0 ? "worker-test" : null
-    }));
+    const recentTasks = Array.from({ length: 120 }, (_, index) =>
+      articleTaskProgress({
+        id: `article-task-${index}`,
+        article_title: `Paper ${index}`,
+        source_id: `arXiv:${index}`,
+        status: index === 0 ? "running" : "queued",
+        stage: "translate_block",
+        message: index === 0 ? "Translating" : "Queued translation",
+        progress: index === 0 ? 0.4 : 0,
+        current: index === 0 ? 40 : 0,
+        total: 100,
+        queued_jobs: index === 0 ? 0 : 1,
+        running_jobs: index === 0 ? 1 : 0,
+        active_jobs: 1,
+        job_ids: [`job-${index}`]
+      })
+    );
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/jobs/summary")) {
-        return jsonResponse({
-          total: 1550,
-          queued: 1549,
-          running: 1,
-          paused: 0,
-          succeeded: 0,
-          failed: 0,
-          cancelled: 0,
-          active: 1550,
-          updated_at: new Date().toISOString()
-        });
+      if (url.includes("/jobs/articles?limit=120")) {
+        return jsonResponse(
+          articleTaskSummary({
+            total: 1550,
+            queued: 1549,
+            running: 1,
+            active: 1550,
+            items: recentTasks
+          })
+        );
       }
-      if (url.includes("/jobs?limit=120")) return jsonResponse(recentJobs);
-      return jsonResponse([]);
+      return jsonResponse(articleTaskSummary());
     });
     vi.stubGlobal("fetch", fetchMock);
     useUiStore.getState().openTaskDrawer();
@@ -1978,10 +2159,10 @@ I_{n}\\[1.0pt]
 
     expect(await screen.findByText("Queued 1549")).toBeInTheDocument();
     expect(await screen.findByText("Showing latest 120 of 1550 tasks.")).toBeInTheDocument();
-    expect(await screen.findAllByText("translate_block")).toHaveLength(120);
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/jobs?limit=120"))).toBe(
-      true
-    );
+    expect(await screen.findAllByText(/Paper \d+/)).toHaveLength(120);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("/jobs/articles?limit=120"))
+    ).toBe(true);
   });
 
   it("renders a real article document from the API", async () => {
@@ -2079,26 +2260,25 @@ I_{n}\\[1.0pt]
       })
     );
 
-    const { container } = renderRoute(
-      "/articles/revision-1?libraryId=library-1",
-      "/articles/:articleId",
-      <ReaderPage />
-    );
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
     await openReaderTool("Ask");
 
-    const boldTerm = await screen.findByText("完全对易 (FC)");
-    const assistantMessage = boldTerm.closest(".chat-message-assistant") as HTMLElement;
+    const boldTerm = await screen.findByText("完全对易 (FC)", {
+      selector: ".chat-message-assistant strong"
+    });
+    const assistantMessage = document.querySelector(".chat-message-assistant") as HTMLElement;
     expect(boldTerm.tagName.toLowerCase()).toBe("strong");
+    expect(assistantMessage).toHaveClass("chat-message-assistant");
     expect(assistantMessage.querySelectorAll("li")).toHaveLength(2);
-    expect(assistantMessage.querySelector(".inline-math .katex")).toBeInTheDocument();
+    expect(assistantMessage.querySelector(".katex")).toBeInTheDocument();
     expect(within(assistantMessage).getAllByRole("link", { name: "p-0001" })[0]).toHaveAttribute(
       "href",
       "#p-0001"
     );
-    expect(container.querySelector(".chat-message-markdown")).toBeInTheDocument();
+    expect(document.querySelector(".chat-message-markdown")).toBeInTheDocument();
   });
 
-  it("keeps reader tools in a stable top toolbar and opens one panel at a time", async () => {
+  it("keeps reader tools in a stable workspace rail and opens one panel at a time", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2139,69 +2319,501 @@ I_{n}\\[1.0pt]
     const readerPage = container.querySelector(".reader-page");
     const homeButton = screen.getByRole("button", { name: "Home" });
     const libraryArticleButton = screen.getByRole("button", { name: "Library" });
+    const workspaceButton = screen.getByRole("button", { name: "Reader workspace" });
     expect(screen.queryByRole("button", { name: "Papers" })).not.toBeInTheDocument();
     expect(homeButton).toHaveTextContent("Home");
     expect(homeButton.compareDocumentPosition(libraryArticleButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
+    expect(libraryArticleButton).toBeInTheDocument();
     expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
     expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
     expect(libraryArticleButton).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
-    const toolbarOrder = [
+    expect(workspaceButton).toHaveTextContent("Tools");
+    expect(screen.queryByRole("button", { name: "Search paper" })).not.toBeInTheDocument();
+
+    await userEvent.click(workspaceButton);
+    expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
+    expect(workspaceButton).toHaveAttribute("aria-pressed", "true");
+    const visibleReadTools = ["Full paper Q&A", "Search paper", "Reading preferences"];
+    const hiddenAssistAndOutputTools = [
       "Tasks",
       "Model provider",
-      "Ask",
       "Translate",
       "Terms",
-      "Notes",
-      "Export",
-      "Reading preferences"
+      "Note generator",
+      "Export"
     ];
+    const queryWorkspaceTab = (name: string) =>
+      screen
+        .queryAllByRole("button", { name })
+        .find((candidate) => candidate.classList.contains("reader-workspace-tab")) ?? null;
+    const getWorkspaceTab = (name: string) => {
+      const button = queryWorkspaceTab(name);
+      if (!button) throw new Error(`${name} workspace tab not found.`);
+      return button;
+    };
     expect(
-      toolbarOrder.map((name) => screen.getByRole("button", { name }).getAttribute("aria-pressed"))
-    ).toEqual(["false", "false", "false", "false", "false", "false", "false", "false"]);
+      visibleReadTools.map((name) => getWorkspaceTab(name).getAttribute("aria-pressed"))
+    ).toEqual(["true", "false", "false"]);
+    expect(hiddenAssistAndOutputTools.map((name) => queryWorkspaceTab(name))).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]);
+    expect(screen.getByRole("button", { name: "Read" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Question")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Search library papers")).not.toBeInTheDocument();
-    expect(screen.queryByText("Tasks, providers, and questions")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Library papers" })).not.toBeInTheDocument();
 
     await userEvent.click(libraryArticleButton);
-    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-
-    expect(mosaic).not.toHaveClass("reader-mosaic-left-collapsed");
-    expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
+    expect(await screen.findByRole("dialog", { name: "Library papers" })).toBeInTheDocument();
     expect(await screen.findByPlaceholderText("Search library papers")).toBeInTheDocument();
-    expect(await screen.findByText("Tasks, providers, and questions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Collapse Ask" })).toBeInTheDocument();
+    expect(libraryArticleButton).toHaveAttribute("aria-pressed", "true");
 
-    await userEvent.click(screen.getByRole("button", { name: "Translate" }));
-    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Translate" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Library papers" })).not.toBeInTheDocument()
     );
-    expect(screen.queryByRole("button", { name: "Collapse Ask" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Collapse Translate" })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Collapse paper switcher" }));
-    await userEvent.click(screen.getByRole("button", { name: "Collapse reader workspace" }));
 
     expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
-    expect(mosaic).toHaveClass("reader-mosaic-right-collapsed");
-    expect(screen.queryByPlaceholderText("Search library papers")).not.toBeInTheDocument();
-    expect(screen.queryByText("Tasks, providers, and questions")).not.toBeInTheDocument();
+    expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
+    expect(getWorkspaceTab("Full paper Q&A")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("dialog", { name: "Full paper Q&A" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Question")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Assist" }));
+    await userEvent.click(getWorkspaceTab("Translate"));
+    expect(queryWorkspaceTab("Full paper Q&A")).toBeNull();
+    expect(getWorkspaceTab("Translate")).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Translate" })).not.toBeInTheDocument()
+    );
+
+    expect(mosaic).toHaveClass("reader-mosaic-left-collapsed");
+    expect(mosaic).not.toHaveClass("reader-mosaic-right-collapsed");
+    expect(screen.queryByLabelText("Question")).not.toBeInTheDocument();
 
     Object.defineProperty(window, "scrollY", { value: 160, configurable: true });
     fireEvent.scroll(window);
-    await waitFor(() => expect(readerPage).toHaveClass("reader-workbench-chrome-hidden"));
+    expect(readerPage).not.toHaveClass("reader-workbench-chrome-hidden");
 
     Object.defineProperty(window, "scrollY", { value: 154, configurable: true });
     fireEvent.scroll(window);
-    expect(readerPage).toHaveClass("reader-workbench-chrome-hidden");
+    expect(readerPage).not.toHaveClass("reader-workbench-chrome-hidden");
 
     Object.defineProperty(window, "scrollY", { value: 80, configurable: true });
     fireEvent.scroll(window);
     await waitFor(() => expect(readerPage).not.toHaveClass("reader-workbench-chrome-hidden"));
+  });
+
+  it("opens pinned note stickies inside the reader page and honors manual close", async () => {
+    const pinnedNote = {
+      ...(readerCardsPayload.cards[0] as ReaderCard),
+      id: "note-1",
+      card_type: "note",
+      source_type: "user_note",
+      status: "pinned",
+      canonical_key: "note:p-0001",
+      title: "Pinned paragraph note",
+      body_markdown: "Pinned detail for the first paragraph."
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/cards")) {
+          return jsonResponse({
+            article_revision_id: "revision-1",
+            target_language: "zh-CN",
+            cards: [pinnedNote]
+          });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse(chatPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse(notePatchesPayload);
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+
+    expect(await screen.findByText("Pinned paragraph note")).toBeInTheDocument();
+    expect(container.querySelector(".reader-paper-shell")).toHaveClass(
+      "reader-paper-notes-enabled"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+    const notesButton = screen.getByRole("button", { name: "Notes" });
+    expect(notesButton).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(notesButton);
+
+    expect(container.querySelector(".reader-paper-shell")).not.toHaveClass(
+      "reader-paper-notes-enabled"
+    );
+    expect(notesButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("Pinned paragraph note")).not.toBeInTheDocument();
+  });
+
+  it("saves paragraph Q&A answers as pinned note stickies", async () => {
+    const createdBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse(translationsPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse(glossaryPayload);
+        }
+        if (
+          url.includes("/libraries/library-1/articles/revision-1/chat/ask") &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({
+            article_revision_id: "revision-1",
+            user_message: {
+              id: "chat-user-1",
+              article_revision_id: "revision-1",
+              role: "user",
+              content: "Why does this paragraph matter?",
+              source_refs: ["p-0001"],
+              external_refs: [],
+              metadata: {},
+              created_at: new Date().toISOString()
+            },
+            assistant_message: {
+              id: "chat-assistant-1",
+              article_revision_id: "revision-1",
+              role: "assistant",
+              content: "It states the paper's core technical setup.",
+              source_refs: ["p-0001"],
+              external_refs: [],
+              metadata: {},
+              created_at: new Date().toISOString()
+            },
+            cited_blocks: [],
+            external_refs: [],
+            native_search_used: false
+          });
+        }
+        if (
+          url.includes("/libraries/library-1/articles/revision-1/cards") &&
+          init?.method === "POST"
+        ) {
+          createdBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({
+            ...(readerCardsPayload.cards[0] as ReaderCard),
+            id: "note-created",
+            card_type: "note",
+            title: "Why does this paragraph matter?",
+            body_markdown: "It states the paper's core technical setup.",
+            source_type: "user_note",
+            status: "pinned"
+          });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/cards")) {
+          return jsonResponse({
+            article_revision_id: "revision-1",
+            target_language: "zh-CN",
+            cards: []
+          });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    expect(await findReaderSourcePane()).toHaveTextContent(
+      "First paragraph with inline technical content."
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+    await userEvent.click(screen.getByRole("button", { name: "Notes" }));
+
+    const sourcePane = await findReaderSourcePane();
+    await userEvent.hover(sourcePane);
+    const quickAsk = await screen.findByLabelText("Paragraph question");
+    const quickAskForm = quickAsk.closest("form") as HTMLElement;
+    await userEvent.type(quickAsk, "Why does this paragraph matter?");
+    await userEvent.click(within(quickAskForm).getByRole("button", { name: "Ask" }));
+
+    expect(
+      await screen.findByText("It states the paper's core technical setup.")
+    ).toBeInTheDocument();
+    await userEvent.click(within(quickAskForm).getByRole("button", { name: "Add to note" }));
+
+    await waitFor(() => expect(createdBodies).toHaveLength(1));
+    expect(createdBodies[0]).toMatchObject({
+      card_type: "note",
+      anchor_block_uid: "p-0001",
+      title: "Why does this paragraph matter?",
+      body_markdown: "It states the paper's core technical setup.",
+      source_type: "user_note",
+      status: "pinned",
+      position: "right",
+      metadata: { source: "paragraph_qa", question: "Why does this paragraph matter?" }
+    });
+  });
+
+  it("closes reader overlay panels with Escape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+    await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Search paper" }));
+    expect(await screen.findByPlaceholderText("Search source or translation")).toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Search source or translation")).not.toBeInTheDocument()
+    );
+    expect(screen.getByRole("button", { name: "Search paper" })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+    expect(screen.getByLabelText("Question")).toBeInTheDocument();
+  });
+
+  it("opens reader tools inside the workspace rail and collapses the rail explicitly", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    const { container } = renderRoute(
+      "/articles/revision-1?libraryId=library-1",
+      "/articles/:articleId",
+      <ReaderPage />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Output" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Note generator" }));
+
+    expect(container.querySelector(".reader-right-rail")).not.toHaveClass(
+      "reader-side-rail-collapsed"
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Lecture notes" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse Reader workspace" }));
+    expect(container.querySelector(".reader-right-rail")).toHaveClass("reader-side-rail-collapsed");
+  });
+
+  it("auto-closes an open overlay after threshold scroll movement", async () => {
+    let now = 1000;
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockImplementation(() => now);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    try {
+      renderRoute(
+        "/articles/revision-1?libraryId=library-1",
+        "/articles/:articleId",
+        <ReaderPage />
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Search paper" }));
+      expect(
+        await screen.findByPlaceholderText("Search source or translation")
+      ).toBeInTheDocument();
+
+      Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+      now += 100;
+      fireEvent.scroll(window);
+
+      const scrollSteps = [16, 32, 48, 64, 80];
+      for (const scrollY of scrollSteps) {
+        now += 100;
+        Object.defineProperty(window, "scrollY", { value: scrollY, configurable: true });
+        fireEvent.scroll(window);
+      }
+
+      await waitFor(() =>
+        expect(
+          screen.queryByPlaceholderText("Search source or translation")
+        ).not.toBeInTheDocument()
+      );
+      expect(screen.getByLabelText("Question")).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("opens full-paper Q&A in the workspace rail with mobile viewport width", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { value: 640, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(documentPayload);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+    try {
+      const { container } = renderRoute(
+        "/articles/revision-1?libraryId=library-1",
+        "/articles/:articleId",
+        <ReaderPage />
+      );
+      const askButton = screen.queryByRole("button", { name: "Ask" });
+      expect(askButton).not.toBeInTheDocument();
+
+      const rightRail = container.querySelector(".reader-right-rail");
+      expect(rightRail).toBeInTheDocument();
+      expect(container.querySelector(".reader-right-rail")).toHaveClass(
+        "reader-side-rail-collapsed"
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Reader workspace" }));
+      expect(container.querySelector(".reader-right-rail")).not.toHaveClass(
+        "reader-side-rail-collapsed"
+      );
+      expect(await screen.findByLabelText("Question")).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Full paper Q&A" })).not.toBeInTheDocument();
+
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(container.querySelector(".reader-right-rail")).not.toHaveClass(
+        "reader-side-rail-collapsed"
+      );
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: originalInnerWidth,
+        configurable: true
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: originalInnerHeight,
+        configurable: true
+      });
+    }
   });
 
   it("switches to Kindle page turns instead of the scrolling reader surface", async () => {
@@ -2268,9 +2880,7 @@ I_{n}\\[1.0pt]
     const measurementWindowSize = Number(kindleReader.getAttribute("data-measure-window-size"));
     expect(measurementWindowSize).toBeGreaterThan(0);
     expect(measurementWindowSize).toBeLessThan(120);
-    expect(container.querySelectorAll(".kindle-measure-block")).toHaveLength(
-      measurementWindowSize
-    );
+    expect(container.querySelectorAll(".kindle-measure-block")).toHaveLength(measurementWindowSize);
     expect(screen.getAllByTestId(/^kindle-page-block-/).length).toBeGreaterThan(4);
     expect(screen.queryByTestId("reader-block-list")).not.toBeInTheDocument();
     expect(
@@ -2381,9 +2991,7 @@ I_{n}\\[1.0pt]
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
     const sourcePane = await findReaderSourcePane();
-    expect(sourcePane).toHaveTextContent(
-      "First paragraph with inline technical content."
-    );
+    expect(sourcePane).toHaveTextContent("First paragraph with inline technical content.");
     fireEvent.pointerDown(within(sourcePane).getByRole("button", { name: "Show translation" }));
     await waitFor(() => {
       expect(
@@ -2445,7 +3053,7 @@ I_{n}\\[1.0pt]
       "data-virtualization",
       "progressive"
     );
-    expect(screen.queryByLabelText("Search paper")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search source or translation")).not.toBeInTheDocument();
     expect(screen.queryByTestId("reader-block-shell-p-0251")).not.toBeInTheDocument();
   });
 
@@ -2507,6 +3115,62 @@ I_{n}\\[1.0pt]
     await userEvent.click(reopenedThirdChapter);
 
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+  });
+
+  it("switches large reader documents between chapter render sources", async () => {
+    const longDocument = syntheticDocumentPayload(300);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
+          return jsonResponse(longDocument);
+        }
+        if (url.endsWith("/providers")) return jsonResponse([provider]);
+        if (url.includes("/libraries/library-1/articles/revision-1/translations")) {
+          return jsonResponse({ article_revision_id: "revision-1", variants: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/glossary")) {
+          return jsonResponse({ article_revision_id: "revision-1", terms: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/chat")) {
+          return jsonResponse({ article_revision_id: "revision-1", messages: [] });
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/templates")) {
+          return jsonResponse(noteTemplatesPayload);
+        }
+        if (url.includes("/libraries/library-1/articles/revision-1/notes/patches")) {
+          return jsonResponse({ article_revision_id: "revision-1", patches: [] });
+        }
+        return jsonResponse([]);
+      })
+    );
+
+    renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Synthetic paragraph 1 with enough article-like text to estimate line height."
+        )
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByTestId("reader-block-placeholder-p-0251")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Chapters" }));
+    await userEvent.click(await screen.findByRole("link", { name: "6 Section 6" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("This far-off paragraph contains a distant source needle.")
+      ).toBeInTheDocument()
+    );
+    expect(
+      screen.queryByText(
+        "Synthetic paragraph 1 with enough article-like text to estimate line height."
+      )
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reader-block-placeholder-p-0001")).not.toBeInTheDocument();
   });
 
   it("renders the term wiki card layer without changing the reader body", async () => {
@@ -2952,7 +3616,7 @@ I_{n}\\[1.0pt]
     const sourceControlLayer =
       sourcePane?.querySelector(".study-source-content") ?? (sourcePane as HTMLElement);
     expect(
-      within(sourceControlLayer as HTMLElement).getByLabelText("Key idea")
+      await within(sourceControlLayer as HTMLElement).findByLabelText("Key idea")
     ).toBeInTheDocument();
     expect(sourceControlLayer?.querySelector(":scope > .source-color-palette")).not.toBeNull();
     expect(sourceControlLayer?.querySelector(":scope > .hover-toolbar")).not.toBeNull();
@@ -2994,8 +3658,8 @@ I_{n}\\[1.0pt]
 
     await userEvent.hover(sourcePane as HTMLElement);
     await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Ask about source"));
-    await openReaderTool("Ask");
-    expect(await screen.findByRole("button", { name: "Current block p-0001" })).toBeInTheDocument();
+    expect(document.querySelector(".reader-paper-shell")).toHaveClass("reader-paper-notes-enabled");
+    expect(await screen.findByLabelText("Paragraph question")).toBeInTheDocument();
     await openReaderTool("Translate");
 
     await userEvent.hover(translationPane as HTMLElement);
@@ -3006,9 +3670,8 @@ I_{n}\\[1.0pt]
     );
     expect(writeText).toHaveBeenCalledWith("第一段 技术内容 的译文。");
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Translate paper" })).not.toBeDisabled()
-    );
+    const translatePaperButton = await screen.findByRole("button", { name: "Translate paper" });
+    await waitFor(() => expect(translatePaperButton).not.toBeDisabled());
     await userEvent.click(within(translationPane as HTMLElement).getByLabelText("Retranslate"));
     expect(await screen.findByText("Retranslate block p-0001")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Custom prompt"), "Use compact academic Chinese.");
@@ -3349,6 +4012,37 @@ I_{n}\\[1.0pt]
     expect(container.querySelector(".caption-translation")).toBeNull();
   });
 
+  it("repairs legacy raw LaTeX fragments in environment captions", () => {
+    const figureBlock: DocumentBlock = {
+      id: "block-legacy-caption-math",
+      article_revision_id: "revision-1",
+      block_uid: "fig-legacy-caption-math",
+      structural_path: "00062",
+      block_type: "figure",
+      parent_uid: null,
+      content_hash: "hash-legacy-caption-math",
+      context_hash: null,
+      source_markdown: "**Figure 5.** \\sqrt{1-\\varepsilon}\\ |g| \\mathcal{X} One ball shrinks.",
+      source_latex: null,
+      metadata: {
+        asset_id: "fig-legacy-caption-math",
+        html_fragment:
+          '<figure><math display="inline" tex="\\sqrt{1-\\varepsilon}\\ |g|"></math> One ball shrinks.</figure>'
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { container } = renderWithProviders(
+      <ReaderBlock block={figureBlock} viewMode="source" />
+    );
+
+    const caption = screen.getByText("Figure 5.").closest("p") as HTMLElement;
+    expect(caption).toHaveTextContent("One ball shrinks.");
+    expect(caption.querySelectorAll(".inline-math .katex").length).toBeGreaterThanOrEqual(1);
+    expect(container.querySelector(".katex-error")).toBeNull();
+  });
+
   it("keeps CIFAR-style LaTeXML tables structured instead of flattening rows", () => {
     const tableBlock: DocumentBlock = {
       id: "block-cifar-table",
@@ -3549,7 +4243,7 @@ I_{n}\\[1.0pt]
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
     const sourcePane = await findReaderSourcePane();
     await userEvent.hover(sourcePane as HTMLElement);
-    await userEvent.click(within(sourcePane as HTMLElement).getByLabelText("Copy source"));
+    await userEvent.click(await within(sourcePane as HTMLElement).findByLabelText("Copy source"));
 
     expect(execCommand).toHaveBeenCalledWith("copy");
     expect(await screen.findByRole("status")).toHaveTextContent("Source block copied.");
@@ -3778,7 +4472,7 @@ I_{n}\\[1.0pt]
       "First paragraph with inline technical content."
     );
     await openReaderTool("Translate");
-    await userEvent.click(screen.getByRole("button", { name: "Translate paper" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Translate paper" }));
 
     await waitFor(() => {
       expect(
@@ -4027,7 +4721,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal("fetch", fetchMock);
 
     renderRoute("/articles/revision-1?libraryId=library-1", "/articles/:articleId", <ReaderPage />);
-    await openReaderTool("Notes");
+    await openReaderTool("Note generator");
     expect(await screen.findByRole("heading", { name: "Lecture notes" })).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Custom template name"), "Seminar template");

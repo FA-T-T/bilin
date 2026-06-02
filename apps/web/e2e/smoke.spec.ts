@@ -21,21 +21,51 @@ test("opens the reader shell", async ({ page }) => {
   await mockArticleApi(page);
   await page.goto("/articles/revision-smoke?libraryId=library-smoke");
   await expect(page.getByRole("region", { name: "A Playwright Parsed Paper" })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Library papers" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Chapters" })).toBeVisible();
   await expect(page.getByRole("complementary", { name: "Reader workspace" })).toBeVisible();
+  await expectReaderFrameBounded(page);
+  await expect(page.locator(".reader-workspace-tab")).toHaveCount(3);
+  await expect(page.locator(".reader-workspace-tab", { hasText: "Translate" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  await expect(page.locator(".reader-workspace-tab", { hasText: "Translate" })).toHaveAttribute(
+    "data-tone",
+    "teal"
+  );
+  await expect(page.locator(".reader-workspace-tab", { hasText: "Terms" })).toHaveAttribute(
+    "data-tone",
+    "amber"
+  );
+  await page.getByRole("button", { name: "Output", exact: true }).click();
+  await expect(page.locator(".reader-workspace-tab", { hasText: "Export" })).toHaveAttribute(
+    "data-tone",
+    "blue"
+  );
+  await expectWorkspaceMotionHooks(page);
+  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  await page.locator(".reader-workspace-tab", { hasText: "Terms" }).click();
+  await expect(page.locator(".reader-glossary-panel")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectWorkspacePanelBounded(page);
+  await page.getByRole("button", { name: "Output", exact: true }).click();
+  await page.locator(".reader-workspace-tab", { hasText: "Export" }).click();
+  await expect(page.locator(".reader-export-panel")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectWorkspacePanelBounded(page);
+  await page.getByRole("button", { name: "Library" }).click();
+  await expect(page.getByRole("dialog", { name: "Library papers" })).toBeVisible();
   await page.getByRole("button", { name: /A Switchable Library Paper/ }).click();
   await expect(page).toHaveURL(/revision-alt/);
   await expect(page.getByRole("region", { name: "A Switchable Library Paper" })).toBeVisible();
+  await page.getByRole("button", { name: "Library" }).click();
+  await expect(page.getByRole("dialog", { name: "Library papers" })).toBeVisible();
   await page.getByRole("button", { name: /A Playwright Parsed Paper/ }).click();
   await expect(page).toHaveURL(/revision-smoke/);
-  await page.getByLabel("Collapse paper switcher").click();
-  await expect(page.getByLabel("Expand paper switcher")).toBeVisible();
-  await page.getByLabel("Expand paper switcher").click();
-  await expect(page.getByRole("button", { name: "Expand Tasks" })).toBeVisible();
-  await page.getByRole("button", { name: "Expand Tasks" }).click();
-  await expect(page.getByRole("button", { name: "Collapse Tasks" })).toBeVisible();
-  await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Collapse Ask" })).toBeVisible();
+  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  await expect(page.locator(".reader-workspace-tab", { hasText: "Tasks" })).toBeVisible();
+  await page.getByRole("button", { name: "Read", exact: true }).click();
+  await page.locator(".reader-workspace-tab", { hasText: "Full paper Q&A" }).click();
+  await expect(page.locator(".reader-chat-panel")).toBeVisible();
+  await expectWorkspacePanelBounded(page);
   await page.getByRole("textbox", { name: "Question" }).fill("What is the main point?");
   await expect(page.getByRole("button", { name: "Ask paper" })).toBeEnabled();
   await expect(page.getByText("A parsed paragraph from the mocked article API.")).toBeVisible();
@@ -43,6 +73,7 @@ test("opens the reader shell", async ({ page }) => {
   await page.getByRole("button", { name: "Show translation" }).click();
   await expect(page.getByText("来自 mocked article API 的译文。")).toBeVisible();
   await expect(page.locator(".reader-bottom-status")).toBeVisible();
+  await expect(page.locator(".reader-progress-milestone-label")).toHaveText("Paper complete");
   await expect(page.locator(".reader-command-center")).toBeVisible();
   const sourceContent = page.locator(".study-block-translation-open .study-source-content").first();
   const translationPanel = page
@@ -65,12 +96,14 @@ test("opens the reader shell", async ({ page }) => {
   await page.getByLabel("Reading mode").click();
   await page.getByRole("button", { name: "Source" }).click();
   await expect(page.getByText("Translation pending.")).toHaveCount(0);
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByRole("button", { name: "Manage tasks" }).click();
-  await expect(page.getByText("Background tasks")).toBeVisible();
+  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  await page.locator(".reader-workspace-tab", { hasText: "Tasks" }).click();
+  await expectWorkspacePanelBounded(page);
+  await expect(page.getByRole("button", { name: "Manage tasks" })).toBeVisible();
 
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 });
 
 test("keeps long reader pages bounded while scrolling", async ({ page }) => {
@@ -87,11 +120,10 @@ test("keeps long reader pages bounded while scrolling", async ({ page }) => {
   expect(nodeCount).toBeLessThan(4_600);
   expect(buttonCount).toBeLessThan(250);
 
-  await expect(page.getByLabel("Search paper")).toHaveCount(0);
+  await expect(page.getByLabel("Search paper")).toBeVisible();
   await page.mouse.wheel(0, 5000);
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2))
-    .toBe(true);
+  await expectNoHorizontalOverflow(page);
+  await expectReaderFrameBounded(page, { checkTop: false });
   const postScrollMetrics = await page.evaluate(() => ({
     nodeCount: document.querySelectorAll("*").length,
     renderedBlocks: document.querySelectorAll("[data-reader-block-rendered='true']").length,
@@ -99,8 +131,194 @@ test("keeps long reader pages bounded while scrolling", async ({ page }) => {
   }));
   expect(postScrollMetrics.nodeCount).toBeLessThan(4_600);
   expect(postScrollMetrics.renderedBlocks).toBeLessThan(60);
-  expect(postScrollMetrics.placeholders).toBeGreaterThan(220);
+  expect(postScrollMetrics.placeholders).toBeGreaterThan(20);
+  expect(postScrollMetrics.placeholders).toBeLessThan(90);
 });
+
+test.describe("mobile reader adaptation", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 }
+  });
+
+  test("keeps core reader controls touchable on mobile", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "iiios-reader-feature-preferences",
+        JSON.stringify({ bottomProgressVisible: true, termCardsEnabled: true })
+      );
+    });
+    await mockArticleApi(page);
+    await page.goto("/articles/revision-smoke?libraryId=library-smoke");
+    await expect(page.getByRole("region", { name: "A Playwright Parsed Paper" })).toBeVisible();
+    await expect(page.locator(".reader-card-tag")).toBeVisible();
+    await expect(page.locator(".reader-card-tag-delete")).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const isVisible = (element: Element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity) > 0.01 &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const targets = [
+        ...document.querySelectorAll(
+          [
+            ".reader-command-center button",
+            ".reader-chapter-rail-tab",
+            ".reader-study-rail-spine",
+            ".study-translation-toggle",
+            ".reader-workspace-tab",
+            ".reader-card-tag",
+            ".reader-card-tag-delete"
+          ].join(", ")
+        )
+      ]
+        .filter(isVisible)
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            label:
+              element.getAttribute("aria-label") ||
+              element.getAttribute("title") ||
+              element.textContent?.trim() ||
+              element.className.toString(),
+            className: element.className.toString(),
+            readerCardControl: element.matches(".reader-card-tag, .reader-card-tag-delete"),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          };
+        });
+      return {
+        coarsePointer: matchMedia("(pointer: coarse)").matches,
+        overflowX: document.documentElement.scrollWidth - window.innerWidth,
+        viewportWidth: window.innerWidth,
+        paper: (() => {
+          const rect = document.querySelector(".reader-paper-shell")?.getBoundingClientRect();
+          return rect
+            ? {
+                left: Math.round(rect.left),
+                right: Math.round(rect.right),
+                width: Math.round(rect.width)
+              }
+            : null;
+        })(),
+        collapsedRails: [
+          ...document.querySelectorAll(
+            ".reader-chapter-rail-collapsed, .reader-right-rail.reader-side-rail-collapsed"
+          )
+        ].map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            width: Math.round(rect.width),
+            top: Math.round(rect.top),
+            bottom: Math.round(rect.bottom)
+          };
+        }),
+        readerCardTargetCount: targets.filter((target) => target.readerCardControl).length,
+        smallTargets: targets.filter((target) => target.width < 44 || target.height < 44)
+      };
+    });
+
+    expect(metrics.coarsePointer).toBe(true);
+    expect(metrics.overflowX).toBeLessThanOrEqual(2);
+    expect(metrics.paper?.left).toBeGreaterThanOrEqual(0);
+    expect(metrics.paper?.right).toBeLessThanOrEqual(metrics.viewportWidth + 2);
+    expect(metrics.paper?.width).toBeGreaterThanOrEqual(metrics.viewportWidth - 4);
+    for (const rail of metrics.collapsedRails) {
+      expect(rail.width).toBeLessThanOrEqual(132);
+      expect(rail.top).toBeGreaterThan(640);
+    }
+    expect(metrics.readerCardTargetCount).toBeGreaterThanOrEqual(2);
+    expect(metrics.smallTargets).toEqual([]);
+
+    await page.getByRole("button", { name: "Reader workspace", exact: true }).click();
+    await expect(page.locator(".reader-workspace-panel")).toBeVisible();
+    const workspaceSheet = await page.evaluate(() => {
+      const rect = document.querySelector(".reader-right-rail")?.getBoundingClientRect();
+      return rect
+        ? {
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            bottom: Math.round(rect.bottom),
+            width: Math.round(rect.width),
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight
+          }
+        : null;
+    });
+    expect(workspaceSheet?.left).toBeLessThanOrEqual(10);
+    expect(workspaceSheet?.right).toBeGreaterThanOrEqual((workspaceSheet?.viewportWidth ?? 0) - 10);
+    expect(workspaceSheet?.width).toBeGreaterThanOrEqual((workspaceSheet?.viewportWidth ?? 0) - 20);
+    expect(workspaceSheet?.bottom).toBeLessThanOrEqual((workspaceSheet?.viewportHeight ?? 0) - 56);
+  });
+});
+
+async function expectNoHorizontalOverflow(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2))
+    .toBe(true);
+}
+
+async function expectReaderFrameBounded(page: Page, options: { checkTop?: boolean } = {}) {
+  const { checkTop = true } = options;
+  const metrics = await page.evaluate(() => {
+    const paper = document.querySelector(".reader-paper-shell")?.getBoundingClientRect();
+    const chrome = document.querySelector(".reader-command-center")?.getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      paperLeft: paper?.left ?? -1,
+      paperRight: paper?.right ?? Number.POSITIVE_INFINITY,
+      paperTop: paper?.top ?? -1,
+      chromeBottom: chrome?.bottom ?? 0
+    };
+  });
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 2);
+  expect(metrics.paperLeft).toBeGreaterThanOrEqual(0);
+  expect(metrics.paperRight).toBeLessThanOrEqual(metrics.viewportWidth + 2);
+  if (checkTop) {
+    expect(metrics.paperTop).toBeGreaterThanOrEqual(metrics.chromeBottom - 1);
+  }
+}
+
+async function expectWorkspacePanelBounded(page: Page) {
+  const metrics = await page.evaluate(() => {
+    const rail = document.querySelector(".reader-right-rail")?.getBoundingClientRect();
+    const panel = document.querySelector(".reader-workspace-panel")?.getBoundingClientRect();
+    return {
+      railLeft: rail?.left ?? 0,
+      railRight: rail?.right ?? 0,
+      panelLeft: panel?.left ?? Number.POSITIVE_INFINITY,
+      panelRight: panel?.right ?? Number.NEGATIVE_INFINITY
+    };
+  });
+  expect(metrics.panelLeft).toBeGreaterThanOrEqual(metrics.railLeft - 1);
+  expect(metrics.panelRight).toBeLessThanOrEqual(metrics.railRight + 1);
+}
+
+async function expectWorkspaceMotionHooks(page: Page) {
+  const motion = await page.evaluate(() => {
+    const tab = document.querySelector(".reader-workspace-tab");
+    const panelContent = document.querySelector(
+      ".reader-workspace-body > .panel, .reader-workspace-body > .mantine-Stack-root"
+    );
+    const tabStyle = tab ? getComputedStyle(tab) : null;
+    const panelStyle = panelContent ? getComputedStyle(panelContent) : null;
+    return {
+      tabTransitionDuration: tabStyle?.transitionDuration ?? "",
+      panelAnimationName: panelStyle?.animationName ?? ""
+    };
+  });
+  expect(motion.tabTransitionDuration).not.toBe("0s");
+  expect(motion.panelAnimationName).toContain("reader-workspace-panel-in");
+}
 
 async function mockArticleApi(page: Page) {
   await page.route("http://127.0.0.1:8000/**", async (route) => {
@@ -204,6 +422,17 @@ async function mockArticleApi(page: Page) {
         active_version: "glossary:none",
         affected_block_uids: [],
         terms: []
+      });
+    }
+    if (pathname.endsWith("/articles/revision-smoke/cards")) {
+      const targetLanguage = url.searchParams.get("target_language") ?? "zh-CN";
+      return fulfillJson(route, smokeReaderCards("revision-smoke", targetLanguage));
+    }
+    if (pathname.endsWith("/articles/revision-alt/cards")) {
+      return fulfillJson(route, {
+        article_revision_id: "revision-alt",
+        target_language: url.searchParams.get("target_language") ?? "zh-CN",
+        cards: []
       });
     }
     if (pathname.endsWith("/articles/revision-smoke/chat")) {
@@ -325,6 +554,35 @@ function smokeLibrary() {
     metadata: {},
     created_at: timestamp,
     updated_at: timestamp
+  };
+}
+
+function smokeReaderCards(articleRevisionId: string, targetLanguage: string) {
+  return {
+    article_revision_id: articleRevisionId,
+    target_language: targetLanguage,
+    cards: [
+      {
+        id: "card-pqc-smoke",
+        article_revision_id: articleRevisionId,
+        card_type: "term",
+        anchor_block_uid: "p-smoke",
+        anchor_text: "PQC",
+        canonical_key: "term:pqc",
+        abbreviation: "PQC",
+        full_form: "Parametrized Quantum Circuit",
+        title: "PQC",
+        body_markdown: "A parametrized quantum circuit used in variational quantum algorithms.",
+        target_language: targetLanguage,
+        source_type: "paper_local",
+        source_url: null,
+        position: "right",
+        status: "candidate",
+        metadata: {},
+        created_at: timestamp,
+        updated_at: timestamp
+      }
+    ]
   };
 }
 

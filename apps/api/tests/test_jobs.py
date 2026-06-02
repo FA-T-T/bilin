@@ -16,6 +16,7 @@ from bilin_api.repositories import (
     claim_next_job,
     clear_jobs,
     complete_job,
+    create_import_arxiv_job_if_absent,
     create_job,
     create_library,
     create_parse_job_if_absent,
@@ -200,6 +201,29 @@ async def test_translation_job_creation_dedupes_active_block_jobs(bilin_home: Pa
     assert first_created is True
     assert second_created is False
     assert second.id == first.id
+
+
+@pytest.mark.asyncio
+async def test_import_arxiv_job_creation_dedupes_active_requests(bilin_home: Path) -> None:
+    payload = {
+        "library_id": "library",
+        "arxiv_id": "2401.00001",
+        "version": None,
+        "download_pdf": True,
+        "parse_after_import": True,
+    }
+
+    first, first_created = await create_import_arxiv_job_if_absent(payload)
+    second, second_created = await create_import_arxiv_job_if_absent(payload)
+    changed, changed_created = await create_import_arxiv_job_if_absent(
+        {**payload, "download_pdf": False}
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+    assert changed_created is True
+    assert changed.id != first.id
 
 
 @pytest.mark.asyncio
