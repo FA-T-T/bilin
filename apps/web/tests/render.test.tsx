@@ -35,7 +35,6 @@ beforeEach(() => {
     configurable: true
   });
 });
-
 afterEach(() => {
   cleanup();
   useUiStore.getState().closeTaskDrawer();
@@ -50,7 +49,6 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
-
 function renderWithProviders(node: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
@@ -132,6 +130,19 @@ function sseResponse(events: string, status = 200) {
 
 function sseEvent(event: string, data: unknown) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function requestUrl(input: RequestInfo | URL) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return input.url;
+  }
+  return String(input);
 }
 
 function requestMethod(init?: RequestInit) {
@@ -720,7 +731,7 @@ describe("Bilin web shell", () => {
   it("archives and deletes libraries from the library home", async () => {
     let currentLibrary = library;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       const method = requestMethod(init);
       if (url.endsWith("/libraries") && method === "GET") return jsonResponse([currentLibrary]);
       if (url.endsWith("/libraries/library-1") && method === "PUT") {
@@ -758,7 +769,7 @@ describe("Bilin web shell", () => {
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1") &&
+            requestUrl(url).endsWith("/libraries/library-1") &&
             init?.method === "PUT" &&
             String(init.body).includes("Reading List")
         )
@@ -770,7 +781,7 @@ describe("Bilin web shell", () => {
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/archive") && init?.method === "POST"
+            requestUrl(url).endsWith("/libraries/library-1/archive") && init?.method === "POST"
         )
       ).toBe(true);
     });
@@ -780,7 +791,7 @@ describe("Bilin web shell", () => {
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
-          ([url, init]) => String(url).endsWith("/libraries/library-1") && init?.method === "DELETE"
+          ([url, init]) => requestUrl(url).endsWith("/libraries/library-1") && init?.method === "DELETE"
         )
       ).toBe(true);
     });
@@ -1742,7 +1753,7 @@ I_{n}\\[1.0pt]
   it("submits an arXiv import job and renders article rows", async () => {
     let currentLibrary = library;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1") && init?.method === "PUT") {
         currentLibrary = {
@@ -1841,7 +1852,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1") &&
+            requestUrl(url).endsWith("/libraries/library-1") &&
             init?.method === "PUT" &&
             String(init.body).includes("Reading List")
         )
@@ -1859,7 +1870,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/translations/missing") &&
+            requestUrl(url).endsWith("/libraries/library-1/translations/missing") &&
             init?.method === "POST" &&
             String(init.body).includes("provider-1")
         )
@@ -1872,7 +1883,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/imports/arxiv") && init?.method === "POST"
+            requestUrl(url).endsWith("/libraries/library-1/imports/arxiv") && init?.method === "POST"
         )
       ).toBe(true);
     });
@@ -1882,7 +1893,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/articles/revision-1/archive") &&
+            requestUrl(url).endsWith("/libraries/library-1/articles/revision-1/archive") &&
             init?.method === "POST"
         )
       ).toBe(true);
@@ -1895,7 +1906,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).endsWith("/libraries/library-1/articles/revision-1") &&
+            requestUrl(url).endsWith("/libraries/library-1/articles/revision-1") &&
             init?.method === "DELETE"
         )
       ).toBe(true);
@@ -1912,8 +1923,8 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/imports/file") &&
-            String(url).includes("kind=tex_archive") &&
+            requestUrl(url).includes("/libraries/library-1/imports/file") &&
+            requestUrl(url).includes("kind=tex_archive") &&
             init?.method === "POST"
         )
       ).toBe(true);
@@ -1922,7 +1933,7 @@ I_{n}\\[1.0pt]
 
   it("opens a library article on the second row click", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
       if (url.includes("/libraries/library-1/articles?target_language=")) {
@@ -1966,7 +1977,7 @@ I_{n}\\[1.0pt]
 
   it("does not render arXiv Daily or request recommendation data", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
       if (url.includes("/libraries/library-1/articles?target_language=")) {
@@ -1982,7 +1993,7 @@ I_{n}\\[1.0pt]
     expect(screen.queryByRole("button", { name: /arXiv Daily/ })).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some(([url]) =>
-        String(url).includes("/libraries/library-1/recommendations/arxiv/")
+        requestUrl(url).includes("/libraries/library-1/recommendations/arxiv/")
       )
     ).toBe(false);
   });
@@ -2003,7 +2014,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/providers")) return jsonResponse([provider]);
         if (url.endsWith("/libraries/library-1")) return jsonResponse(library);
         if (url.includes("/libraries/library-1/articles?target_language=")) {
@@ -2032,7 +2043,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.includes("/jobs/articles?limit=")) {
           return jsonResponse(
             articleTaskSummary({
@@ -2083,7 +2094,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.includes("/jobs/articles?limit=")) {
           return jsonResponse(
             articleTaskSummary({
@@ -2144,7 +2155,7 @@ I_{n}\\[1.0pt]
       })
     );
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.includes("/jobs/articles?limit=120")) {
         return jsonResponse(
           articleTaskSummary({
@@ -2167,7 +2178,7 @@ I_{n}\\[1.0pt]
     expect(await screen.findByText("Showing latest 120 of 1550 tasks.")).toBeInTheDocument();
     expect(await screen.findAllByText(/Paper \d+/)).toHaveLength(120);
     expect(
-      fetchMock.mock.calls.some(([url]) => String(url).includes("/jobs/articles?limit=120"))
+      fetchMock.mock.calls.some(([url]) => requestUrl(url).includes("/jobs/articles?limit=120"))
     ).toBe(true);
   });
 
@@ -2176,7 +2187,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2242,7 +2253,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2288,7 +2299,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2430,7 +2441,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2489,7 +2500,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2602,7 +2613,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2646,7 +2657,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2696,7 +2707,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2762,7 +2773,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2828,7 +2839,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(syntheticDocumentPayload(120));
         }
@@ -2927,7 +2938,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -2971,7 +2982,7 @@ I_{n}\\[1.0pt]
   it("does not reuse translations from another target language", async () => {
     useUiStore.getState().setTranslationTargetLanguage("ja");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
       }
@@ -3002,7 +3013,7 @@ I_{n}\\[1.0pt]
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([url]) =>
-          String(url).includes(
+          requestUrl(url).includes(
             "/libraries/library-1/articles/revision-1/translations?target_language=ja"
           )
         )
@@ -3030,7 +3041,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(longDocument);
         }
@@ -3069,7 +3080,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(longDocument);
         }
@@ -3128,7 +3139,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(longDocument);
         }
@@ -3184,7 +3195,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -3249,7 +3260,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -3350,7 +3361,7 @@ I_{n}\\[1.0pt]
 
   it("creates a note patch from an assistant chat answer", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
       }
@@ -3392,7 +3403,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes(
+            requestUrl(url).includes(
               "/libraries/library-1/articles/revision-1/chat/chat-1/note-patch"
             ) && init?.method === "POST"
         )
@@ -3402,7 +3413,7 @@ I_{n}\\[1.0pt]
 
   it("selects a translation variant from the reader", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
       }
@@ -3449,7 +3460,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes(
+            requestUrl(url).includes(
               "/libraries/library-1/articles/revision-1/translations/translation-2/select"
             ) && init?.method === "POST"
         )
@@ -3497,7 +3508,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -3560,7 +3571,7 @@ I_{n}\\[1.0pt]
       configurable: true
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -3646,7 +3657,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/obsidian/clips") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/obsidian/clips") &&
             init?.method === "POST" &&
             String(init.body).includes('"block_uid":"p-0001"') &&
             String(init.body).includes('"color":"yellow"')
@@ -3686,7 +3697,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes(
+            requestUrl(url).includes(
               "/libraries/library-1/articles/revision-1/blocks/p-0001/translate"
             ) && init?.method === "POST"
         )
@@ -3695,7 +3706,7 @@ I_{n}\\[1.0pt]
     const [, init] =
       fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url).includes(
+          requestUrl(url).includes(
             "/libraries/library-1/articles/revision-1/blocks/p-0001/translate"
           ) && init?.method === "POST"
       ) ?? [];
@@ -4222,7 +4233,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
           return jsonResponse(documentPayload);
         }
@@ -4257,7 +4268,7 @@ I_{n}\\[1.0pt]
 
   it("saves provider profiles from settings", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers/presets")) {
         return jsonResponse([
           {
@@ -4325,14 +4336,14 @@ I_{n}\\[1.0pt]
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
-          ([url, init]) => String(url).endsWith("/providers") && init?.method === "POST"
+          ([url, init]) => requestUrl(url).endsWith("/providers") && init?.method === "POST"
         )
       ).toBe(true);
     });
     const [, discoverInit] =
       fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url).endsWith("/providers/discover-models") && init?.method === "POST"
+          requestUrl(url).endsWith("/providers/discover-models") && init?.method === "POST"
       ) ?? [];
     expect(JSON.parse(String(discoverInit?.body))).toMatchObject({
       protocol: "openai-compatible",
@@ -4340,7 +4351,7 @@ I_{n}\\[1.0pt]
     });
     const [, init] =
       fetchMock.mock.calls.find(
-        ([url, init]) => String(url).endsWith("/providers") && init?.method === "POST"
+        ([url, init]) => requestUrl(url).endsWith("/providers") && init?.method === "POST"
       ) ?? [];
     expect(JSON.parse(String(init?.body))).toMatchObject({
       name: "Example AI · Mock Model",
@@ -4359,7 +4370,7 @@ I_{n}\\[1.0pt]
 
   it("reviews translation memory entries from settings", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.includes("/translation-memory/memory-1") && init?.method === "PATCH") {
         return jsonResponse({
           ...translationMemoryEntry,
@@ -4386,14 +4397,14 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/translation-memory/memory-1") && init?.method === "PATCH"
+            requestUrl(url).includes("/translation-memory/memory-1") && init?.method === "PATCH"
         )
       ).toBe(true);
     });
     const [, init] =
       fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url).includes("/translation-memory/memory-1") && init?.method === "PATCH"
+          requestUrl(url).includes("/translation-memory/memory-1") && init?.method === "PATCH"
       ) ?? [];
     expect(JSON.parse(String(init?.body))).toMatchObject({
       review_status: "approved",
@@ -4405,7 +4416,7 @@ I_{n}\\[1.0pt]
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = requestUrl(input);
         if (url.endsWith("/providers")) return jsonResponse([]);
         if (url.endsWith("/doctor")) return jsonResponse({ bilin_home: "/tmp", capabilities: [] });
         if (url.includes("/translation-memory")) return jsonResponse({ entries: [] });
@@ -4433,7 +4444,7 @@ I_{n}\\[1.0pt]
 
   it("queues article translation from the reader", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -4484,7 +4495,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/translations") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/translations") &&
             init?.method === "POST"
         )
       ).toBe(true);
@@ -4497,7 +4508,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/translations") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/translations") &&
             init?.method === "POST" &&
             String(init.body).includes('"target_language":"ja"')
         )
@@ -4508,7 +4519,7 @@ I_{n}\\[1.0pt]
   it("confirms glossary candidates from the reader", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void init;
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -4549,7 +4560,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes(
+            requestUrl(url).includes(
               "/libraries/library-1/articles/revision-1/glossary/term-candidate-1"
             ) && init?.method === "PUT"
         )
@@ -4559,7 +4570,7 @@ I_{n}\\[1.0pt]
 
   it("asks an article-grounded question from the reader", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -4640,7 +4651,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/chat/ask-stream") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/chat/ask-stream") &&
             init?.method === "POST"
         )
       ).toBe(true);
@@ -4657,7 +4668,7 @@ I_{n}\\[1.0pt]
       metadata: Record<string, unknown>;
     } | null = null;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -4750,21 +4761,21 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/notes/templates") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/notes/templates") &&
             init?.method === "POST"
         )
       ).toBe(true);
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/notes/generate") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/notes/generate") &&
             init?.method === "POST"
         )
       ).toBe(true);
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes(
+            requestUrl(url).includes(
               "/libraries/library-1/articles/revision-1/notes/patches/patch-1"
             ) &&
             init?.method === "PUT" &&
@@ -4780,7 +4791,7 @@ I_{n}\\[1.0pt]
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = requestUrl(input);
       if (url.endsWith("/providers")) return jsonResponse([provider]);
       if (url.endsWith("/libraries/library-1/articles/revision-1/document")) {
         return jsonResponse(documentPayload);
@@ -4833,7 +4844,7 @@ I_{n}\\[1.0pt]
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            String(url).includes("/libraries/library-1/articles/revision-1/exports") &&
+            requestUrl(url).includes("/libraries/library-1/articles/revision-1/exports") &&
             init?.method === "POST"
         )
       ).toBe(true);
