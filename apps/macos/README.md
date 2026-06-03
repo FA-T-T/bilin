@@ -35,9 +35,15 @@ This package is intentionally small:
 
 - `BilinMacApp` renders a three-column SwiftUI workbench from a bundled fixture.
 - `BilinReaderKit` defines the first native reader models and fixture loader.
-- `BilinStore` exposes the store protocol and an in-memory fixture store.
+- `BilinStore` exposes the store protocol, an in-memory fixture store, and a
+  SQLite-backed local library store for existing `library.sqlite` databases.
 - `BilinRenderKit` defines the math renderer protocol, a fallback renderer, and the
   future RaTeX adapter boundary.
+
+Use `Open Library...` to choose either a Bilin library directory or its `library.sqlite`
+file. The prototype loads article rows, ordered document blocks, existing `zh-CN`
+translation variants, and local note patches from SQLite. New notes are written to the
+existing `note_patches` table.
 
 Open `apps/macos/Package.swift` in Xcode on macOS, then run the `BilinMac` executable
 product. Command-line validation on a Mac:

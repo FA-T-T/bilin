@@ -139,6 +139,8 @@ public enum DocumentBlockKind: String, Codable, Hashable, Sendable {
     case equation
     case figure
     case table
+    case algorithm
+    case list
     case bibliography
     case unknown
 

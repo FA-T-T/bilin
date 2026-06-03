@@ -6,6 +6,7 @@ public protocol LibraryStore: Sendable {
     func articles(in libraryId: Library.ID) async throws -> [Article]
     func revision(id: ArticleRevision.ID) async throws -> ArticleRevision?
     func blocks(for revisionId: ArticleRevision.ID) async throws -> [DocumentBlock]
+    func translations(for revisionId: ArticleRevision.ID, targetLanguage: String) async throws -> [Translation]
     func notes(for revisionId: ArticleRevision.ID) async throws -> [ReaderNote]
     func saveNote(_ note: ReaderNote) async throws
 }
@@ -31,6 +32,14 @@ public actor FixtureLibraryStore: LibraryStore {
 
     public func blocks(for revisionId: ArticleRevision.ID) async throws -> [DocumentBlock] {
         fixture.revision.id == revisionId ? fixture.blocks : []
+    }
+
+    public func translations(for revisionId: ArticleRevision.ID, targetLanguage: String) async throws -> [Translation] {
+        guard fixture.revision.id == revisionId else { return [] }
+        let blockIds = Set(fixture.blocks.map(\.id))
+        return fixture.translations.filter {
+            blockIds.contains($0.blockId) && $0.targetLanguage == targetLanguage
+        }
     }
 
     public func notes(for revisionId: ArticleRevision.ID) async throws -> [ReaderNote] {

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import BilinReaderKit
 import BilinStore
 
@@ -16,7 +17,11 @@ struct BilinMacApp: App {
         }
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Open Library...") {}
+                Button("Open Library...") {
+                    Task {
+                        await model.openLibraryFromPanel()
+                    }
+                }
                     .keyboardShortcut("o", modifiers: [.command])
                 Button("Import Paper...") {}
                     .keyboardShortcut("i", modifiers: [.command, .shift])
@@ -39,6 +44,7 @@ final class ReaderWorkbenchModel: ObservableObject {
     @Published var selectedArticleId: Article.ID?
     @Published var selectedBlockUid: String?
     @Published var blocks: [DocumentBlock] = []
+    @Published var translations: [Translation] = []
     @Published var notes: [ReaderNote] = []
     @Published var tasks: [ArticleTask] = []
     @Published var loadError: String?
@@ -54,6 +60,12 @@ final class ReaderWorkbenchModel: ObservableObject {
         blocks.first { $0.blockUid == selectedBlockUid }
     }
 
+    var selectedBlockTranslation: Translation? {
+        guard let selectedBlock else { return nil }
+        return translations.first { $0.blockId == selectedBlock.id && $0.isDefault }
+            ?? translations.first { $0.blockId == selectedBlock.id }
+    }
+
     func loadPrototypeFixture() async {
         do {
             let fixture = try ReaderFixtureLoader().loadFixture(
@@ -61,24 +73,51 @@ final class ReaderWorkbenchModel: ObservableObject {
                 bundle: .module
             )
             let store = FixtureLibraryStore(fixture: fixture)
-            self.store = store
-            libraries = try await store.listLibraries()
-            selectedLibraryId = libraries.first?.id
-            if let libraryId = selectedLibraryId {
-                articles = try await store.articles(in: libraryId)
-            }
-            selectedArticleId = articles.first?.id
-            activeRevisionId = articles.first?.activeRevisionId
-            if let revisionId = activeRevisionId {
-                blocks = try await store.blocks(for: revisionId)
-                notes = try await store.notes(for: revisionId)
-            }
+            try await load(store: store)
             tasks = fixture.tasks
-            selectedBlockUid = blocks.first(where: { $0.blockType == .paragraph })?.blockUid
-            loadError = nil
         } catch {
             loadError = String(describing: error)
         }
+    }
+
+    func openLibraryFromPanel() async {
+        let panel = NSOpenPanel()
+        panel.title = "Open Bilin Library"
+        panel.message = "Choose a Bilin library folder or its library.sqlite file."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        await openLibrary(at: url)
+    }
+
+    func openLibrary(at url: URL) async {
+        do {
+            let store: SQLiteLibraryStore
+            if url.lastPathComponent == "library.sqlite" {
+                store = try SQLiteLibraryStore(databaseURL: url)
+            } else {
+                store = try SQLiteLibraryStore(libraryDirectoryURL: url)
+            }
+            try await load(store: store)
+            tasks = []
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
+    func selectArticle(id articleId: Article.ID?) async {
+        selectedArticleId = articleId
+        guard let article = articles.first(where: { $0.id == articleId }) else {
+            activeRevisionId = nil
+            blocks = []
+            translations = []
+            notes = []
+            selectedBlockUid = nil
+            return
+        }
+        await loadRevision(id: article.activeRevisionId)
     }
 
     func saveDraftNote(title: String, markdown: String) async {
@@ -96,6 +135,49 @@ final class ReaderWorkbenchModel: ObservableObject {
         do {
             try await store.saveNote(note)
             notes = try await store.notes(for: revisionId)
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
+    private func load(store: any LibraryStore) async throws {
+        self.store = store
+        libraries = try await store.listLibraries()
+        selectedLibraryId = libraries.first?.id
+        articles = []
+        blocks = []
+        translations = []
+        notes = []
+        selectedArticleId = nil
+        selectedBlockUid = nil
+
+        guard let libraryId = selectedLibraryId else {
+            activeRevisionId = nil
+            loadError = nil
+            return
+        }
+
+        articles = try await store.articles(in: libraryId)
+        selectedArticleId = articles.first?.id
+        await loadRevision(id: articles.first?.activeRevisionId)
+        loadError = nil
+    }
+
+    private func loadRevision(id revisionId: ArticleRevision.ID?) async {
+        activeRevisionId = revisionId
+        guard let revisionId, let store else {
+            blocks = []
+            translations = []
+            notes = []
+            selectedBlockUid = nil
+            return
+        }
+        do {
+            blocks = try await store.blocks(for: revisionId)
+            translations = try await store.translations(for: revisionId, targetLanguage: "zh-CN")
+            notes = try await store.notes(for: revisionId)
+            selectedBlockUid = blocks.first(where: { $0.blockType == .paragraph })?.blockUid ?? blocks.first?.blockUid
+            loadError = nil
         } catch {
             loadError = String(describing: error)
         }

@@ -59,6 +59,11 @@ private struct ArticleListPane: View {
                 }
             }
         }
+        .onChange(of: model.selectedArticleId) { _, articleId in
+            Task {
+                await model.selectArticle(id: articleId)
+            }
+        }
         .navigationTitle("Library")
     }
 }
@@ -198,6 +203,9 @@ private struct InspectorPane: View {
             }
             GroupBox("Notes") {
                 VStack(alignment: .leading, spacing: 10) {
+                    Text("\(model.notes.count) saved")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     TextField("Title", text: $noteTitle)
                     TextEditor(text: $noteMarkdown)
                         .frame(minHeight: 110)
@@ -209,6 +217,23 @@ private struct InspectorPane: View {
                     }
                     .disabled(noteMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            GroupBox("Translation") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(model.translations.count) zh-CN blocks")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let translation = model.selectedBlockTranslation {
+                        Text(translation.rawMarkdown)
+                            .font(.callout)
+                            .lineLimit(8)
+                    } else {
+                        Text("No translation for selection")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             GroupBox("Tasks") {
                 VStack(alignment: .leading, spacing: 8) {

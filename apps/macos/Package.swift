@@ -29,7 +29,10 @@ let package = Package(
         .target(name: "BilinRenderKit"),
         .target(
             name: "BilinStore",
-            dependencies: ["BilinReaderKit"]
+            dependencies: ["BilinReaderKit"],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "BilinRenderKitTests",
@@ -40,6 +43,16 @@ let package = Package(
             dependencies: ["BilinReaderKit"],
             resources: [
                 .process("Fixtures")
+            ]
+        ),
+        .testTarget(
+            name: "BilinStoreTests",
+            dependencies: [
+                "BilinReaderKit",
+                "BilinStore"
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
             ]
         )
     ]

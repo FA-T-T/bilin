@@ -22,6 +22,14 @@
 | Milestone 5: Provider and translation jobs | 接入 provider 配置与第一版 translation job，不要求完整 QA。 | `BilinLLMKit` provider profile；Keychain API key storage；OpenAI-compatible adapter；Anthropic-compatible adapter 规划；translation job queue abstraction；block translation request builder；progress state；retry/cancel 语义。 | 用户可配置 provider 并通过 Keychain 保存 key；选择若干 paragraph blocks 后能启动 mock 或真实 translation job；完成结果写回 store 并在 reader 显示；重启后已完成 translation 不丢失；失败 block 可重试。 |
 | Milestone 6: MVP hardening and release candidate | 把原型收敛为可手测的 macOS MVP。 | app settings；menus/commands；diagnostics panel；权限说明；error reporting；golden regression tests；performance pass；packaging/notarization checklist；manual acceptance script。 | clean macOS 机器可安装、打开 library、导入 fixture、阅读、渲染公式、保存 note、配置 provider、运行 translation；关键路径有测试或手测脚本覆盖；安全权限和数据目录行为可解释；无必须依赖 web/API 服务的用户路径。 |
 
+## 当前进展
+
+- 已建立 `apps/macos` SwiftPM 工程、SwiftUI 三栏 reader skeleton、fixture reader、`BilinReaderKit` block model、`BilinRenderKit` math renderer protocol 与 fallback renderer。
+- 已实现 `BilinStore` 的 SQLite-backed per-library store，可打开现有 `library.sqlite`，读取 article list、revision、ordered blocks、`zh-CN` translation variants 和 note patches。
+- `Open Library...` 已接入 macOS `NSOpenPanel`，可选择 library 目录或 `library.sqlite` 文件，并把结果刷新到 reader surface 与 inspector。
+- 已实现最小 note write path，写入现有 `note_patches` 表。这个路径应在后续补上 schema/version guard 后再扩大到 translation/import 写入。
+- 当前 Windows 环境没有 Swift toolchain，SwiftPM build/test 仍需在 macOS 上执行。已用 Python 对真实 portable `library.sqlite` 验证核心 SQL 字段和 join 方向。
+
 ## 模块第一版任务
 
 ### BilinMacApp
