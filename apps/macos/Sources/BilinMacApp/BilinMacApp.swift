@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import BilinImportKit
 import BilinReaderKit
 import BilinStore
 
@@ -23,6 +24,12 @@ struct BilinMacApp: App {
                     }
                 }
                     .keyboardShortcut("o", modifiers: [.command])
+                Button("Open Zotero Library...") {
+                    Task {
+                        await model.openZoteroLibraryFromPanel()
+                    }
+                }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
                 Button("Import Paper...") {}
                     .keyboardShortcut("i", modifiers: [.command, .shift])
             }
@@ -49,6 +56,10 @@ final class ReaderWorkbenchModel: ObservableObject {
     @Published var tasks: [ArticleTask] = []
     @Published var schemaStatus: LibrarySchemaStatus?
     @Published var readingProgress: ArticleReadingProgress?
+    @Published var zoteroItems: [ZoteroItem] = []
+    @Published var zoteroCollections: [ZoteroCollection] = []
+    @Published var selectedZoteroItemKey: ZoteroItem.ID?
+    @Published var zoteroSchemaStatus: ZoteroSchemaStatus?
     @Published var loadError: String?
 
     private var store: (any LibraryStore)?
@@ -66,6 +77,11 @@ final class ReaderWorkbenchModel: ObservableObject {
         guard let selectedBlock else { return nil }
         return translations.first { $0.blockId == selectedBlock.id && $0.isDefault }
             ?? translations.first { $0.blockId == selectedBlock.id }
+    }
+
+    var selectedZoteroItem: ZoteroItem? {
+        guard let selectedZoteroItemKey else { return nil }
+        return zoteroItems.first { $0.id == selectedZoteroItemKey }
     }
 
     var readingProgressLabel: String {
@@ -102,6 +118,18 @@ final class ReaderWorkbenchModel: ObservableObject {
         await openLibrary(at: url)
     }
 
+    func openZoteroLibraryFromPanel() async {
+        let panel = NSOpenPanel()
+        panel.title = "Open Zotero Library"
+        panel.message = "Choose a Zotero data directory or zotero.sqlite file."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        await openZoteroLibrary(at: url)
+    }
+
     func openLibrary(at url: URL) async {
         do {
             let store: SQLiteLibraryStore
@@ -118,8 +146,38 @@ final class ReaderWorkbenchModel: ObservableObject {
         }
     }
 
+    func openZoteroLibrary(at url: URL) async {
+        do {
+            let configuration: ZoteroLibraryConfiguration
+            if url.lastPathComponent == "zotero.sqlite" {
+                configuration = ZoteroLibraryConfiguration(databaseURL: url)
+            } else {
+                configuration = ZoteroLibraryConfiguration(dataDirectoryURL: url)
+            }
+            let reader = try ZoteroSQLiteReader(configuration: configuration)
+            zoteroSchemaStatus = try await reader.schemaStatus()
+            zoteroCollections = try await reader.collections()
+            zoteroItems = try await reader.items(limit: 250)
+            selectedZoteroItemKey = zoteroItems.first?.id
+            selectedArticleId = zoteroItems.first.map { "zotero:\($0.id)" }
+            activeRevisionId = nil
+            blocks = []
+            translations = []
+            notes = []
+            readingProgress = nil
+            loadError = nil
+        } catch {
+            zoteroItems = []
+            zoteroCollections = []
+            selectedZoteroItemKey = nil
+            zoteroSchemaStatus = nil
+            loadError = String(describing: error)
+        }
+    }
+
     func selectArticle(id articleId: Article.ID?) async {
         selectedArticleId = articleId
+        selectedZoteroItemKey = nil
         guard let article = articles.first(where: { $0.id == articleId }) else {
             activeRevisionId = nil
             blocks = []
@@ -130,6 +188,16 @@ final class ReaderWorkbenchModel: ObservableObject {
             return
         }
         await loadRevision(id: article.activeRevisionId)
+    }
+
+    func selectZoteroItem(id itemID: ZoteroItem.ID?) {
+        selectedZoteroItemKey = itemID
+        activeRevisionId = nil
+        blocks = []
+        translations = []
+        notes = []
+        readingProgress = nil
+        selectedBlockUid = nil
     }
 
     func saveDraftNote(title: String, markdown: String) async {
@@ -165,6 +233,10 @@ final class ReaderWorkbenchModel: ObservableObject {
         tasks = []
         schemaStatus = nil
         readingProgress = nil
+        zoteroItems = []
+        zoteroCollections = []
+        selectedZoteroItemKey = nil
+        zoteroSchemaStatus = nil
         activeRevisionId = nil
     }
 
@@ -178,6 +250,7 @@ final class ReaderWorkbenchModel: ObservableObject {
         translations = []
         notes = []
         readingProgress = nil
+        selectedZoteroItemKey = nil
         selectedArticleId = nil
         selectedBlockUid = nil
 

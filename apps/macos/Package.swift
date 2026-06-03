@@ -11,12 +11,14 @@ let package = Package(
         .executable(name: "BilinMac", targets: ["BilinMacApp"]),
         .library(name: "BilinReaderKit", targets: ["BilinReaderKit"]),
         .library(name: "BilinRenderKit", targets: ["BilinRenderKit"]),
+        .library(name: "BilinImportKit", targets: ["BilinImportKit"]),
         .library(name: "BilinStore", targets: ["BilinStore"])
     ],
     targets: [
         .executableTarget(
             name: "BilinMacApp",
             dependencies: [
+                "BilinImportKit",
                 "BilinReaderKit",
                 "BilinRenderKit",
                 "BilinStore"
@@ -27,6 +29,12 @@ let package = Package(
         ),
         .target(name: "BilinReaderKit"),
         .target(name: "BilinRenderKit"),
+        .target(
+            name: "BilinImportKit",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
+        ),
         .target(
             name: "BilinStore",
             dependencies: ["BilinReaderKit"],
@@ -51,6 +59,13 @@ let package = Package(
                 "BilinReaderKit",
                 "BilinStore"
             ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
+        ),
+        .testTarget(
+            name: "BilinImportKitTests",
+            dependencies: ["BilinImportKit"],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]

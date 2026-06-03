@@ -39,12 +39,19 @@ This package is intentionally small:
   SQLite-backed local library store for existing `library.sqlite` databases.
 - `BilinRenderKit` defines the math renderer protocol, a fallback renderer, and the
   future RaTeX adapter boundary.
+- `BilinImportKit` defines external import/metadata sources, starting with a read-only
+  Zotero SQLite reader.
 
 Use `Open Library...` to choose either a Bilin library directory or its `library.sqlite`
 file. The prototype loads article rows, ordered document blocks, existing `zh-CN`
 translation variants, reading progress, and local note patches from SQLite. New notes
 are written to the existing `note_patches` table only after the library schema guard
 confirms the expected migration set.
+
+Use `Open Zotero Library...` to choose a Zotero data directory or `zotero.sqlite`.
+This path only reads Zotero metadata, collections, tags, creators, attachments, and
+arXiv identifiers. It does not modify Zotero and does not automatically download arXiv
+metadata, import papers into Bilin, or generate translations.
 
 Open `apps/macos/Package.swift` in Xcode on macOS, then run the `BilinMac` executable
 product. Command-line validation on a Mac:

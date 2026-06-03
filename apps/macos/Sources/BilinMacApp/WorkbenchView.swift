@@ -1,4 +1,5 @@
 import SwiftUI
+import BilinImportKit
 import BilinReaderKit
 import BilinRenderKit
 
@@ -34,8 +35,12 @@ private struct LibrarySidebar: View {
                 Label("\(model.tasks.count) tasks", systemImage: "bolt.horizontal")
                 Label("\(model.notes.count) notes", systemImage: "note.text")
                 Label(model.readingProgressLabel, systemImage: "clock")
+                Label("\(model.zoteroItems.count) Zotero items", systemImage: "tray.full")
                 if let schemaStatus = model.schemaStatus {
                     Label(schemaStatus.isWritable ? "schema current" : "schema read-only", systemImage: "checkmark.seal")
+                }
+                if let zoteroSchemaStatus = model.zoteroSchemaStatus {
+                    Label(zoteroSchemaStatus.isReadable ? "Zotero readable" : "Zotero unsupported", systemImage: "externaldrive")
                 }
             }
         }
@@ -62,13 +67,47 @@ private struct ArticleListPane: View {
                     .tag(Optional(article.id))
                 }
             }
+            Section("Zotero Metadata") {
+                ForEach(model.zoteroItems) { item in
+                    ZoteroItemRow(item: item)
+                        .tag(Optional("zotero:\(item.id)"))
+                }
+            }
         }
         .onChange(of: model.selectedArticleId) { _, articleId in
             Task {
-                await model.selectArticle(id: articleId)
+                if let articleId, articleId.hasPrefix("zotero:"), let itemID = Int64(articleId.dropFirst("zotero:".count)) {
+                    model.selectZoteroItem(id: itemID)
+                } else {
+                    await model.selectArticle(id: articleId)
+                }
             }
         }
         .navigationTitle("Library")
+    }
+}
+
+private struct ZoteroItemRow: View {
+    var item: ZoteroItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.title ?? item.key)
+                .font(.headline)
+                .lineLimit(3)
+            HStack(spacing: 6) {
+                Text(item.itemType)
+                if let arxiv = item.arxiv {
+                    Text("arXiv \(arxiv.concreteIdentifier)")
+                }
+                if !item.tags.isEmpty {
+                    Text(item.tags.prefix(2).joined(separator: ", "))
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
     }
 }
 
@@ -77,13 +116,19 @@ private struct ReaderDetailPane: View {
     @State private var inspectorPresented = true
 
     var body: some View {
-        HStack(spacing: 0) {
-            ReaderSurface()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if inspectorPresented {
-                Divider()
-                InspectorPane()
-                    .frame(width: 320)
+        Group {
+            if let item = model.selectedZoteroItem {
+                ZoteroMetadataDetailPane(item: item)
+            } else {
+                HStack(spacing: 0) {
+                    ReaderSurface()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if inspectorPresented {
+                        Divider()
+                        InspectorPane()
+                            .frame(width: 320)
+                    }
+                }
             }
         }
         .toolbar {
@@ -101,7 +146,86 @@ private struct ReaderDetailPane: View {
                 }
             }
         }
-        .navigationTitle(model.selectedArticle?.title ?? "Reader")
+        .navigationTitle(model.selectedArticle?.title ?? model.selectedZoteroItem?.title ?? "Reader")
+    }
+}
+
+private struct ZoteroMetadataDetailPane: View {
+    var item: ZoteroItem
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(item.title ?? item.key)
+                    .font(.largeTitle.weight(.semibold))
+                HStack(spacing: 10) {
+                    Label(item.itemType, systemImage: "doc.text")
+                    if let arxiv = item.arxiv {
+                        Label("arXiv \(arxiv.concreteIdentifier)", systemImage: "number")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if !item.creators.isEmpty {
+                    MetadataSection(title: "Creators", value: item.creators.map(\.displayName).joined(separator: ", "))
+                }
+                if let abstractNote = item.abstractNote {
+                    MetadataSection(title: "Abstract", value: abstractNote)
+                }
+                HStack(spacing: 10) {
+                    Button {} label: {
+                        Label("Download Metadata", systemImage: "arrow.down.doc")
+                    }
+                    .disabled(true)
+                    Button {} label: {
+                        Label("Import Paper", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(true)
+                    Button {} label: {
+                        Label("Translate", systemImage: "character.bubble")
+                    }
+                    .disabled(true)
+                }
+                if !item.collections.isEmpty {
+                    MetadataSection(title: "Collections", value: item.collections.map(\.name).joined(separator: ", "))
+                }
+                if !item.tags.isEmpty {
+                    MetadataSection(title: "Tags", value: item.tags.joined(separator: ", "))
+                }
+                if let doi = item.doi {
+                    MetadataSection(title: "DOI", value: doi)
+                }
+                if let url = item.url {
+                    MetadataSection(title: "URL", value: url)
+                }
+                if !item.attachments.isEmpty {
+                    MetadataSection(
+                        title: "Attachments",
+                        value: item.attachments.compactMap(\.path).joined(separator: "\n")
+                    )
+                }
+            }
+            .padding(.vertical, 32)
+            .padding(.horizontal, 46)
+            .frame(maxWidth: 880, alignment: .leading)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+private struct MetadataSection: View {
+    var title: String
+    var value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
+            Text(value)
+                .font(.system(size: 15, weight: .regular, design: .serif))
+                .lineSpacing(4)
+        }
     }
 }
 
