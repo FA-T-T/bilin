@@ -268,6 +268,44 @@ public enum ArticleTaskStatus: String, Codable, Hashable, Sendable {
     case cancelled
 }
 
+public struct ArticleReadingProgress: Identifiable, Codable, Hashable, Sendable {
+    public var id: String { articleRevisionId }
+    public var articleRevisionId: String
+    public var activeBlockUid: String?
+    public var segmentCount: Int
+    public var blockSeconds: [String: Int]
+    public var totalSeconds: Int
+    public var createdAt: Date?
+    public var updatedAt: Date?
+
+    public init(
+        articleRevisionId: String,
+        activeBlockUid: String? = nil,
+        segmentCount: Int,
+        blockSeconds: [String: Int] = [:],
+        totalSeconds: Int = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.articleRevisionId = articleRevisionId
+        self.activeBlockUid = activeBlockUid
+        self.segmentCount = segmentCount
+        self.blockSeconds = blockSeconds
+        self.totalSeconds = totalSeconds
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public static func empty(articleRevisionId: String, blockUIDs: [String]) -> ArticleReadingProgress {
+        ArticleReadingProgress(
+            articleRevisionId: articleRevisionId,
+            segmentCount: blockUIDs.count,
+            blockSeconds: Dictionary(uniqueKeysWithValues: blockUIDs.map { ($0, 0) }),
+            totalSeconds: 0
+        )
+    }
+}
+
 public struct ReaderFixture: Codable, Hashable, Sendable {
     public var library: Library
     public var article: Article
@@ -276,6 +314,7 @@ public struct ReaderFixture: Codable, Hashable, Sendable {
     public var translations: [Translation]
     public var notes: [ReaderNote]
     public var tasks: [ArticleTask]
+    public var readingProgress: ArticleReadingProgress?
 
     public init(
         library: Library,
@@ -284,7 +323,8 @@ public struct ReaderFixture: Codable, Hashable, Sendable {
         blocks: [DocumentBlock],
         translations: [Translation] = [],
         notes: [ReaderNote] = [],
-        tasks: [ArticleTask] = []
+        tasks: [ArticleTask] = [],
+        readingProgress: ArticleReadingProgress? = nil
     ) {
         self.library = library
         self.article = article
@@ -293,5 +333,6 @@ public struct ReaderFixture: Codable, Hashable, Sendable {
         self.translations = translations
         self.notes = notes
         self.tasks = tasks
+        self.readingProgress = readingProgress
     }
 }

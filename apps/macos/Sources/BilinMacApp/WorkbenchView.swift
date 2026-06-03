@@ -33,6 +33,10 @@ private struct LibrarySidebar: View {
             Section("Local State") {
                 Label("\(model.tasks.count) tasks", systemImage: "bolt.horizontal")
                 Label("\(model.notes.count) notes", systemImage: "note.text")
+                Label(model.readingProgressLabel, systemImage: "clock")
+                if let schemaStatus = model.schemaStatus {
+                    Label(schemaStatus.isWritable ? "schema current" : "schema read-only", systemImage: "checkmark.seal")
+                }
             }
         }
         .navigationTitle("Bilin")
@@ -196,6 +200,9 @@ private struct InspectorPane: View {
                     Text(model.selectedBlock?.blockUid ?? "No block selected")
                         .font(.headline)
                     Text(model.selectedBlock?.blockType.rawValue ?? "Select a block in the reader")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(model.readingProgressLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

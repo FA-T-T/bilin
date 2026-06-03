@@ -27,7 +27,8 @@
 - 已建立 `apps/macos` SwiftPM 工程、SwiftUI 三栏 reader skeleton、fixture reader、`BilinReaderKit` block model、`BilinRenderKit` math renderer protocol 与 fallback renderer。
 - 已实现 `BilinStore` 的 SQLite-backed per-library store，可打开现有 `library.sqlite`，读取 article list、revision、ordered blocks、`zh-CN` translation variants 和 note patches。
 - `Open Library...` 已接入 macOS `NSOpenPanel`，可选择 library 目录或 `library.sqlite` 文件，并把结果刷新到 reader surface 与 inspector。
-- 已实现最小 note write path，写入现有 `note_patches` 表。这个路径应在后续补上 schema/version guard 后再扩大到 translation/import 写入。
+- 已实现 schema/version guard，读取 `schema_migrations` 并要求当前 library migration set 兼容；note write path 仅在 schema current 且无未知 future migration 时写入 `note_patches`。
+- 已读取 `reading_progress`，并用 `active_block_uid` 作为 reader 初始选中 block。没有 progress row 时返回基于 ordered blocks 的空进度。
 - 当前 Windows 环境没有 Swift toolchain，SwiftPM build/test 仍需在 macOS 上执行。已用 Python 对真实 portable `library.sqlite` 验证核心 SQL 字段和 join 方向。
 
 ## 模块第一版任务

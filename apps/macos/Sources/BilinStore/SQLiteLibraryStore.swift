@@ -10,10 +10,20 @@ public enum SQLiteLibraryStoreError: Error, Equatable, Sendable {
     case bindFailed(String)
     case invalidDate(String)
     case invalidLibrary(String)
+    case unsupportedSchema(missingRequiredVersions: [String], unknownVersions: [String])
 }
 
 #if canImport(SQLite3)
 import SQLite3
+
+private let requiredLibraryMigrationVersions = [
+    "001_initial",
+    "002_assets",
+    "003_block_search",
+    "004_block_embeddings",
+    "005_reader_cards",
+    "006_reading_progress"
+]
 
 public actor SQLiteLibraryStore: LibraryStore {
     private let databaseURL: URL
@@ -46,7 +56,28 @@ public actor SQLiteLibraryStore: LibraryStore {
         )
     }
 
+    public func schemaStatus() async throws -> LibrarySchemaStatus {
+        guard try await tableExists("schema_migrations") else {
+            throw SQLiteLibraryStoreError.invalidLibrary(databaseURL.path)
+        }
+        let appliedVersions = try await query("SELECT version FROM schema_migrations ORDER BY version") { statement in
+            var versions: [String] = []
+            while try statement.step() {
+                versions.append(statement.string("version"))
+            }
+            return versions
+        }
+        let applied = Set(appliedVersions)
+        let required = Set(requiredLibraryMigrationVersions)
+        return LibrarySchemaStatus(
+            appliedVersions: appliedVersions,
+            missingRequiredVersions: requiredLibraryMigrationVersions.filter { !applied.contains($0) },
+            unknownVersions: appliedVersions.filter { !required.contains($0) }
+        )
+    }
+
     public func listLibraries() async throws -> [Library] {
+        try await ensureReadableSchema()
         let hasArticleRevisions = try await query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'article_revisions'") { statement in
             var found = false
             while try statement.step() {
@@ -62,6 +93,7 @@ public actor SQLiteLibraryStore: LibraryStore {
 
     public func articles(in libraryId: Library.ID) async throws -> [Article] {
         guard libraryId == library.id else { return [] }
+        try await ensureReadableSchema()
         let sql = """
         SELECT
           f.id AS family_id,
@@ -99,6 +131,7 @@ public actor SQLiteLibraryStore: LibraryStore {
     }
 
     public func revision(id: ArticleRevision.ID) async throws -> ArticleRevision? {
+        try await ensureReadableSchema()
         let sql = """
         SELECT id, family_id, version, bundle_path, status, created_at, updated_at
         FROM article_revisions
@@ -112,6 +145,7 @@ public actor SQLiteLibraryStore: LibraryStore {
     }
 
     public func blocks(for revisionId: ArticleRevision.ID) async throws -> [DocumentBlock] {
+        try await ensureReadableSchema()
         let sql = """
         SELECT
           id,
@@ -141,6 +175,7 @@ public actor SQLiteLibraryStore: LibraryStore {
     }
 
     public func translations(for revisionId: ArticleRevision.ID, targetLanguage: String) async throws -> [Translation] {
+        try await ensureReadableSchema()
         let sql = """
         SELECT
           tv.id AS id,
@@ -177,7 +212,41 @@ public actor SQLiteLibraryStore: LibraryStore {
         }
     }
 
+    public func readingProgress(for revisionId: ArticleRevision.ID) async throws -> ArticleReadingProgress {
+        try await ensureReadableSchema()
+        let blockUIDs = try await orderedBlockUIDs(for: revisionId)
+        let sql = """
+        SELECT
+          article_revision_id,
+          active_block_uid,
+          segment_count,
+          block_seconds_json,
+          total_seconds,
+          created_at,
+          updated_at
+        FROM reading_progress
+        WHERE article_revision_id = ?
+        LIMIT 1
+        """
+        return try await query(sql, bindings: [.text(revisionId)]) { statement in
+            guard try statement.step() else {
+                return ArticleReadingProgress.empty(articleRevisionId: revisionId, blockUIDs: blockUIDs)
+            }
+            let blockSeconds = SQLiteValueDecoder.intDictionary(from: statement.string("block_seconds_json"))
+            return ArticleReadingProgress(
+                articleRevisionId: statement.string("article_revision_id"),
+                activeBlockUid: statement.optionalString("active_block_uid"),
+                segmentCount: statement.int("segment_count"),
+                blockSeconds: blockSeconds,
+                totalSeconds: statement.int("total_seconds"),
+                createdAt: try SQLiteDateParser.date(from: statement.string("created_at")),
+                updatedAt: try SQLiteDateParser.date(from: statement.string("updated_at"))
+            )
+        }
+    }
+
     public func notes(for revisionId: ArticleRevision.ID) async throws -> [ReaderNote] {
+        try await ensureReadableSchema()
         let sql = """
         SELECT id, article_revision_id, title, patch_markdown, metadata_json, created_at, updated_at
         FROM note_patches
@@ -205,6 +274,7 @@ public actor SQLiteLibraryStore: LibraryStore {
     }
 
     public func saveNote(_ note: ReaderNote) async throws {
+        try await ensureWritableSchema()
         let metadata = SQLiteValueEncoder.jsonString(["block_uid": note.blockUid])
         let sourceRefs = SQLiteValueEncoder.jsonArrayString(
             note.blockUid.map { [["block_uid": $0]] } ?? []
@@ -243,6 +313,48 @@ public actor SQLiteLibraryStore: LibraryStore {
             ],
             flags: SQLITE_OPEN_READWRITE
         )
+    }
+
+    private func ensureReadableSchema() async throws {
+        let status = try await schemaStatus()
+        guard status.isReadable else {
+            throw SQLiteLibraryStoreError.unsupportedSchema(
+                missingRequiredVersions: status.missingRequiredVersions,
+                unknownVersions: status.unknownVersions
+            )
+        }
+    }
+
+    private func ensureWritableSchema() async throws {
+        let status = try await schemaStatus()
+        guard status.isWritable else {
+            throw SQLiteLibraryStoreError.unsupportedSchema(
+                missingRequiredVersions: status.missingRequiredVersions,
+                unknownVersions: status.unknownVersions
+            )
+        }
+    }
+
+    private func tableExists(_ tableName: String) async throws -> Bool {
+        try await query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            bindings: [.text(tableName)]
+        ) { statement in
+            try statement.step()
+        }
+    }
+
+    private func orderedBlockUIDs(for revisionId: ArticleRevision.ID) async throws -> [String] {
+        try await query(
+            "SELECT block_uid FROM blocks WHERE article_revision_id = ? ORDER BY structural_path",
+            bindings: [.text(revisionId)]
+        ) { statement in
+            var blockUIDs: [String] = []
+            while try statement.step() {
+                blockUIDs.append(statement.string("block_uid"))
+            }
+            return blockUIDs
+        }
     }
 
     private func query<T>(
@@ -493,6 +605,29 @@ private enum SQLiteValueDecoder {
         }
         return result
     }
+
+    static func intDictionary(from json: String) -> [String: Int] {
+        guard
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
+        }
+        var result: [String: Int] = [:]
+        for (key, value) in object {
+            switch value {
+            case let int as Int:
+                result[key] = int
+            case let number as NSNumber:
+                result[key] = number.intValue
+            case let string as String:
+                result[key] = Int(string)
+            default:
+                continue
+            }
+        }
+        return result
+    }
 }
 
 private enum SQLiteValueEncoder {
@@ -531,6 +666,10 @@ public actor SQLiteLibraryStore: LibraryStore {
         throw SQLiteLibraryStoreError.sqliteUnavailable
     }
 
+    public func schemaStatus() async throws -> LibrarySchemaStatus {
+        throw SQLiteLibraryStoreError.sqliteUnavailable
+    }
+
     public func listLibraries() async throws -> [Library] {
         throw SQLiteLibraryStoreError.sqliteUnavailable
     }
@@ -548,6 +687,10 @@ public actor SQLiteLibraryStore: LibraryStore {
     }
 
     public func translations(for revisionId: ArticleRevision.ID, targetLanguage: String) async throws -> [Translation] {
+        throw SQLiteLibraryStoreError.sqliteUnavailable
+    }
+
+    public func readingProgress(for revisionId: ArticleRevision.ID) async throws -> ArticleReadingProgress {
         throw SQLiteLibraryStoreError.sqliteUnavailable
     }
 

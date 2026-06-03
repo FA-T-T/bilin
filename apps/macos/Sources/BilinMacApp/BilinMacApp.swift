@@ -47,6 +47,8 @@ final class ReaderWorkbenchModel: ObservableObject {
     @Published var translations: [Translation] = []
     @Published var notes: [ReaderNote] = []
     @Published var tasks: [ArticleTask] = []
+    @Published var schemaStatus: LibrarySchemaStatus?
+    @Published var readingProgress: ArticleReadingProgress?
     @Published var loadError: String?
 
     private var store: (any LibraryStore)?
@@ -64,6 +66,14 @@ final class ReaderWorkbenchModel: ObservableObject {
         guard let selectedBlock else { return nil }
         return translations.first { $0.blockId == selectedBlock.id && $0.isDefault }
             ?? translations.first { $0.blockId == selectedBlock.id }
+    }
+
+    var readingProgressLabel: String {
+        guard let readingProgress else { return "No progress" }
+        if readingProgress.totalSeconds < 60 {
+            return "\(readingProgress.totalSeconds)s read"
+        }
+        return "\(readingProgress.totalSeconds / 60)m read"
     }
 
     func loadPrototypeFixture() async {
@@ -103,6 +113,7 @@ final class ReaderWorkbenchModel: ObservableObject {
             try await load(store: store)
             tasks = []
         } catch {
+            clearLoadedState()
             loadError = String(describing: error)
         }
     }
@@ -114,6 +125,7 @@ final class ReaderWorkbenchModel: ObservableObject {
             blocks = []
             translations = []
             notes = []
+            readingProgress = nil
             selectedBlockUid = nil
             return
         }
@@ -140,14 +152,32 @@ final class ReaderWorkbenchModel: ObservableObject {
         }
     }
 
+    private func clearLoadedState() {
+        store = nil
+        libraries = []
+        articles = []
+        selectedLibraryId = nil
+        selectedArticleId = nil
+        selectedBlockUid = nil
+        blocks = []
+        translations = []
+        notes = []
+        tasks = []
+        schemaStatus = nil
+        readingProgress = nil
+        activeRevisionId = nil
+    }
+
     private func load(store: any LibraryStore) async throws {
         self.store = store
+        schemaStatus = try await store.schemaStatus()
         libraries = try await store.listLibraries()
         selectedLibraryId = libraries.first?.id
         articles = []
         blocks = []
         translations = []
         notes = []
+        readingProgress = nil
         selectedArticleId = nil
         selectedBlockUid = nil
 
@@ -169,17 +199,29 @@ final class ReaderWorkbenchModel: ObservableObject {
             blocks = []
             translations = []
             notes = []
+            readingProgress = nil
             selectedBlockUid = nil
             return
         }
         do {
             blocks = try await store.blocks(for: revisionId)
             translations = try await store.translations(for: revisionId, targetLanguage: "zh-CN")
+            readingProgress = try await store.readingProgress(for: revisionId)
             notes = try await store.notes(for: revisionId)
-            selectedBlockUid = blocks.first(where: { $0.blockType == .paragraph })?.blockUid ?? blocks.first?.blockUid
+            selectedBlockUid = preferredInitialBlockUid()
             loadError = nil
         } catch {
             loadError = String(describing: error)
         }
+    }
+
+    private func preferredInitialBlockUid() -> String? {
+        if
+            let activeBlockUid = readingProgress?.activeBlockUid,
+            blocks.contains(where: { $0.blockUid == activeBlockUid })
+        {
+            return activeBlockUid
+        }
+        return blocks.first(where: { $0.blockType == .paragraph })?.blockUid ?? blocks.first?.blockUid
     }
 }

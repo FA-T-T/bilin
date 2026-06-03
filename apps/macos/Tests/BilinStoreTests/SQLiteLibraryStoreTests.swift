@@ -18,6 +18,10 @@ final class SQLiteLibraryStoreTests: XCTestCase {
         try createDatabase(at: databaseURL)
 
         let store = try SQLiteLibraryStore(libraryDirectoryURL: directoryURL, libraryName: "Fixture Library")
+        let schemaStatus = try await store.schemaStatus()
+        XCTAssertTrue(schemaStatus.isReadable)
+        XCTAssertTrue(schemaStatus.isWritable)
+
         let libraries = try await store.listLibraries()
         XCTAssertEqual(libraries.first?.name, "Fixture Library")
 
@@ -37,6 +41,11 @@ final class SQLiteLibraryStoreTests: XCTestCase {
         XCTAssertEqual(translations.count, 1)
         XCTAssertEqual(translations.first?.rawMarkdown, "Translated paragraph.")
 
+        let progress = try await store.readingProgress(for: "revision-1")
+        XCTAssertEqual(progress.activeBlockUid, "p-1")
+        XCTAssertEqual(progress.totalSeconds, 42)
+        XCTAssertEqual(progress.blockSeconds["p-1"], 42)
+
         let note = ReaderNote(
             id: "note-1",
             articleRevisionId: "revision-1",
@@ -53,14 +62,84 @@ final class SQLiteLibraryStoreTests: XCTestCase {
         XCTAssertEqual(notes.first?.markdown, "Native store works.")
     }
 
-    private func createDatabase(at url: URL) throws {
+    func testRejectsWritesWhenRequiredMigrationIsMissing() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+
+        let databaseURL = directoryURL.appendingPathComponent("library.sqlite")
+        try createDatabase(
+            at: databaseURL,
+            migrationVersions: [
+                "001_initial",
+                "002_assets",
+                "003_block_search",
+                "004_block_embeddings",
+                "005_reader_cards"
+            ]
+        )
+
+        let store = try SQLiteLibraryStore(libraryDirectoryURL: directoryURL)
+        let schemaStatus = try await store.schemaStatus()
+        XCTAssertFalse(schemaStatus.isWritable)
+        XCTAssertEqual(schemaStatus.missingRequiredVersions, ["006_reading_progress"])
+
+        let note = ReaderNote(
+            id: "note-1",
+            articleRevisionId: "revision-1",
+            blockUid: "p-1",
+            title: "Claim",
+            markdown: "Native store works.",
+            createdAt: Date(timeIntervalSince1970: 1_706_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_706_000_000)
+        )
+
+        do {
+            try await store.saveNote(note)
+            XCTFail("Expected unsupported schema error.")
+        } catch let error as SQLiteLibraryStoreError {
+            XCTAssertEqual(
+                error,
+                .unsupportedSchema(
+                    missingRequiredVersions: ["006_reading_progress"],
+                    unknownVersions: []
+                )
+            )
+        }
+    }
+
+    private func createDatabase(
+        at url: URL,
+        migrationVersions: [String] = [
+            "001_initial",
+            "002_assets",
+            "003_block_search",
+            "004_block_embeddings",
+            "005_reader_cards",
+            "006_reading_progress"
+        ]
+    ) throws {
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
         defer {
             sqlite3_close(db)
         }
 
+        let migrationRows = migrationVersions
+            .map { "INSERT INTO schema_migrations(version, applied_at) VALUES ('\($0)', '2026-06-03T08:00:00.123456+00:00');" }
+            .joined(separator: "\n")
+
         let sql = """
+        CREATE TABLE schema_migrations (
+          version TEXT PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        );
+
+        \(migrationRows)
+
         CREATE TABLE article_families (
           id TEXT PRIMARY KEY,
           source TEXT NOT NULL,
@@ -127,6 +206,16 @@ final class SQLiteLibraryStoreTests: XCTestCase {
           updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE reading_progress (
+          article_revision_id TEXT PRIMARY KEY,
+          active_block_uid TEXT,
+          segment_count INTEGER NOT NULL DEFAULT 0,
+          block_seconds_json TEXT NOT NULL DEFAULT '{}',
+          total_seconds INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
         INSERT INTO article_families(
           id, source, external_id, title, metadata_json, created_at, updated_at
         ) VALUES (
@@ -163,6 +252,24 @@ final class SQLiteLibraryStoreTests: XCTestCase {
           '2026-06-03T08:00:00.123456+00:00'
         ), (
           'translation-stale', 'block-p', 'zh-CN', 'Stale paragraph.', 'ok', 0, '{"content_hash": "old-hash"}',
+          '2026-06-03T08:00:00.123456+00:00',
+          '2026-06-03T08:00:01.123456+00:00'
+        );
+
+        INSERT INTO reading_progress(
+          article_revision_id,
+          active_block_uid,
+          segment_count,
+          block_seconds_json,
+          total_seconds,
+          created_at,
+          updated_at
+        ) VALUES (
+          'revision-1',
+          'p-1',
+          3,
+          '{"p-1": 42}',
+          42,
           '2026-06-03T08:00:00.123456+00:00',
           '2026-06-03T08:00:01.123456+00:00'
         );
