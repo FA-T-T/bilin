@@ -28,3 +28,25 @@ current React frontend.
 The first working prototype should open a local article fixture, render a native reader
 layout, show equations through the selected math renderer, and persist simple notes in a
 local store.
+
+## Current Prototype
+
+This package is intentionally small:
+
+- `BilinMacApp` renders a three-column SwiftUI workbench from a bundled fixture.
+- `BilinReaderKit` defines the first native reader models and fixture loader.
+- `BilinStore` exposes the store protocol and an in-memory fixture store.
+- `BilinRenderKit` defines the math renderer protocol, a fallback renderer, and the
+  future RaTeX adapter boundary.
+
+Open `apps/macos/Package.swift` in Xcode on macOS, then run the `BilinMac` executable
+product. Command-line validation on a Mac:
+
+```bash
+cd apps/macos
+swift test
+swift run BilinMac
+```
+
+The current Windows workspace does not include a Swift toolchain, so Swift compilation
+must be validated on macOS.

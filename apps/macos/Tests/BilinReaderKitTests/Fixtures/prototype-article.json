@@ -1,0 +1,56 @@
+{
+  "library": {
+    "id": "library-1",
+    "name": "Reading List",
+    "path": "/Users/researcher/Bilin/Reading List",
+    "status": "active",
+    "created_at": "2026-06-03T00:00:00Z",
+    "updated_at": "2026-06-03T00:00:00Z"
+  },
+  "article": {
+    "id": "article-1",
+    "library_id": "library-1",
+    "source": "arxiv",
+    "external_id": "2401.00001",
+    "title": "Optimization Landscapes for Parametrized Quantum Circuits",
+    "active_revision_id": "revision-1"
+  },
+  "revision": {
+    "id": "revision-1",
+    "article_id": "article-1",
+    "version": "v1",
+    "bundle_path": "papers/2401.00001",
+    "status": "ready",
+    "created_at": "2026-06-03T00:00:00Z",
+    "updated_at": "2026-06-03T00:00:00Z"
+  },
+  "blocks": [
+    {
+      "id": "block-title",
+      "article_revision_id": "revision-1",
+      "block_uid": "title-0001",
+      "structural_path": "0",
+      "block_type": "title",
+      "content_hash": "hash-title",
+      "source_markdown": "Optimization Landscapes for Parametrized Quantum Circuits",
+      "metadata": {},
+      "created_at": "2026-06-03T00:00:00Z",
+      "updated_at": "2026-06-03T00:00:00Z"
+    },
+    {
+      "id": "block-p1",
+      "article_revision_id": "revision-1",
+      "block_uid": "p-0001",
+      "structural_path": "1.1",
+      "block_type": "paragraph",
+      "content_hash": "hash-p1",
+      "source_markdown": "A barren plateau appears when gradients vanish.",
+      "metadata": {},
+      "created_at": "2026-06-03T00:00:00Z",
+      "updated_at": "2026-06-03T00:00:00Z"
+    }
+  ],
+  "translations": [],
+  "notes": [],
+  "tasks": []
+}
