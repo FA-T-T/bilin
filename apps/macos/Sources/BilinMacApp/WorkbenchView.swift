@@ -17,6 +17,9 @@ struct WorkbenchView: View {
             ReaderDetailPane()
         }
         .frame(minWidth: 1080, minHeight: 720)
+        .sheet(isPresented: $model.equationEditorPresented) {
+            EquationEditorView()
+        }
     }
 }
 

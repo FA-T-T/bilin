@@ -36,6 +36,10 @@ struct BilinMacApp: App {
             CommandMenu("Reader") {
                 Button("Translate Selection") {}
                     .keyboardShortcut("t", modifiers: [.command, .shift])
+                Button("Equation Editor...") {
+                    model.equationEditorPresented = true
+                }
+                    .keyboardShortcut("m", modifiers: [.command, .shift])
                 Button("Export Notes") {}
                     .keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -60,6 +64,7 @@ final class ReaderWorkbenchModel: ObservableObject {
     @Published var zoteroCollections: [ZoteroCollection] = []
     @Published var selectedZoteroItemKey: ZoteroItem.ID?
     @Published var zoteroSchemaStatus: ZoteroSchemaStatus?
+    @Published var equationEditorPresented = false
     @Published var loadError: String?
 
     private var store: (any LibraryStore)?

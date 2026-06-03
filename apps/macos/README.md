@@ -41,6 +41,8 @@ This package is intentionally small:
   future RaTeX adapter boundary.
 - `BilinImportKit` defines external import/metadata sources, starting with a read-only
   Zotero SQLite reader.
+- `BilinMacApp` includes a native RaTeX equation editor that mirrors the CodeCogs
+  editing workflow without calling the CodeCogs remote render service.
 
 Use `Open Library...` to choose either a Bilin library directory or its `library.sqlite`
 file. The prototype loads article rows, ordered document blocks, existing `zh-CN`
@@ -52,6 +54,10 @@ Use `Open Zotero Library...` to choose a Zotero data directory or `zotero.sqlite
 This path only reads Zotero metadata, collections, tags, creators, attachments, and
 arXiv identifiers. It does not modify Zotero and does not automatically download arXiv
 metadata, import papers into Bilin, or generate translations.
+
+Use `Reader > Equation Editor...` to open the native math editor. It supports LaTeX
+template insertion, RaTeX preview through the renderer boundary, export options, copy,
+and save.
 
 Open `apps/macos/Package.swift` in Xcode on macOS, then run the `BilinMac` executable
 product. Command-line validation on a Mac:

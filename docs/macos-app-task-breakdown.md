@@ -30,6 +30,7 @@
 - 已实现 schema/version guard，读取 `schema_migrations` 并要求当前 library migration set 兼容；note write path 仅在 schema current 且无未知 future migration 时写入 `note_patches`。
 - 已读取 `reading_progress`，并用 `active_block_uid` 作为 reader 初始选中 block。没有 progress row 时返回基于 ordered blocks 的空进度。
 - 已新增 `BilinImportKit` 的 Zotero read-only SQLite reader，可读取 Zotero items、collections、tags、creators、attachments，并从本地字段提取 arXiv identifier。远程 metadata 下载、导入 Bilin library、翻译生成均保留为显式用户动作。
+- 已新增 native RaTeX equation editor，覆盖 LaTeX 输入、模板插入、预览边界、输出格式、copy/save export 和轻量语法诊断。真实 RaTeX SVG/PNG/PDF 导出仍等待 renderer adapter 打包。
 - 当前 Windows 环境没有 Swift toolchain，SwiftPM build/test 仍需在 macOS 上执行。已用 Python 对真实 portable `library.sqlite` 验证核心 SQL 字段和 join 方向。
 
 ## 模块第一版任务
