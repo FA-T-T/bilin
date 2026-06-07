@@ -1,5 +1,6 @@
 import "@mantine/core/styles.css";
 import "katex/dist/katex.min.css";
+import "zelda-hyrule-ui/style";
 import "./styles/app.css";
 
 import { MantineProvider, createTheme } from "@mantine/core";
@@ -12,8 +13,8 @@ import { router } from "./router";
 
 const queryClient = new QueryClient();
 const theme = createTheme({
-  defaultRadius: "sm",
-  primaryColor: "teal",
+  defaultRadius: "xs",
+  primaryColor: "cyan",
   fontFamily:
     '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
   fontFamilyMonospace:

@@ -55,4 +55,126 @@ final class EquationEditorTests: XCTestCase {
 
         XCTAssertEqual(suggestions.first?.latex, #"\alpha"#)
     }
+
+    func testTemplateInsertionTargetsFirstEmptyPlaceholder() throws {
+        let fraction = try XCTUnwrap(
+            EquationTemplateCatalog.groups
+                .first { $0.id == "structure" }?
+                .templates
+                .first { $0.id == "frac" }
+        )
+        let result = EquationTemplateInsertionPlanner.insert(
+            fraction,
+            into: "E = ",
+            selection: EquationTextSelection(location: 4, length: 0)
+        )
+
+        XCTAssertEqual(result.latex, #"E = \frac{}{}"#)
+        XCTAssertEqual(
+            result.selection,
+            EquationTextSelection(location: #"E = \frac{"#.utf16.count, length: 0)
+        )
+    }
+
+    func testTemplateInsertionWrapsSelectedTextAndTargetsNextPlaceholder() throws {
+        let fraction = try XCTUnwrap(
+            EquationTemplateCatalog.groups
+                .first { $0.id == "structure" }?
+                .templates
+                .first { $0.id == "frac" }
+        )
+        let result = EquationTemplateInsertionPlanner.insert(
+            fraction,
+            into: "x",
+            selection: EquationTextSelection(location: 0, length: 1)
+        )
+
+        XCTAssertEqual(result.latex, #"\frac{x}{}"#)
+        XCTAssertEqual(
+            result.selection,
+            EquationTextSelection(location: #"\frac{x}{"#.utf16.count, length: 0)
+        )
+    }
+
+    func testTemplateInsertionUsesCurrentCursorInsteadOfAppending() throws {
+        let alpha = try XCTUnwrap(
+            EquationTemplateCatalog.groups
+                .first { $0.id == "greek" }?
+                .templates
+                .first { $0.id == "alpha" }
+        )
+        let result = EquationTemplateInsertionPlanner.insert(
+            alpha,
+            into: "a + c",
+            selection: EquationTextSelection(location: 4, length: 0)
+        )
+
+        XCTAssertEqual(result.latex, #"a + \alpha c"#)
+        XCTAssertEqual(
+            result.selection,
+            EquationTextSelection(location: #"a + \alpha"#.utf16.count, length: 0)
+        )
+    }
+
+    func testStructureTemplatesUseReadablePreviewLatex() {
+        let structureTemplates = EquationTemplateCatalog.groups
+            .first { $0.id == "structure" }?
+            .templates ?? []
+        let fraction = structureTemplates.first { $0.id == "frac" }
+        let power = structureTemplates.first { $0.id == "sup" }
+
+        XCTAssertEqual(fraction?.latex, #"\frac{}{}"#)
+        XCTAssertEqual(fraction?.renderedPreviewLatex, #"\frac{a}{b}"#)
+        XCTAssertEqual(power?.latex, #"^{}"#)
+        XCTAssertEqual(power?.renderedPreviewLatex, #"x^{2}"#)
+    }
+
+    func testLiteralTemplatesPreviewTheirInsertionLatex() {
+        let greekTemplates = EquationTemplateCatalog.groups
+            .first { $0.id == "greek" }?
+            .templates ?? []
+        let alpha = greekTemplates.first { $0.id == "alpha" }
+
+        XCTAssertEqual(alpha?.latex, #"\alpha"#)
+        XCTAssertEqual(alpha?.renderedPreviewLatex, alpha?.latex)
+    }
+
+    func testSymbolTemplatesProvideTypographicFallbackPreviews() {
+        let greekTemplates = EquationTemplateCatalog.groups
+            .first { $0.id == "greek" }?
+            .templates ?? []
+        let operatorTemplates = EquationTemplateCatalog.groups
+            .first { $0.id == "operators" }?
+            .templates ?? []
+
+        XCTAssertEqual(greekTemplates.first { $0.id == "alpha" }?.renderedFallbackPreviewText, "α")
+        XCTAssertEqual(operatorTemplates.first { $0.id == "times" }?.renderedFallbackPreviewText, "×")
+        XCTAssertEqual(operatorTemplates.first { $0.id == "leq" }?.renderedFallbackPreviewText, "≤")
+    }
+
+    func testMatrixTemplatesProvideReadableFallbackPreviews() {
+        let matrixTemplates = EquationTemplateCatalog.groups
+            .first { $0.id == "matrices" }?
+            .templates ?? []
+
+        XCTAssertEqual(
+            matrixTemplates.first { $0.id == "pmatrix2" }?.renderedFallbackPreviewText,
+            "( a  b\n  c  d )"
+        )
+        XCTAssertEqual(
+            matrixTemplates.first { $0.id == "aligned" }?.renderedFallbackPreviewText,
+            "a = b + c\nd = e + f"
+        )
+    }
+
+    func testMapsEditorOptionsToRatexRenderOptions() {
+        var options = EquationEditorOptions()
+        options.displaySize = .pt20
+        options.color = .blue
+
+        let renderOptions = options.ratexRenderOptions
+
+        XCTAssertEqual(renderOptions.fontSize, 20)
+        XCTAssertEqual(renderOptions.foregroundColor, "#1565C0")
+    }
 }

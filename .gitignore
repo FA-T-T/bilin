@@ -13,6 +13,7 @@ __pycache__/
 node_modules/
 dist/
 build/
+.build/
 coverage/
 playwright-report/
 test-results/
@@ -28,6 +29,8 @@ local-data/
 tmp/
 marketing/
 .impeccable/
+.agents/
+AGENT.md
 .bilin/
 .bilin-test/
 release/

@@ -6,6 +6,7 @@ import re
 import shutil
 import sqlite3
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,12 @@ from bilin_api.content_notice import with_markdown_content_watermark
 from bilin_api.database import init_global_db, init_library_db, open_db, utc_now
 from bilin_api.repositories import get_library, list_libraries
 from bilin_api.schemas import (
+    AgentActionPlan,
+    AgentActionPlanEvent,
+    AgentActionPlanEventKind,
+    AgentActionPlanKind,
+    AgentActionPlanStatus,
+    AgentActionPlanStep,
     ArticleDeleteResult,
     ArticleDocument,
     ArticleFamily,
@@ -39,7 +46,12 @@ from bilin_api.schemas import (
     ReaderCardSourceType,
     ReaderCardStatus,
     ReaderCardType,
+    ReadingOutline,
     ReadingProgressUpdate,
+    ResearchPlan,
+    ResearchPlanKind,
+    ResearchPlanStatus,
+    ResearchSkillPermission,
     TranslationVariant,
 )
 from bilin_api.translation_rules import is_translatable_source
@@ -1018,6 +1030,330 @@ async def get_block_by_id(library: Library, block_id: str) -> DocumentBlock | No
         cursor = await conn.execute("SELECT * FROM blocks WHERE id = ?", (block_id,))
         row = await cursor.fetchone()
     return _block_from_row(row) if row else None
+
+
+async def create_research_plan(
+    library: Library,
+    *,
+    title: str,
+    kind: ResearchPlanKind = ResearchPlanKind.custom,
+    status: ResearchPlanStatus = ResearchPlanStatus.draft,
+    topic: str | None = None,
+    article_revision_id: str | None = None,
+    skill_id: str | None = None,
+    skill_slug: str | None = None,
+    job_id: str | None = None,
+    idempotency_key: str | None = None,
+    payload_hash: str | None = None,
+    candidate_papers: Sequence[Mapping[str, Any]] | None = None,
+    reading_outline: ReadingOutline | None = None,
+    payload: Mapping[str, Any] | None = None,
+    preview: Mapping[str, Any] | None = None,
+    result: Mapping[str, Any] | None = None,
+    error: Mapping[str, Any] | None = None,
+) -> ResearchPlan:
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    plan_id = str(uuid4())
+    candidate_papers_payload = [dict(candidate) for candidate in candidate_papers or []]
+    reading_outline_payload = (
+        reading_outline.model_dump(mode="json") if reading_outline is not None else None
+    )
+    payload_data = dict(payload or {})
+    payload_hash_value = payload_hash or _json_hash(
+        {
+            "candidate_papers": candidate_papers_payload,
+            "payload": payload_data,
+            "reading_outline": reading_outline_payload,
+        }
+    )
+    async with open_db(db_path) as conn:
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                """
+                INSERT INTO research_plans(
+                  id, article_revision_id, skill_id, skill_slug, job_id, kind, status,
+                  title, topic, idempotency_key, payload_hash, candidate_papers_json,
+                  reading_outline_json, payload_json, preview_json, result_json, error_json,
+                  created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    plan_id,
+                    article_revision_id,
+                    skill_id,
+                    skill_slug,
+                    job_id,
+                    kind.value,
+                    status.value,
+                    title,
+                    topic,
+                    idempotency_key,
+                    payload_hash_value,
+                    json.dumps(candidate_papers_payload),
+                    _json_or_none(reading_outline_payload),
+                    json.dumps(payload_data),
+                    _json_or_none(preview),
+                    _json_or_none(result),
+                    _json_or_none(error),
+                    now,
+                    now,
+                ),
+            )
+            await conn.commit()
+        except sqlite3.IntegrityError:
+            await conn.rollback()
+            if idempotency_key is not None:
+                existing = await _get_research_plan_by_idempotency_key(library, idempotency_key)
+                if existing is not None:
+                    return existing
+            raise
+    plan = await get_research_plan(library, plan_id)
+    if plan is None:
+        msg = "Created research plan could not be read back"
+        raise RuntimeError(msg)
+    return plan
+
+
+async def list_research_plans(
+    library: Library,
+    *,
+    article_revision_id: str | None = None,
+    status: ResearchPlanStatus | None = None,
+    kind: ResearchPlanKind | None = None,
+) -> list[ResearchPlan]:
+    db_path = await ensure_library_database(library)
+    clauses: list[str] = []
+    params: list[str] = []
+    if article_revision_id is not None:
+        clauses.append("article_revision_id = ?")
+        params.append(article_revision_id)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status.value)
+    if kind is not None:
+        clauses.append("kind = ?")
+        params.append(kind.value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            f"SELECT * FROM research_plans {where} ORDER BY updated_at DESC",
+            tuple(params),
+        )
+        rows = await cursor.fetchall()
+    return [_research_plan_from_row(row) for row in rows]
+
+
+async def get_research_plan(library: Library, plan_id: str) -> ResearchPlan | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute("SELECT * FROM research_plans WHERE id = ?", (plan_id,))
+        row = await cursor.fetchone()
+    return _research_plan_from_row(row) if row else None
+
+
+async def create_agent_action_plan(
+    library: Library,
+    *,
+    kind: AgentActionPlanKind,
+    title: str,
+    research_plan_id: str | None = None,
+    article_revision_id: str | None = None,
+    skill_id: str | None = None,
+    skill_slug: str | None = None,
+    job_id: str | None = None,
+    status: AgentActionPlanStatus = AgentActionPlanStatus.pending,
+    description: str = "",
+    idempotency_key: str | None = None,
+    payload_hash: str | None = None,
+    required_permissions: Sequence[ResearchSkillPermission | str] | None = None,
+    payload: Mapping[str, Any] | None = None,
+    preview: Mapping[str, Any] | None = None,
+    result: Mapping[str, Any] | None = None,
+    error: Mapping[str, Any] | None = None,
+    steps: Sequence[Mapping[str, Any]] | None = None,
+) -> AgentActionPlan:
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    action_plan_id = str(uuid4())
+    permissions_payload = _permission_values(required_permissions or [])
+    payload_data = dict(payload or {})
+    payload_hash_value = payload_hash or _json_hash(payload_data)
+    step_rows = _action_step_rows(action_plan_id, steps or [], fallback_kind=kind, now=now)
+    async with open_db(db_path) as conn:
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                """
+                INSERT INTO agent_action_plans(
+                  id, research_plan_id, article_revision_id, skill_id, skill_slug, job_id,
+                  kind, status, title, description, idempotency_key, payload_hash,
+                  required_permissions_json, payload_json, preview_json, result_json,
+                  error_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_plan_id,
+                    research_plan_id,
+                    article_revision_id,
+                    skill_id,
+                    skill_slug,
+                    job_id,
+                    kind.value,
+                    status.value,
+                    title,
+                    description,
+                    idempotency_key,
+                    payload_hash_value,
+                    json.dumps(permissions_payload),
+                    json.dumps(payload_data),
+                    _json_or_none(preview),
+                    _json_or_none(result),
+                    _json_or_none(error),
+                    now,
+                    now,
+                ),
+            )
+            for step_row in step_rows:
+                await conn.execute(
+                    """
+                    INSERT INTO agent_action_plan_steps(
+                      id, action_plan_id, position, kind, status, title, description,
+                      required_permissions_json, payload_json, preview_json, result_json,
+                      error_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    step_row,
+                )
+            await conn.execute(
+                """
+                INSERT INTO agent_action_plan_events(
+                  id, action_plan_id, kind, status, message, payload_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    action_plan_id,
+                    AgentActionPlanEventKind.created.value,
+                    status.value,
+                    "Action plan created",
+                    "{}",
+                    now,
+                ),
+            )
+            await conn.commit()
+        except sqlite3.IntegrityError:
+            await conn.rollback()
+            if idempotency_key is not None:
+                existing = await _get_agent_action_plan_by_idempotency_key(
+                    library,
+                    idempotency_key,
+                )
+                if existing is not None:
+                    return existing
+            raise
+    action_plan = await get_agent_action_plan(library, action_plan_id)
+    if action_plan is None:
+        msg = "Created agent action plan could not be read back"
+        raise RuntimeError(msg)
+    return action_plan
+
+
+async def list_agent_action_plans(
+    library: Library,
+    *,
+    research_plan_id: str | None = None,
+    article_revision_id: str | None = None,
+    status: AgentActionPlanStatus | None = None,
+    kind: AgentActionPlanKind | None = None,
+) -> list[AgentActionPlan]:
+    db_path = await ensure_library_database(library)
+    clauses: list[str] = []
+    params: list[str] = []
+    if research_plan_id is not None:
+        clauses.append("research_plan_id = ?")
+        params.append(research_plan_id)
+    if article_revision_id is not None:
+        clauses.append("article_revision_id = ?")
+        params.append(article_revision_id)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status.value)
+    if kind is not None:
+        clauses.append("kind = ?")
+        params.append(kind.value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            f"SELECT * FROM agent_action_plans {where} ORDER BY updated_at DESC",
+            tuple(params),
+        )
+        rows = await cursor.fetchall()
+    return [await _agent_action_plan_from_row(library, row) for row in rows]
+
+
+async def get_agent_action_plan(
+    library: Library,
+    action_plan_id: str,
+) -> AgentActionPlan | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM agent_action_plans WHERE id = ?",
+            (action_plan_id,),
+        )
+        row = await cursor.fetchone()
+    return await _agent_action_plan_from_row(library, row) if row else None
+
+
+async def append_agent_action_plan_event(
+    library: Library,
+    action_plan_id: str,
+    *,
+    kind: AgentActionPlanEventKind = AgentActionPlanEventKind.note,
+    status: AgentActionPlanStatus | None = None,
+    step_id: str | None = None,
+    message: str = "",
+    payload: Mapping[str, Any] | None = None,
+) -> AgentActionPlanEvent:
+    db_path = await ensure_library_database(library)
+    now = utc_now()
+    event_id = str(uuid4())
+    async with open_db(db_path) as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        await conn.execute(
+            """
+            INSERT INTO agent_action_plan_events(
+              id, action_plan_id, step_id, kind, status, message, payload_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                action_plan_id,
+                step_id,
+                kind.value,
+                status.value if status is not None else None,
+                message,
+                json.dumps(dict(payload or {})),
+                now,
+            ),
+        )
+        await conn.execute(
+            "UPDATE agent_action_plans SET updated_at = ? WHERE id = ?",
+            (now, action_plan_id),
+        )
+        await conn.commit()
+    event = await _get_agent_action_plan_event(library, event_id)
+    if event is None:
+        msg = "Created agent action plan event could not be read back"
+        raise RuntimeError(msg)
+    return event
 
 
 async def search_blocks(
@@ -2273,6 +2609,240 @@ def _reader_card_from_row(row: aiosqlite.Row) -> ReaderCard:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+async def _get_research_plan_by_idempotency_key(
+    library: Library,
+    idempotency_key: str,
+) -> ResearchPlan | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM research_plans WHERE idempotency_key = ?",
+            (idempotency_key,),
+        )
+        row = await cursor.fetchone()
+    return _research_plan_from_row(row) if row else None
+
+
+def _research_plan_from_row(row: aiosqlite.Row) -> ResearchPlan:
+    reading_outline_payload = _loads(row["reading_outline_json"], None)
+    reading_outline = (
+        ReadingOutline.model_validate(reading_outline_payload)
+        if reading_outline_payload is not None
+        else None
+    )
+    return ResearchPlan(
+        id=row["id"],
+        kind=row["kind"],
+        status=row["status"],
+        title=row["title"],
+        topic=row["topic"],
+        article_revision_id=row["article_revision_id"],
+        skill_id=row["skill_id"],
+        skill_slug=row["skill_slug"],
+        job_id=row["job_id"],
+        idempotency_key=row["idempotency_key"],
+        payload_hash=row["payload_hash"],
+        candidate_papers=_loads(row["candidate_papers_json"], []),
+        reading_outline=reading_outline,
+        payload=_loads(row["payload_json"], {}),
+        preview=_loads(row["preview_json"], None),
+        result=_loads(row["result_json"], None),
+        error=_loads(row["error_json"], None),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def _get_agent_action_plan_by_idempotency_key(
+    library: Library,
+    idempotency_key: str,
+) -> AgentActionPlan | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM agent_action_plans WHERE idempotency_key = ?",
+            (idempotency_key,),
+        )
+        row = await cursor.fetchone()
+    return await _agent_action_plan_from_row(library, row) if row else None
+
+
+async def _agent_action_plan_from_row(
+    library: Library,
+    row: aiosqlite.Row,
+) -> AgentActionPlan:
+    steps = await _list_agent_action_plan_steps(library, row["id"])
+    events = await _list_agent_action_plan_events(library, row["id"])
+    return AgentActionPlan(
+        id=row["id"],
+        research_plan_id=row["research_plan_id"],
+        article_revision_id=row["article_revision_id"],
+        skill_id=row["skill_id"],
+        skill_slug=row["skill_slug"],
+        job_id=row["job_id"],
+        kind=row["kind"],
+        status=row["status"],
+        title=row["title"],
+        description=row["description"],
+        idempotency_key=row["idempotency_key"],
+        payload_hash=row["payload_hash"],
+        required_permissions=_loads(row["required_permissions_json"], []),
+        payload=_loads(row["payload_json"], {}),
+        preview=_loads(row["preview_json"], None),
+        result=_loads(row["result_json"], None),
+        error=_loads(row["error_json"], None),
+        steps=steps,
+        events=events,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        approved_at=row["approved_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+    )
+
+
+async def _list_agent_action_plan_steps(
+    library: Library,
+    action_plan_id: str,
+) -> list[AgentActionPlanStep]:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT * FROM agent_action_plan_steps
+            WHERE action_plan_id = ?
+            ORDER BY position ASC
+            """,
+            (action_plan_id,),
+        )
+        rows = await cursor.fetchall()
+    return [_agent_action_plan_step_from_row(row) for row in rows]
+
+
+def _agent_action_plan_step_from_row(row: aiosqlite.Row) -> AgentActionPlanStep:
+    return AgentActionPlanStep(
+        id=row["id"],
+        action_plan_id=row["action_plan_id"],
+        position=row["position"],
+        kind=row["kind"],
+        status=row["status"],
+        title=row["title"],
+        description=row["description"],
+        required_permissions=_loads(row["required_permissions_json"], []),
+        payload=_loads(row["payload_json"], {}),
+        preview=_loads(row["preview_json"], None),
+        result=_loads(row["result_json"], None),
+        error=_loads(row["error_json"], None),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def _list_agent_action_plan_events(
+    library: Library,
+    action_plan_id: str,
+) -> list[AgentActionPlanEvent]:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT * FROM agent_action_plan_events
+            WHERE action_plan_id = ?
+            ORDER BY created_at ASC
+            """,
+            (action_plan_id,),
+        )
+        rows = await cursor.fetchall()
+    return [_agent_action_plan_event_from_row(row) for row in rows]
+
+
+async def _get_agent_action_plan_event(
+    library: Library,
+    event_id: str,
+) -> AgentActionPlanEvent | None:
+    db_path = await ensure_library_database(library)
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM agent_action_plan_events WHERE id = ?",
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+    return _agent_action_plan_event_from_row(row) if row else None
+
+
+def _agent_action_plan_event_from_row(row: aiosqlite.Row) -> AgentActionPlanEvent:
+    return AgentActionPlanEvent(
+        id=row["id"],
+        action_plan_id=row["action_plan_id"],
+        step_id=row["step_id"],
+        kind=row["kind"],
+        status=row["status"],
+        message=row["message"],
+        payload=_loads(row["payload_json"], {}),
+        created_at=row["created_at"],
+    )
+
+
+def _action_step_rows(
+    action_plan_id: str,
+    steps: Sequence[Mapping[str, Any]],
+    *,
+    fallback_kind: AgentActionPlanKind,
+    now: str,
+) -> list[tuple[Any, ...]]:
+    rows: list[tuple[Any, ...]] = []
+    for index, step in enumerate(steps):
+        step_id = str(step.get("id") or uuid4())
+        position = int(step.get("position", index))
+        kind = str(step.get("kind") or fallback_kind.value)
+        status = _enum_value(step.get("status") or AgentActionPlanStatus.pending)
+        title = str(step.get("title") or kind)
+        description = str(step.get("description") or "")
+        permissions = step.get("required_permissions") or step.get("permissions") or []
+        payload = step.get("payload") or {}
+        rows.append(
+            (
+                step_id,
+                action_plan_id,
+                position,
+                kind,
+                status,
+                title,
+                description,
+                json.dumps(_permission_values(permissions)),
+                json.dumps(payload),
+                _json_or_none(step.get("preview")),
+                _json_or_none(step.get("result")),
+                _json_or_none(step.get("error")),
+                now,
+                now,
+            )
+        )
+    return rows
+
+
+def _permission_values(permissions: Any) -> list[str]:
+    if isinstance(permissions, str):
+        return [permissions]
+    return [_enum_value(permission) for permission in permissions]
+
+
+def _enum_value(value: Any) -> str:
+    raw_value = getattr(value, "value", value)
+    return str(raw_value)
+
+
+def _json_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256_text(payload)
+
+
+def _json_or_none(value: Any | None) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value)
 
 
 def _empty_reading_progress(

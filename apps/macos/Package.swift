@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .executable(name: "BilinMac", targets: ["BilinMacApp"]),
         .library(name: "BilinReaderKit", targets: ["BilinReaderKit"]),
+        .library(name: "BilinWorkspaceKit", targets: ["BilinWorkspaceKit"]),
         .library(name: "BilinRenderKit", targets: ["BilinRenderKit"]),
         .library(name: "BilinImportKit", targets: ["BilinImportKit"]),
         .library(name: "BilinStore", targets: ["BilinStore"])
@@ -21,13 +22,18 @@ let package = Package(
                 "BilinImportKit",
                 "BilinReaderKit",
                 "BilinRenderKit",
+                "BilinWorkspaceKit",
                 "BilinStore"
             ],
             resources: [
                 .process("Resources")
             ]
         ),
-        .target(name: "BilinReaderKit"),
+        .target(
+            name: "BilinReaderKit",
+            dependencies: ["BilinWorkspaceKit"]
+        ),
+        .target(name: "BilinWorkspaceKit"),
         .target(name: "BilinRenderKit"),
         .target(
             name: "BilinImportKit",
@@ -54,6 +60,10 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "BilinWorkspaceKitTests",
+            dependencies: ["BilinWorkspaceKit"]
+        ),
+        .testTarget(
             name: "BilinStoreTests",
             dependencies: [
                 "BilinReaderKit",
@@ -68,6 +78,13 @@ let package = Package(
             dependencies: ["BilinImportKit"],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
+            ]
+        ),
+        .testTarget(
+            name: "BilinMacAppTests",
+            dependencies: [
+                "BilinMacApp",
+                "BilinRenderKit"
             ]
         )
     ]

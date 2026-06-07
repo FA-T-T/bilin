@@ -123,7 +123,7 @@ export function AppLayout() {
           </div>
         </AppShell.Header>
       ) : null}
-      <AppShell.Main>
+      <AppShell.Main className={isReaderRoute ? "app-reader-main" : "app-main"}>
         <Outlet />
         <TaskDrawer />
       </AppShell.Main>

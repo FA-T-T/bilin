@@ -3415,7 +3415,7 @@ def _markdown_link_text(element: Any, child_text: str) -> str:
 
 
 def _is_bibliography_href(href: str) -> bool:
-    return href.startswith("#bib.") or href.startswith("#bib:")
+    return href.startswith("#bib.") or href.startswith("#bib:") or href.startswith("#bib-")
 
 
 def _is_citation_element(element: Any) -> bool:

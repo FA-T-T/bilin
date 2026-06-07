@@ -33,9 +33,16 @@ final class SQLiteLibraryStoreTests: XCTestCase {
         XCTAssertEqual(revision?.articleId, "family-1")
 
         let blocks = try await store.blocks(for: "revision-1")
-        XCTAssertEqual(blocks.map(\.blockUid), ["title-1", "p-1", "eq-1"])
-        XCTAssertEqual(blocks.last?.blockType, .equation)
-        XCTAssertEqual(blocks.last?.sourceLatex, "E = mc^2")
+        XCTAssertEqual(blocks.map(\.blockUid), ["title-1", "p-1", "eq-1", "bib-1"])
+        XCTAssertEqual(blocks[2].blockType, .equation)
+        XCTAssertEqual(blocks[2].sourceLatex, "E = mc^2")
+        XCTAssertEqual(blocks[1].metadata["level"], "1")
+        XCTAssertEqual(blocks[1].metadata["references"], ##"[{"href":"#bib.bib7","text":"7"}]"##)
+
+        let citations = try await store.citations(for: "revision-1")
+        XCTAssertEqual(citations.first?.id, "bib.bib1")
+        XCTAssertEqual(citations.first?.displayLabel, "[1]")
+        XCTAssertEqual(citations.first?.sourceBlockUid, "bib-1")
 
         let translations = try await store.translations(for: "revision-1", targetLanguage: "zh-CN")
         XCTAssertEqual(translations.count, 1)
@@ -239,9 +246,11 @@ final class SQLiteLibraryStoreTests: XCTestCase {
           ('block-title', 'revision-1', 'title-1', '00001', 'title', NULL, 'h1', NULL,
            'A Native Reader', NULL, '{}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00'),
           ('block-p', 'revision-1', 'p-1', '00002', 'paragraph', NULL, 'h2', NULL,
-           'This is a native reader.', NULL, '{"level": 1}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00'),
+           'This is a native reader.', NULL, '{"level": 1, "references": [{"href": "#bib.bib7", "text": "7"}]}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00'),
           ('block-eq', 'revision-1', 'eq-1', '00003', 'equation', NULL, 'h3', NULL,
-           '$$E = mc^2$$', 'E = mc^2', '{}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00');
+           '$$E = mc^2$$', 'E = mc^2', '{}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00'),
+          ('block-bib', 'revision-1', 'bib-1', '99999', 'list', NULL, 'h4', NULL,
+           '- [\\[1\\]](#bib.bib1) Smith J. Native citations for reader tests. Journal of Tests.', NULL, '{"list_kind": "bibliography"}', '2026-06-03T08:00:00.123456+00:00', '2026-06-03T08:00:00.123456+00:00');
 
         INSERT INTO translation_variants(
           id, block_id, target_language, raw_markdown, validation_status, is_default,

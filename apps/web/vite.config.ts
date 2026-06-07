@@ -21,7 +21,17 @@ export default {
   },
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      jsdom: {
+        url: "http://127.0.0.1/"
+      }
+    },
     setupFiles: "./src/test/setup.ts",
+    server: {
+      deps: {
+        inline: ["zelda-hyrule-ui"]
+      }
+    },
     exclude: ["node_modules", "dist", "e2e"]
   }
 };

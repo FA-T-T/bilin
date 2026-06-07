@@ -1,3 +1,5 @@
+import Foundation
+
 public enum MathRenderMode: String, Equatable, Sendable {
     case display
     case inline
@@ -69,15 +71,41 @@ public struct FallbackMathRenderer: MathRenderer, Sendable {
 }
 
 public protocol RatexMathRenderingAdapter {
-    // Future FFI boundary: call RaTeX and return renderer-neutral SVG text.
-    func renderSVG(latex: String, mode: MathRenderMode) throws -> String
+    func renderSVG(latex: String, mode: MathRenderMode, options: RatexRenderOptions) throws -> String
+}
+
+public extension RatexMathRenderingAdapter {
+    func renderSVG(latex: String, mode: MathRenderMode) throws -> String {
+        try renderSVG(latex: latex, mode: mode, options: RatexRenderOptions())
+    }
+}
+
+public struct RatexRenderOptions: Codable, Hashable, Sendable {
+    public var fontSize: Double
+    public var foregroundColor: String
+    public var timeoutSeconds: Double
+
+    public init(
+        fontSize: Double = 18,
+        foregroundColor: String = "#111111",
+        timeoutSeconds: Double = 5
+    ) {
+        self.fontSize = fontSize
+        self.foregroundColor = foregroundColor
+        self.timeoutSeconds = timeoutSeconds
+    }
 }
 
 public struct RatexMathRenderer: MathRenderer {
     private let adapter: (any RatexMathRenderingAdapter)?
+    private let options: RatexRenderOptions
 
-    public init(adapter: (any RatexMathRenderingAdapter)? = nil) {
+    public init(
+        adapter: (any RatexMathRenderingAdapter)? = RatexSVGCLIAdapter(),
+        options: RatexRenderOptions = RatexRenderOptions()
+    ) {
         self.adapter = adapter
+        self.options = options
     }
 
     public func renderDisplay(latex: String, accessibilityLabel: String?) -> MathRenderResult {
@@ -109,14 +137,15 @@ public struct RatexMathRenderer: MathRenderer {
                 latex: latex,
                 mode: mode,
                 accessibilityLabel: label,
-                payload: .svg(try adapter.renderSVG(latex: latex, mode: mode))
+                payload: .svg(try adapter.renderSVG(latex: latex, mode: mode, options: options))
             )
         } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
             return MathRenderResult(
                 latex: latex,
                 mode: mode,
                 accessibilityLabel: label,
-                payload: .unavailable(reason: "RaTeX SVG adapter failed: \(error)")
+                payload: .unavailable(reason: "RaTeX SVG adapter failed: \(reason)")
             )
         }
     }

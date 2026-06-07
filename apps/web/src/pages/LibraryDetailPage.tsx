@@ -47,11 +47,13 @@ import {
   useTranslateLibraryMissing,
   useUpdateLibrary
 } from "../api/hooks";
-import type {
-  ArticleListItem,
-  ArticleReadingProgress,
-  ImportLocalKind
-} from "../api/types";
+import type { ArticleListItem, ArticleReadingProgress, ImportLocalKind } from "../api/types";
+import {
+  WorkbenchButton,
+  WorkbenchCard,
+  WorkbenchDivider,
+  WorkbenchTitle
+} from "../components/workbench/WorkbenchChrome";
 import { useT } from "../i18n";
 import { TRANSLATION_TARGET_LOCALES } from "../product";
 import { useUiStore } from "../state/ui";
@@ -167,7 +169,9 @@ export function LibraryDetailPage() {
     }
     if (
       armedArticleRevisionId.current &&
-      !visibleArticleItems.some((item) => item.article_revision.id === armedArticleRevisionId.current)
+      !visibleArticleItems.some(
+        (item) => item.article_revision.id === armedArticleRevisionId.current
+      )
     ) {
       armedArticleRevisionId.current = null;
     }
@@ -320,7 +324,7 @@ export function LibraryDetailPage() {
 
   const articleManagementPanel = (
     <>
-      <div
+      <WorkbenchCard
         className="library-import-strip library-rail-action-card"
         aria-label={t("library.addArticle")}
       >
@@ -342,6 +346,7 @@ export function LibraryDetailPage() {
             ]}
           />
         </Group>
+        <WorkbenchDivider />
 
         {importSource === "arxiv" ? (
           <>
@@ -354,13 +359,13 @@ export function LibraryDetailPage() {
                 value={arxivId}
                 onChange={(event) => setArxivId(event.target.value)}
               />
-              <Button
+              <WorkbenchButton
                 onClick={submitImport}
                 loading={importArxiv.isPending}
                 disabled={!libraryId || !arxivId.trim()}
               >
                 {t("library.addArticle")}
-              </Button>
+              </WorkbenchButton>
               <Button variant="subtle" onClick={() => setShowImportOptions((open) => !open)}>
                 {t("library.options")}
               </Button>
@@ -410,13 +415,13 @@ export function LibraryDetailPage() {
                   { value: "pdf", label: t("library.pdfSaveOnly") }
                 ]}
               />
-              <Button
+              <WorkbenchButton
                 onClick={submitLocalImport}
                 loading={importLocalFile.isPending}
                 disabled={!libraryId || !localFile}
               >
                 {t("library.importFile")}
-              </Button>
+              </WorkbenchButton>
             </Group>
             <Group mt="md" className="advanced-options">
               <Switch
@@ -451,9 +456,9 @@ export function LibraryDetailPage() {
             {t("library.localImportError")}
           </Text>
         ) : null}
-      </div>
+      </WorkbenchCard>
 
-      <div className="library-batch-strip library-rail-action-card">
+      <WorkbenchCard className="library-batch-strip library-rail-action-card">
         <Stack gap={2}>
           <Text fw={650}>{t("library.batchActions")}</Text>
           <Text c="dimmed" size="sm">
@@ -486,7 +491,7 @@ export function LibraryDetailPage() {
             onChange={(value) => setTargetLanguage(value ?? "zh-CN")}
           />
         </Group>
-      </div>
+      </WorkbenchCard>
     </>
   );
 
@@ -529,7 +534,7 @@ export function LibraryDetailPage() {
             </Tooltip>
           </div>
 
-          <div className="library-current-card">
+          <WorkbenchCard className="library-current-card">
             {isEditingLibraryName ? (
               <Group gap="xs" wrap="nowrap">
                 <TextInput
@@ -582,7 +587,7 @@ export function LibraryDetailPage() {
                 {libraryActionMessage.text}
               </Text>
             ) : null}
-          </div>
+          </WorkbenchCard>
 
           {library.isError ? (
             <Alert color="red" icon={<Info size={16} />} className="library-rail-alert">
@@ -674,237 +679,228 @@ export function LibraryDetailPage() {
 
         <main className="library-article-surface">
           <>
-              <div className="library-surface-header">
-                <div>
-                  <Text className="page-eyebrow">{t("library.localWorkspace")}</Text>
-                  <Title order={1} className="library-workbench-title">
-                    {t("library.articles")}
-                  </Title>
-                </div>
-                <Group gap="xs" className="library-surface-actions">
-                  <Button
-                    leftSection={<Upload size={16} />}
-                    variant="light"
-                    onClick={() => {
-                      setImportSource("arxiv");
-                      globalThis.document?.getElementById("library-arxiv-input")?.focus();
-                    }}
-                  >
-                    {t("library.import")}
-                  </Button>
-                  <Button
-                    leftSection={<Languages size={16} />}
-                    disabled={
-                      !libraryId ||
-                      !selectedProviderId ||
-                      translationSummary.blocks === 0 ||
-                      translateMissing.isPending
-                    }
-                    loading={translateMissing.isPending}
-                    onClick={queueMissingTranslations}
-                  >
-                    {t("library.translateMissing")}
-                  </Button>
-                </Group>
+            <div className="library-surface-header">
+              <div>
+                <Text className="page-eyebrow">{t("library.localWorkspace")}</Text>
+                <WorkbenchTitle headingLevel={1} name={t("library.articles")} />
               </div>
-
-              <div className="library-toolbar">
-                <TextInput
-                  aria-label={t("library.searchPapers")}
-                  className="library-search-input"
-                  leftSection={<Search size={15} aria-hidden="true" />}
-                  placeholder={t("library.searchPapers")}
-                  value={articleSearchQuery}
-                  onChange={(event) => setArticleSearchQuery(event.currentTarget.value)}
-                />
-                <Select
-                  aria-label={t("library.filter")}
-                  allowDeselect={false}
-                  data={[
-                    { value: "all", label: t("library.allPapers") },
-                    { value: "reading", label: t("library.reading") },
-                    { value: "needs_translation", label: t("library.needsTranslation") },
-                    { value: "translated", label: t("library.translatedPapers") }
-                  ]}
-                  value={articleFilter}
-                  onChange={(value) => setArticleFilter((value ?? "all") as ArticleFilter)}
-                />
-                <Select
-                  aria-label={t("library.sort")}
-                  allowDeselect={false}
-                  data={[
-                    { value: "updated", label: t("library.sortUpdated") },
-                    { value: "title", label: t("library.sortTitle") },
-                    { value: "progress", label: t("library.sortProgress") }
-                  ]}
-                  value={articleSort}
-                  onChange={(value) => setArticleSort((value ?? "updated") as ArticleSort)}
-                />
-              </div>
-
-              {showArticleInlinePanel ? articleManagementPanel : null}
-
-              {articleActionMessage ? (
-                <div
-                  className={`library-inline-message library-inline-${articleActionMessage.kind}`}
+              <Group gap="xs" className="library-surface-actions">
+                <WorkbenchButton
+                  icon={<Upload size={16} />}
+                  onClick={() => {
+                    setImportSource("arxiv");
+                    globalThis.document?.getElementById("library-arxiv-input")?.focus();
+                  }}
                 >
-                  {articleActionMessage.text}
-                </div>
-              ) : null}
-              {articles.isError ? (
-                <Alert color="yellow" icon={<Info size={18} />}>
-                  {t("library.articleLoadError")}
-                </Alert>
-              ) : null}
+                  {t("library.import")}
+                </WorkbenchButton>
+                <WorkbenchButton
+                  icon={<Languages size={16} />}
+                  disabled={
+                    !libraryId ||
+                    !selectedProviderId ||
+                    translationSummary.blocks === 0 ||
+                    translateMissing.isPending
+                  }
+                  loading={translateMissing.isPending}
+                  onClick={queueMissingTranslations}
+                >
+                  {t("library.translateMissing")}
+                </WorkbenchButton>
+              </Group>
+            </div>
 
-              <section className="library-paper-list" aria-label={t("library.articles")}>
-                {articleItems.length === 0 ? (
-                  <Text c="dimmed" className="empty-state">
-                    {t("library.noArticles")}
-                  </Text>
-                ) : visibleArticleItems.length === 0 ? (
-                  <Text c="dimmed" className="empty-state">
-                    {t("library.noMatchingArticles")}
-                  </Text>
-                ) : (
-                  visibleArticleItems.map((item) => {
-                    const status = articleTranslationStatus(item);
-                    const selected =
-                      selectedArticle?.article_revision.id === item.article_revision.id;
-                    return (
-                      <div
-                        key={item.article_revision.id}
-                        className="library-paper-row"
-                        role="button"
-                        tabIndex={0}
-                        data-selected={selected || undefined}
-                        title={readingProgressTitle(item.reading_progress)}
-                        onClick={() => activateArticleRow(item)}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") return;
-                          event.preventDefault();
-                          activateArticleRow(item);
-                        }}
-                      >
-                        <span className="library-paper-icon" aria-hidden="true">
-                          <FileText size={16} />
+            <div className="library-toolbar">
+              <TextInput
+                aria-label={t("library.searchPapers")}
+                className="library-search-input"
+                leftSection={<Search size={15} aria-hidden="true" />}
+                placeholder={t("library.searchPapers")}
+                value={articleSearchQuery}
+                onChange={(event) => setArticleSearchQuery(event.currentTarget.value)}
+              />
+              <Select
+                aria-label={t("library.filter")}
+                allowDeselect={false}
+                data={[
+                  { value: "all", label: t("library.allPapers") },
+                  { value: "reading", label: t("library.reading") },
+                  { value: "needs_translation", label: t("library.needsTranslation") },
+                  { value: "translated", label: t("library.translatedPapers") }
+                ]}
+                value={articleFilter}
+                onChange={(value) => setArticleFilter((value ?? "all") as ArticleFilter)}
+              />
+              <Select
+                aria-label={t("library.sort")}
+                allowDeselect={false}
+                data={[
+                  { value: "updated", label: t("library.sortUpdated") },
+                  { value: "title", label: t("library.sortTitle") },
+                  { value: "progress", label: t("library.sortProgress") }
+                ]}
+                value={articleSort}
+                onChange={(value) => setArticleSort((value ?? "updated") as ArticleSort)}
+              />
+            </div>
+
+            {showArticleInlinePanel ? articleManagementPanel : null}
+
+            {articleActionMessage ? (
+              <div className={`library-inline-message library-inline-${articleActionMessage.kind}`}>
+                {articleActionMessage.text}
+              </div>
+            ) : null}
+            {articles.isError ? (
+              <Alert color="yellow" icon={<Info size={18} />}>
+                {t("library.articleLoadError")}
+              </Alert>
+            ) : null}
+
+            <section className="library-paper-list" aria-label={t("library.articles")}>
+              {articleItems.length === 0 ? (
+                <Text c="dimmed" className="empty-state">
+                  {t("library.noArticles")}
+                </Text>
+              ) : visibleArticleItems.length === 0 ? (
+                <Text c="dimmed" className="empty-state">
+                  {t("library.noMatchingArticles")}
+                </Text>
+              ) : (
+                visibleArticleItems.map((item) => {
+                  const status = articleTranslationStatus(item);
+                  const selected =
+                    selectedArticle?.article_revision.id === item.article_revision.id;
+                  return (
+                    <div
+                      key={item.article_revision.id}
+                      className="library-paper-row"
+                      role="button"
+                      tabIndex={0}
+                      data-selected={selected || undefined}
+                      title={readingProgressTitle(item.reading_progress)}
+                      onClick={() => activateArticleRow(item)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        activateArticleRow(item);
+                      }}
+                    >
+                      <span className="library-paper-icon" aria-hidden="true">
+                        <FileText size={16} />
+                      </span>
+                      <span className="library-paper-main">
+                        <span className="library-paper-title library-paper-title-link">
+                          <ReadingProgressTitleBackground progress={item.reading_progress} />
+                          <span>{item.family.title ?? item.family.external_id}</span>
                         </span>
-                        <span className="library-paper-main">
-                          <span className="library-paper-title library-paper-title-link">
-                            <ReadingProgressTitleBackground progress={item.reading_progress} />
-                            <span>{item.family.title ?? item.family.external_id}</span>
-                          </span>
-                          <span className="library-paper-meta">
-                            {articleSourceLabel(item)} · {item.family.external_id}
-                            {item.article_revision.version} · {item.block_count}{" "}
-                            {t("library.blocks")}
-                          </span>
+                        <span className="library-paper-meta">
+                          {articleSourceLabel(item)} · {item.family.external_id}
+                          {item.article_revision.version} · {item.block_count} {t("library.blocks")}
                         </span>
-                        <span className="library-paper-status">
-                          <Badge color={translationStatusColor(item)} variant="light">
-                            {translationStatusLabel(item, t)}
-                          </Badge>
-                          {status.translatable_blocks > 0 ? (
-                            <small>
-                              {status.translated_blocks}/{status.translatable_blocks}
-                            </small>
-                          ) : null}
+                      </span>
+                      <span className="library-paper-status">
+                        <Badge color={translationStatusColor(item)} variant="light">
+                          {translationStatusLabel(item, t)}
+                        </Badge>
+                        {status.translatable_blocks > 0 ? (
+                          <small>
+                            {status.translated_blocks}/{status.translatable_blocks}
+                          </small>
+                        ) : null}
+                      </span>
+                      <span className="library-paper-progress">
+                        <span>{articleProgressLabel(item)}</span>
+                        <span className="library-progress-track" aria-hidden="true">
+                          <span style={{ width: `${articleReadProgressPercent(item)}%` }} />
                         </span>
-                        <span className="library-paper-progress">
-                          <span>{articleProgressLabel(item)}</span>
-                          <span className="library-progress-track" aria-hidden="true">
-                            <span style={{ width: `${articleReadProgressPercent(item)}%` }} />
-                          </span>
-                        </span>
-                      </div>
-                    );
-                  })
-                )}
-              </section>
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </section>
           </>
         </main>
 
         <aside className="library-right-rail" aria-label={t("library.paperPreview")}>
           <div className="library-right-rail-stack">
-              {!showArticleInlinePanel ? articleManagementPanel : null}
-              <div className="library-preview-card">
-                {selectedArticle ? (
-                  <>
-                    <Text className="library-rail-label">{t("library.paperSelected")}</Text>
-                    <Title order={2} className="library-preview-title">
-                      {selectedArticle.family.title ?? selectedArticle.family.external_id}
-                    </Title>
-                    <Text c="dimmed" size="sm">
-                      {selectedArticleSubtitle(selectedArticle)}
-                    </Text>
-                    <div className="library-preview-stats">
-                      <div>
-                        <span>{t("library.status")}</span>
-                        <strong>{selectedArticle.article_revision.status}</strong>
-                      </div>
-                      <div>
-                        <span>{t("library.translation")}</span>
-                        <strong>{translationStatusLabel(selectedArticle, t)}</strong>
-                      </div>
-                      <div>
-                        <span>{t("library.assets")}</span>
-                        <strong>{selectedArticle.asset_count}</strong>
-                      </div>
-                      <div>
-                        <span>{t("library.updated")}</span>
-                        <strong>
-                          {new Date(
-                            selectedArticle.article_revision.updated_at
-                          ).toLocaleDateString()}
-                        </strong>
-                      </div>
-                    </div>
-                    <Group grow gap="xs" className="library-preview-actions">
-                      <Button
-                        component={Link}
-                        to={articleRoute(selectedArticle)}
-                        leftSection={<BookOpenText size={16} />}
-                      >
-                        {t("library.read")}
-                      </Button>
-                      <Button
-                        variant="light"
-                        leftSection={<Languages size={16} />}
-                        disabled={!selectedProviderId || translateMissing.isPending}
-                        onClick={queueMissingTranslations}
-                      >
-                        {t("library.translateMissing")}
-                      </Button>
-                    </Group>
-                    <Group grow gap="xs">
-                      <Button
-                        variant="subtle"
-                        leftSection={<Archive size={15} />}
-                        disabled={
-                          selectedArticle.article_revision.status === "archived" ||
-                          archiveArticle.isPending
-                        }
-                        onClick={() => archiveRevision(selectedArticle.article_revision.id)}
-                      >
-                        {t("library.archive")}
-                      </Button>
-                      <Button
-                        color="red"
-                        variant="subtle"
-                        leftSection={<Trash2 size={15} />}
-                        disabled={deleteArticle.isPending}
-                        onClick={() => setPendingDeleteArticle(selectedArticle)}
-                      >
-                        {t("library.delete")}
-                      </Button>
-                    </Group>
-                  </>
-                ) : (
+            {!showArticleInlinePanel ? articleManagementPanel : null}
+            <WorkbenchCard className="library-preview-card">
+              {selectedArticle ? (
+                <>
+                  <Text className="library-rail-label">{t("library.paperSelected")}</Text>
+                  <Title order={2} className="library-preview-title">
+                    {selectedArticle.family.title ?? selectedArticle.family.external_id}
+                  </Title>
                   <Text c="dimmed" size="sm">
-                    {t("library.noPaperSelected")}
+                    {selectedArticleSubtitle(selectedArticle)}
                   </Text>
-                )}
-              </div>
+                  <div className="library-preview-stats">
+                    <div>
+                      <span>{t("library.status")}</span>
+                      <strong>{selectedArticle.article_revision.status}</strong>
+                    </div>
+                    <div>
+                      <span>{t("library.translation")}</span>
+                      <strong>{translationStatusLabel(selectedArticle, t)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("library.assets")}</span>
+                      <strong>{selectedArticle.asset_count}</strong>
+                    </div>
+                    <div>
+                      <span>{t("library.updated")}</span>
+                      <strong>
+                        {new Date(selectedArticle.article_revision.updated_at).toLocaleDateString()}
+                      </strong>
+                    </div>
+                  </div>
+                  <Group grow gap="xs" className="library-preview-actions">
+                    <Link
+                      className="workbench-link-button library-read-link"
+                      to={articleRoute(selectedArticle)}
+                    >
+                      <BookOpenText size={16} aria-hidden="true" />
+                      <span>{t("library.read")}</span>
+                    </Link>
+                    <WorkbenchButton
+                      icon={<Languages size={16} />}
+                      disabled={!selectedProviderId || translateMissing.isPending}
+                      onClick={queueMissingTranslations}
+                    >
+                      {t("library.translateMissing")}
+                    </WorkbenchButton>
+                  </Group>
+                  <Group grow gap="xs">
+                    <Button
+                      variant="subtle"
+                      leftSection={<Archive size={15} />}
+                      disabled={
+                        selectedArticle.article_revision.status === "archived" ||
+                        archiveArticle.isPending
+                      }
+                      onClick={() => archiveRevision(selectedArticle.article_revision.id)}
+                    >
+                      {t("library.archive")}
+                    </Button>
+                    <Button
+                      color="red"
+                      variant="subtle"
+                      leftSection={<Trash2 size={15} />}
+                      disabled={deleteArticle.isPending}
+                      onClick={() => setPendingDeleteArticle(selectedArticle)}
+                    >
+                      {t("library.delete")}
+                    </Button>
+                  </Group>
+                </>
+              ) : (
+                <Text c="dimmed" size="sm">
+                  {t("library.noPaperSelected")}
+                </Text>
+              )}
+            </WorkbenchCard>
           </div>
         </aside>
       </div>

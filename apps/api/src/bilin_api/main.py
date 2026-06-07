@@ -20,11 +20,17 @@ from bilin_api.api import (
     jobs,
     libraries,
     providers,
+    research,
     translation_memory,
 )
 from bilin_api.branding import PRODUCT_NAME_EN
 from bilin_api.database import init_global_db
 from bilin_api.schemas import (
+    AgentActionPlan,
+    AgentActionPlanCreate,
+    AgentActionPlanStep,
+    AgentActionPlanStepCreate,
+    AgentActionPlanTransitionRequest,
     ArticleChatHistory,
     ArticleCitations,
     ArticleDeleteResult,
@@ -91,6 +97,13 @@ from bilin_api.schemas import (
     ReaderCardObsidianExportResult,
     ReaderCards,
     ReaderCardUpdate,
+    ReadingOutline,
+    ResearchPaperMasteryOutline,
+    ResearchPlan,
+    ResearchPlanCreate,
+    ResearchPlanGenerationRequest,
+    ResearchSkill,
+    ResearchSkillIndexRequest,
     RetrievedBlock,
     ScholarSearchResult,
     TranslationBatchRequest,
@@ -185,6 +198,7 @@ app.include_router(providers.router)
 app.include_router(translation_memory.router)
 app.include_router(imports.router)
 app.include_router(articles.router)
+app.include_router(research.router)
 app.include_router(jobs.router)
 app.include_router(events.router)
 
@@ -275,6 +289,18 @@ def custom_openapi() -> dict:
         ImportArxivRequest,
         ImportArxivResult,
         ImportLocalResult,
+        AgentActionPlan,
+        AgentActionPlanCreate,
+        AgentActionPlanStep,
+        AgentActionPlanStepCreate,
+        AgentActionPlanTransitionRequest,
+        ResearchSkill,
+        ResearchSkillIndexRequest,
+        ReadingOutline,
+        ResearchPlan,
+        ResearchPlanCreate,
+        ResearchPlanGenerationRequest,
+        ResearchPaperMasteryOutline,
     ):
         model_schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
         for name, definition in model_schema.pop("$defs", {}).items():

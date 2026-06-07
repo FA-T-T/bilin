@@ -40,6 +40,10 @@ from bilin_api.schemas import (
     ProviderProfileCreate,
     ProviderProfileUpdate,
     ProviderProtocol,
+    ResearchSkill,
+    ResearchSkillPermission,
+    ResearchSkillStatus,
+    ResearchSkillUpsert,
     TranslationMemoryEntry,
     TranslationMemoryEntryUpdate,
     TranslationMemoryReviewStatus,
@@ -151,6 +155,36 @@ def _note_template_from_row(row: aiosqlite.Row) -> NoteTemplate:
         custom=True,
         metadata=_loads(row["metadata_json"], {}),
     )
+
+
+def _research_skill_from_row(row: aiosqlite.Row) -> ResearchSkill:
+    return ResearchSkill(
+        id=row["id"],
+        slug=row["slug"],
+        title=row["title"],
+        description=row["description"],
+        source_path=row["source_path"],
+        cache_path=row["cache_path"],
+        digest=row["digest"],
+        digest_algorithm=row["digest_algorithm"],
+        version=row["version"],
+        manifest_version=row["manifest_version"],
+        install_status=row["install_status"],
+        status=row["status"],
+        enabled=bool(row["enabled"]),
+        declared_permissions=_loads(row["declared_permissions_json"], []),
+        granted_permissions=_loads(row["granted_permissions_json"], []),
+        input_shape=_loads(row["input_shape_json"], {}),
+        output_shape=_loads(row["output_shape_json"], {}),
+        supported_tasks=_loads(row["supported_tasks_json"], []),
+        metadata=_loads(row["metadata_json"], {}),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _permission_values(permissions: Sequence[ResearchSkillPermission]) -> list[str]:
+    return [permission.value for permission in permissions]
 
 
 async def list_libraries() -> list[Library]:
@@ -440,6 +474,130 @@ async def update_provider_profile(
                 delete_provider_api_key_from_keychain(provider_id)
         await conn.commit()
     return await get_provider_profile(provider_id)
+
+
+async def upsert_research_skill(payload: ResearchSkillUpsert) -> ResearchSkill:
+    db_path = await init_global_db()
+    now = utc_now()
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            """
+            INSERT INTO research_skills(
+              id, slug, title, description, source_path, cache_path, digest, digest_algorithm,
+              version, manifest_version, install_status, status, enabled,
+              declared_permissions_json, granted_permissions_json, input_shape_json,
+              output_shape_json, supported_tasks_json, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+              title = excluded.title,
+              description = excluded.description,
+              source_path = excluded.source_path,
+              cache_path = excluded.cache_path,
+              digest = excluded.digest,
+              digest_algorithm = excluded.digest_algorithm,
+              version = excluded.version,
+              manifest_version = excluded.manifest_version,
+              install_status = excluded.install_status,
+              status = excluded.status,
+              enabled = excluded.enabled,
+              declared_permissions_json = excluded.declared_permissions_json,
+              granted_permissions_json = excluded.granted_permissions_json,
+              input_shape_json = excluded.input_shape_json,
+              output_shape_json = excluded.output_shape_json,
+              supported_tasks_json = excluded.supported_tasks_json,
+              metadata_json = excluded.metadata_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                payload.id,
+                payload.slug,
+                payload.title,
+                payload.description,
+                payload.source_path,
+                payload.cache_path,
+                payload.digest,
+                payload.digest_algorithm,
+                payload.version,
+                payload.manifest_version,
+                payload.install_status.value,
+                payload.status.value,
+                int(payload.enabled),
+                json.dumps(_permission_values(payload.declared_permissions)),
+                json.dumps(_permission_values(payload.granted_permissions)),
+                json.dumps(payload.input_shape),
+                json.dumps(payload.output_shape),
+                json.dumps(payload.supported_tasks),
+                json.dumps(payload.metadata),
+                now,
+                now,
+            ),
+        )
+        await conn.commit()
+    skill = await get_research_skill(payload.slug)
+    if skill is None:
+        msg = "Upserted research skill could not be read back"
+        raise RuntimeError(msg)
+    return skill
+
+
+async def list_research_skills() -> list[ResearchSkill]:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute("SELECT * FROM research_skills ORDER BY slug ASC")
+        rows = await cursor.fetchall()
+    return [_research_skill_from_row(row) for row in rows]
+
+
+async def get_research_skill(identifier: str) -> ResearchSkill | None:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM research_skills WHERE id = ? OR slug = ?",
+            (identifier, identifier),
+        )
+        row = await cursor.fetchone()
+    return _research_skill_from_row(row) if row else None
+
+
+async def get_research_skill_by_slug(slug: str) -> ResearchSkill | None:
+    db_path = await init_global_db()
+    async with open_db(db_path) as conn:
+        cursor = await conn.execute("SELECT * FROM research_skills WHERE slug = ?", (slug,))
+        row = await cursor.fetchone()
+    return _research_skill_from_row(row) if row else None
+
+
+async def enable_research_skill(
+    identifier: str,
+    *,
+    granted_permissions: Sequence[ResearchSkillPermission],
+) -> ResearchSkill | None:
+    skill = await get_research_skill(identifier)
+    if skill is None:
+        return None
+
+    db_path = await init_global_db()
+    now = utc_now()
+    async with open_db(db_path) as conn:
+        await conn.execute(
+            """
+            UPDATE research_skills
+            SET status = ?,
+                enabled = 1,
+                granted_permissions_json = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                ResearchSkillStatus.enabled.value,
+                json.dumps(_permission_values(granted_permissions)),
+                now,
+                skill.id,
+            ),
+        )
+        await conn.commit()
+    return await get_research_skill(skill.id)
 
 
 async def get_provider_api_key(provider: ProviderProfile) -> str | None:

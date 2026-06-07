@@ -1,7 +1,6 @@
 import {
   Alert,
   Badge,
-  Button,
   Group,
   Select,
   Stack,
@@ -31,6 +30,7 @@ import type {
 import { useProductName, useT } from "../i18n";
 import { SUPPORTED_LOCALES, type AppLocale } from "../product";
 import { useUiStore } from "../state/ui";
+import { WorkbenchButton, WorkbenchCard, WorkbenchTitle } from "../components/workbench/WorkbenchChrome";
 import { ReaderPreferencesPanel } from "../components/ReaderPreferencesPanel";
 
 export function SettingsPage() {
@@ -122,9 +122,11 @@ export function SettingsPage() {
       <Group justify="space-between" align="flex-end" className="page-hero">
         <div>
           <Text className="page-eyebrow">{t("settings.workspaceControl")}</Text>
-          <Title order={1} className="page-title">
-            {t("settings.title")}
-          </Title>
+          <WorkbenchTitle
+            className="page-title settings-page-title"
+            headingLevel={1}
+            name={t("settings.title")}
+          />
           <Text c="dimmed" className="page-subtitle">
             {t("settings.subtitle")}
           </Text>
@@ -160,7 +162,7 @@ export function SettingsPage() {
         </Tabs.List>
 
         <Tabs.Panel value="models">
-          <div className="panel settings-panel">
+          <WorkbenchCard className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
                 <Title order={2} className="panel-title">
@@ -258,21 +260,21 @@ export function SettingsPage() {
             </div>
 
             <Group mt="md">
-              <Button
+              <WorkbenchButton
                 onClick={detectModels}
                 loading={discoverModels.isPending}
                 disabled={!apiKey.trim()}
-                variant="light"
+                variant="ghost"
               >
                 {t("settings.findModels")}
-              </Button>
-              <Button
+              </WorkbenchButton>
+              <WorkbenchButton
                 onClick={submitProvider}
                 loading={createProvider.isPending}
                 disabled={!apiKey.trim() || !selectedModelCanRun}
               >
                 {t("settings.useSelectedModel")}
-              </Button>
+              </WorkbenchButton>
             </Group>
 
             {discoverModels.isError ? (
@@ -372,11 +374,11 @@ export function SettingsPage() {
                 </div>
               )}
             </div>
-          </div>
+          </WorkbenchCard>
         </Tabs.Panel>
 
         <Tabs.Panel value="interface">
-          <div className="panel settings-panel">
+          <WorkbenchCard className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
                 <Title order={2} className="panel-title">
@@ -398,14 +400,14 @@ export function SettingsPage() {
                 }))}
               />
             </Group>
-          </div>
-          <div className="panel settings-panel">
+          </WorkbenchCard>
+          <WorkbenchCard className="panel settings-panel">
             <ReaderPreferencesPanel />
-          </div>
+          </WorkbenchCard>
         </Tabs.Panel>
 
         <Tabs.Panel value="memory">
-          <div className="panel settings-panel">
+          <WorkbenchCard className="panel settings-panel">
             <Group justify="space-between" align="flex-start">
               <div>
                 <Title order={2} className="panel-title">
@@ -490,9 +492,8 @@ export function SettingsPage() {
                         </Table.Td>
                         <Table.Td>
                           <Group gap="xs">
-                            <Button
-                              size="xs"
-                              variant="light"
+                            <WorkbenchButton
+                              size="small"
                               onClick={() =>
                                 updateMemory.mutate({
                                   entryId: entry.id,
@@ -501,10 +502,10 @@ export function SettingsPage() {
                               }
                             >
                               {t("settings.approve")}
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="subtle"
+                            </WorkbenchButton>
+                            <WorkbenchButton
+                              size="small"
+                              variant="ghost"
                               onClick={() =>
                                 updateMemory.mutate({
                                   entryId: entry.id,
@@ -513,11 +514,10 @@ export function SettingsPage() {
                               }
                             >
                               {t("settings.disable")}
-                            </Button>
-                            <Button
-                              size="xs"
-                              color="red"
-                              variant="subtle"
+                            </WorkbenchButton>
+                            <WorkbenchButton
+                              size="small"
+                              variant="danger"
                               onClick={() =>
                                 updateMemory.mutate({
                                   entryId: entry.id,
@@ -526,7 +526,7 @@ export function SettingsPage() {
                               }
                             >
                               {t("settings.reject")}
-                            </Button>
+                            </WorkbenchButton>
                           </Group>
                         </Table.Td>
                       </Table.Tr>
@@ -535,11 +535,11 @@ export function SettingsPage() {
                 </Table>
               </div>
             )}
-          </div>
+          </WorkbenchCard>
         </Tabs.Panel>
 
         <Tabs.Panel value="tools">
-          <div className="panel">
+          <WorkbenchCard className="panel settings-panel">
             <Title order={2} className="panel-title">
               {t("settings.tools")}
             </Title>
@@ -580,7 +580,7 @@ export function SettingsPage() {
                 </Table.Tbody>
               </Table>
             </div>
-          </div>
+          </WorkbenchCard>
         </Tabs.Panel>
       </Tabs>
     </Stack>

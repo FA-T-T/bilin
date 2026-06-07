@@ -76,6 +76,22 @@ import type {
 export const API_BASE_URL = import.meta.env.VITE_BILIN_API_URL ?? "http://127.0.0.1:8000";
 const API_TOKEN_STORAGE_KEY = "bilin.apiToken";
 
+function readStoredApiToken(): string | null {
+  try {
+    return window.localStorage.getItem(API_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredApiToken(token: string) {
+  try {
+    window.localStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+  } catch {
+    // Token-link login still works for the current session when storage is unavailable.
+  }
+}
+
 export function getApiToken(): string | null {
   const envToken = import.meta.env.VITE_BILIN_API_TOKEN;
   if (typeof window === "undefined") return envToken || null;
@@ -83,14 +99,14 @@ export function getApiToken(): string | null {
   const url = new URL(window.location.href);
   const urlToken = url.searchParams.get("bilin_token") ?? url.searchParams.get("access_token");
   if (urlToken) {
-    window.localStorage.setItem(API_TOKEN_STORAGE_KEY, urlToken);
+    writeStoredApiToken(urlToken);
     url.searchParams.delete("bilin_token");
     url.searchParams.delete("access_token");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     return urlToken;
   }
 
-  return window.localStorage.getItem(API_TOKEN_STORAGE_KEY) ?? envToken ?? null;
+  return readStoredApiToken() ?? envToken ?? null;
 }
 
 export function apiUrl(path: string, includeToken = false): string {

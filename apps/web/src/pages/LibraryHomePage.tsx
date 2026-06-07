@@ -24,6 +24,12 @@ import {
   useUpdateLibrary
 } from "../api/hooks";
 import type { Library } from "../api/types";
+import {
+  WorkbenchButton,
+  WorkbenchCard,
+  WorkbenchDivider,
+  WorkbenchTitle
+} from "../components/workbench/WorkbenchChrome";
 import { useT } from "../i18n";
 
 export function LibraryHomePage() {
@@ -105,9 +111,7 @@ export function LibraryHomePage() {
       <Group justify="space-between" align="flex-end" className="page-hero">
         <div>
           <Text className="page-eyebrow">{t("library.localWorkspace")}</Text>
-          <Title order={1} className="page-title">
-            {t("library.title")}
-          </Title>
+          <WorkbenchTitle headingLevel={1} name={t("library.title")} />
           <Text c="dimmed" className="page-subtitle">
             {t("library.subtitle")}
           </Text>
@@ -134,10 +138,11 @@ export function LibraryHomePage() {
         </div>
       </Group>
 
-      <div className="panel library-create-panel">
+      <WorkbenchCard className="panel library-create-panel">
         <Title order={2} className="panel-title">
           {t("library.createTitle")}
         </Title>
+        <WorkbenchDivider />
         <div className="library-create-form">
           <TextInput
             label={t("library.name")}
@@ -151,15 +156,15 @@ export function LibraryHomePage() {
             value={path}
             onChange={(event) => setPath(event.target.value)}
           />
-          <Button
+          <WorkbenchButton
             onClick={() => createLibrary.mutate({ name, path })}
             loading={createLibrary.isPending}
             disabled={!name.trim() || !path.trim()}
           >
             {t("library.create")}
-          </Button>
+          </WorkbenchButton>
         </div>
-      </div>
+      </WorkbenchCard>
 
       {libraries.isError ? (
         <Alert color="yellow" icon={<Info size={18} />}>
@@ -167,7 +172,7 @@ export function LibraryHomePage() {
         </Alert>
       ) : null}
 
-      <div className="panel library-table-panel">
+      <WorkbenchCard className="panel library-table-panel" variant="default">
         <Group justify="space-between" align="center">
           <Title order={2} className="panel-title">
             {t("library.registered")}
@@ -301,7 +306,7 @@ export function LibraryHomePage() {
             </Table>
           </div>
         )}
-      </div>
+      </WorkbenchCard>
 
       <Modal
         centered

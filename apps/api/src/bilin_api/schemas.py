@@ -5,7 +5,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from bilin_api.branding import PRODUCT_NAME_EN
 
@@ -146,6 +146,319 @@ class ProviderModelDiscoveryResult(BaseModel):
     models: list[ProviderModelInfo] = Field(default_factory=list)
     default_model: str | None = None
     capabilities: JsonDict = Field(default_factory=dict)
+
+
+class ResearchSkillPermission(StrEnum):
+    network = "network"
+    provider_call = "provider_call"
+    download_paper = "download_paper"
+    import_library = "import_library"
+    write_library_bundle = "write_library_bundle"
+    write_obsidian = "write_obsidian"
+    edit_manuscript = "edit_manuscript"
+    run_external_tool = "run_external_tool"
+
+
+class ResearchSkillInstallStatus(StrEnum):
+    discovered = "discovered"
+    cached = "cached"
+    installed = "installed"
+
+
+class ResearchSkillStatus(StrEnum):
+    metadata_only = "metadata_only"
+    disabled = "disabled"
+    enabled = "enabled"
+
+
+class ResearchSkill(BaseModel):
+    id: str
+    slug: str
+    title: str
+    description: str = ""
+    source_path: str
+    cache_path: str | None = None
+    digest: str
+    digest_algorithm: str = "sha256"
+    version: str | None = None
+    manifest_version: int = 1
+    install_status: ResearchSkillInstallStatus = ResearchSkillInstallStatus.discovered
+    status: ResearchSkillStatus = ResearchSkillStatus.metadata_only
+    enabled: bool = False
+    declared_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    granted_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    input_shape: JsonDict = Field(default_factory=dict)
+    output_shape: JsonDict = Field(default_factory=dict)
+    supported_tasks: list[str] = Field(default_factory=list)
+    metadata: JsonDict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchSkillUpsert(BaseModel):
+    id: str
+    slug: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=240)
+    description: str = ""
+    source_path: str = Field(min_length=1)
+    cache_path: str | None = None
+    digest: str = Field(min_length=1)
+    digest_algorithm: str = "sha256"
+    version: str | None = None
+    manifest_version: int = Field(default=1, ge=1)
+    install_status: ResearchSkillInstallStatus = ResearchSkillInstallStatus.discovered
+    status: ResearchSkillStatus = ResearchSkillStatus.metadata_only
+    enabled: bool = False
+    declared_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    granted_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    input_shape: JsonDict = Field(default_factory=dict)
+    output_shape: JsonDict = Field(default_factory=dict)
+    supported_tasks: list[str] = Field(default_factory=list)
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ResearchSkillIndexRequest(BaseModel):
+    project_root: str | None = None
+    codex_skills_root: str | None = None
+
+
+class ResearchSkillEnableRequest(BaseModel):
+    expected_digest: str | None = None
+    granted_permissions: list[ResearchSkillPermission] | None = None
+
+
+class ResearchPlanKind(StrEnum):
+    literature_review = "literature_review"
+    paper_reading = "paper_reading"
+    writing_support = "writing_support"
+    skill_invocation = "skill_invocation"
+    custom = "custom"
+
+
+class ResearchPlanStatus(StrEnum):
+    draft = "draft"
+    active = "active"
+    completed = "completed"
+    failed = "failed"
+    archived = "archived"
+
+
+class AgentActionPlanKind(StrEnum):
+    download_paper = "download_paper"
+    import_library = "import_library"
+    write_library_bundle = "write_library_bundle"
+    write_obsidian = "write_obsidian"
+    edit_manuscript = "edit_manuscript"
+    run_external_tool = "run_external_tool"
+    provider_call = "provider_call"
+    install_skill = "install_skill"
+    enable_skill = "enable_skill"
+    export_article = "export_article"
+    note_patch = "note_patch"
+    writing_patch = "writing_patch"
+    generate_research_outline = "generate_research_outline"
+    custom = "custom"
+
+
+class AgentActionPlanStatus(StrEnum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class AgentActionPlanEventKind(StrEnum):
+    created = "created"
+    status_recorded = "status_recorded"
+    step_recorded = "step_recorded"
+    note = "note"
+    job_linked = "job_linked"
+
+
+class ResearchPaperMasteryOutline(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    paper_id: str | None = None
+    paper_title: str = ""
+    claim: list[str] = Field(default_factory=list)
+    method: list[str] = Field(default_factory=list)
+    equation: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    limitation: list[str] = Field(default_factory=list)
+    follow_up: list[str] = Field(default_factory=list, alias="followUp")
+
+
+class ResearchSkillProvenance(BaseModel):
+    skill_slug: str
+    source: str
+    version: str | None = None
+    digest: str
+
+
+class ReadingOutline(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str = ""
+    summary: str = ""
+    sections: list[JsonDict] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    paper_mastery_outlines: list[ResearchPaperMasteryOutline] = Field(
+        default_factory=list,
+        alias="paperMasteryOutlines",
+    )
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ResearchPlanCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    kind: ResearchPlanKind = ResearchPlanKind.custom
+    status: ResearchPlanStatus = ResearchPlanStatus.draft
+    topic: str | None = None
+    article_revision_id: str | None = None
+    skill_id: str | None = None
+    skill_slug: str | None = None
+    job_id: str | None = None
+    idempotency_key: str | None = None
+    payload_hash: str | None = None
+    candidate_papers: list[JsonDict] = Field(default_factory=list)
+    reading_outline: ReadingOutline | None = None
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+
+
+class ResearchPlanGenerationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    kind: ResearchPlanKind = ResearchPlanKind.paper_reading
+    topic: str | None = None
+    article_revision_id: str | None = None
+    skill_slug: str | None = None
+    candidate_papers: list[JsonDict] = Field(default_factory=list)
+    idempotency_key: str | None = None
+    payload: JsonDict = Field(default_factory=dict)
+
+
+class ResearchPlan(BaseModel):
+    id: str
+    kind: ResearchPlanKind = ResearchPlanKind.custom
+    status: ResearchPlanStatus = ResearchPlanStatus.draft
+    title: str
+    topic: str | None = None
+    article_revision_id: str | None = None
+    skill_id: str | None = None
+    skill_slug: str | None = None
+    job_id: str | None = None
+    idempotency_key: str | None = None
+    payload_hash: str
+    candidate_papers: list[JsonDict] = Field(default_factory=list)
+    reading_outline: ReadingOutline | None = None
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentActionPlanStep(BaseModel):
+    id: str
+    action_plan_id: str
+    position: int = Field(ge=0)
+    kind: str
+    status: AgentActionPlanStatus = AgentActionPlanStatus.pending
+    title: str
+    description: str = ""
+    required_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentActionPlanEvent(BaseModel):
+    id: str
+    action_plan_id: str
+    step_id: str | None = None
+    kind: AgentActionPlanEventKind = AgentActionPlanEventKind.note
+    status: AgentActionPlanStatus | None = None
+    message: str = ""
+    payload: JsonDict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AgentActionPlanStepCreate(BaseModel):
+    kind: str
+    status: AgentActionPlanStatus = AgentActionPlanStatus.pending
+    title: str = Field(min_length=1, max_length=240)
+    description: str = ""
+    required_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+
+
+class AgentActionPlanCreate(BaseModel):
+    kind: AgentActionPlanKind = AgentActionPlanKind.custom
+    status: AgentActionPlanStatus = AgentActionPlanStatus.pending
+    title: str = Field(min_length=1, max_length=240)
+    research_plan_id: str | None = None
+    article_revision_id: str | None = None
+    skill_id: str | None = None
+    skill_slug: str | None = None
+    job_id: str | None = None
+    description: str = ""
+    idempotency_key: str | None = None
+    payload_hash: str | None = None
+    required_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+    steps: list[AgentActionPlanStepCreate] = Field(default_factory=list)
+
+
+class AgentActionPlanTransitionRequest(BaseModel):
+    expected_payload_hash: str | None = None
+    message: str | None = None
+    payload: JsonDict = Field(default_factory=dict)
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+
+
+class AgentActionPlan(BaseModel):
+    id: str
+    research_plan_id: str | None = None
+    article_revision_id: str | None = None
+    skill_id: str | None = None
+    skill_slug: str | None = None
+    job_id: str | None = None
+    kind: AgentActionPlanKind = AgentActionPlanKind.custom
+    status: AgentActionPlanStatus = AgentActionPlanStatus.pending
+    title: str
+    description: str = ""
+    idempotency_key: str | None = None
+    payload_hash: str
+    required_permissions: list[ResearchSkillPermission] = Field(default_factory=list)
+    payload: JsonDict = Field(default_factory=dict)
+    preview: JsonDict | None = None
+    result: JsonDict | None = None
+    error: JsonDict | None = None
+    steps: list[AgentActionPlanStep] = Field(default_factory=list)
+    events: list[AgentActionPlanEvent] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    approved_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class JobStatus(StrEnum):

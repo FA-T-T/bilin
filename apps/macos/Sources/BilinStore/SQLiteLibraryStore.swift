@@ -174,6 +174,10 @@ public actor SQLiteLibraryStore: LibraryStore {
         }
     }
 
+    public func citations(for revisionId: ArticleRevision.ID) async throws -> [ReaderCitationEntry] {
+        ReaderCitationResolver.entries(from: try await blocks(for: revisionId))
+    }
+
     public func translations(for revisionId: ArticleRevision.ID, targetLanguage: String) async throws -> [Translation] {
         try await ensureReadableSchema()
         let sql = """
@@ -599,6 +603,13 @@ private enum SQLiteValueDecoder {
                 result[key] = string
             case let number as NSNumber:
                 result[key] = number.stringValue
+            case let nested where JSONSerialization.isValidJSONObject(nested):
+                if
+                    let data = try? JSONSerialization.data(withJSONObject: nested, options: [.sortedKeys]),
+                    let string = String(data: data, encoding: .utf8)
+                {
+                    result[key] = string
+                }
             default:
                 continue
             }

@@ -1673,7 +1673,7 @@ def test_normalize_latexml_html_copies_assets_and_preserves_metadata(tmp_path: P
         <html>
           <body>
             <h1>Introduction</h1>
-            <p>See <a href="#bib-key">[1]</a> for context.</p>
+            <p>See <a href="#bib-key">[[1]]</a> for context.</p>
             <math display="block" id="eq:energy" alttext="E=mc^2">
               <semantics>
                 <annotation encoding="application/x-tex">E=mc^2</annotation>
@@ -1701,7 +1701,7 @@ def test_normalize_latexml_html_copies_assets_and_preserves_metadata(tmp_path: P
     table = next(block for block in blocks if block.block_type == "table")
     figure_asset = next(asset for asset in assets if asset.kind == "figure")
     assert paragraph.source_markdown == "See [1](#bib-key) for context."
-    assert paragraph.metadata["references"] == [{"href": "#bib-key", "text": "[1]"}]
+    assert paragraph.metadata["references"] == [{"href": "#bib-key", "text": "[[1]]"}]
     assert equation.source_latex == "E=mc^2"
     assert equation.metadata["display"] == "block"
     assert "html_fragment" in equation.metadata
